@@ -1,21 +1,23 @@
 # 0.2.0 兼容矩阵与 M0 验证清单
 
-状态：**所有组合均未验证**。下表是目标与待办，不是支持承诺。依据见 [构建规范 §2、§10–11、§16–17](MWF%200.2.0%20构建文档.md)，阶段任务见 [构建计划](build-plan-0.2.0.md)。
+状态：**已有部分 M0 运行时实验，完整支持组合均未验收**。2026-10-13 与 10-16 证据见 [M0 报告](validation/M0-validation.md)。下表区分实验结果与支持承诺。依据见 [构建规范 §2、§10–11、§16–17](MWF%200.2.0%20构建文档.md)，阶段任务见 [构建计划](build-plan-0.2.0.md)。
 
 ## 1. 目标矩阵
 
 | 宿主／环境 | 版本 | 系统 | 安装来源与重载方式 | 当前结果 | 发布定位 |
 | - | - | - | - | - | - |
-| Pi 原生扩展与内置 MCP | v1.1.0 | macOS | 待记录 | not_run | 首发目标 |
+| Pi 原生扩展与内置 MCP | v1.1.0 | macOS 26.7 arm64 | 本机 npm 安装；隔离项目正常 install/RPC/reload | 最小实验 pass；完整验收 not_run | 首发目标 |
 | Pi 原生扩展与内置 MCP | v1.1.0 | Linux | 待记录 | not_run | 首发目标 |
-| Codex 桌面本地 command-hook 插件 | 待记录准确构建号 | macOS | 待记录 | not_run | 首发目标 |
+| Codex 桌面本地 command-hook 插件 | ChatGPT.app 26.1007.30912 / 20156 | macOS 26.7 arm64 | 安装渠道、GUI 信任与重载待核实 | GUI not_run | 首发目标 |
+| 上述桌面附带 CLI/app-server（隔离实验） | 0.162.0-alpha.17.2 | macOS 26.7 arm64 | 包内二进制；临时 marketplace/新进程 | 最小实验 pass；不代表 GUI 通过 | M0 可行性证据 |
+| 桌面附带 CLI/app-server（10-16 续验） | 0.163.0-alpha.10.2 | macOS arm64 | 隔离临时 marketplace/app-server | 最小实验及真实数据复制原型 pass；GUI blocked | M0 可行性证据 |
 | Codex 桌面本地 command-hook 插件 | 待确认可用构建 | Linux | 待确认客户端可用性 | not_run | 需 M0 明确，不能假定可安装 |
 | 独立 CLI / stdio MCP | MWF 0.2.0 待构建 | macOS、Linux | tarball 待生成 | not_run | 首发目标 |
-| Codex CLI | 待单独选定 | 待测 | 待测 | not_run | 单独验收，不继承桌面结论 |
+| Codex CLI | 本机 0.162.1 | macOS | 仅读取版本 | not_run | 单独验收，不继承桌面结论 |
 | 旧 Pi、OMP、其他客户端、Windows | 未选定 | 未验证 | 未验证 | not_run | 不默认支持 |
 | 纯网页／云端编排 | 未选定 | 未验证 | 不适用本地插件假设 | not_run | 不承诺本地 hooks |
 
-Node.js ≥22.19.0 是目标运行要求，不是已验证结果。GUI 与终端分别记录实际 Node 绝对路径。Linux 的目标验证组合由 M0 根据实际宿主可用性明确；至少需要一条真实 Pi 与一条真实 Codex 桌面工作流，不得据此推导所有宿主／系统组合通过。
+Node.js ≥22.19.0 是目标运行要求；本次仅使用 Node 26.8.2，最低版本尚未验证。GUI 与终端分别记录实际 Node 绝对路径。Linux 的目标验证组合由 M0 根据实际宿主可用性明确；至少需要一条真实 Pi 与一条真实 Codex 桌面工作流，不得据此推导所有宿主／系统组合通过。
 
 ## 2. M0 实验清单
 

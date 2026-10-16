@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "initialized_at": "2026-09-09",
+  "updated_at": "2026-09-09",
+  "language": "en",
+  "git_mode": "track",
+  "record_format": "markdown-frontmatter",
+  "local_directory": ".mwf/local",
+  "hooks_required": false
+}

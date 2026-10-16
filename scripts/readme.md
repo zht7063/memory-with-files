@@ -1,6 +1,6 @@
 # 构建与验收脚本
 
-状态：职责与命令约定；当前没有可执行脚本或 package.json。下表均为未来接口，不能现在运行。M1 审查并迁入基线工具链后实现，不添加只打印成功的占位命令。
+状态：已迁入 0.1.0 的 build、check-package、check-pi、pi-contract 及独立安装器。当前可运行 `npm ci`、`npm test`（包含 build/typecheck）、`npm run build`、`npm run test:package`。`test:pi` 是旧内部 loader 检查，需额外项目和 Pi 路径参数，不代表新版原生宿主验收。下面表格保留 0.2.0 目标职责；`test:integrations` 和 `pack:release` 尚未实现。
 
 | 目标命令 | 阶段 | 必须执行的工作 |
 | - | - | - |

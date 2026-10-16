@@ -1,0 +1,7 @@
+Project: /private/var/folders/36/b31f24t11mn_8sg2cd20sp_c0000gn/T/mwf-source-preview-latw36rm/项目 空格
+Runtime: /var/folders/36/b31f24t11mn_8sg2cd20sp_c0000gn/T/mwf-source-preview-latw36rm/runtime
+Clients: codex
+Git mode: ignore
+Would install a fresh build of this checkout, then run MWF setup (including MCP probe). No files changed.
+
+PASS: source checkout located; dry-run left project and prefix untouched.

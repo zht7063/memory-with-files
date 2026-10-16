@@ -1,0 +1,21 @@
+[
+  {
+    "score": 189,
+    "id": "INC-20260909-001",
+    "type": "incident",
+    "status": "resolved",
+    "summary": "Use LibreOffice for embedded objects",
+    "path": ".mwf/incidents/inc-20260909-001-embedded-docx-conversion.md",
+    "reasons": [
+      "path:reports/**",
+      "operations:conversion",
+      "keyword:embedded objects",
+      "file_type",
+      "summary:embedded,objects"
+    ],
+    "incident_boundaries": {
+      "applicability": "Pandoc remains valid for text only.",
+      "invalid_when": "Converter changes."
+    }
+  }
+]

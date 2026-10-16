@@ -1,0 +1,9 @@
+
+> @zht7063/mwf@0.1.0 test:package
+> npm run build && node --experimental-strip-types scripts/check-package.ts
+
+
+> @zht7063/mwf@0.1.0 build
+> tsc && node --experimental-strip-types scripts/build.ts
+
+PASS: packed files only, empty PATH, offline empty-cache install, stdio handshake, write/read/doctor, TS installer preview/install/retry/conflict retention

@@ -1,0 +1,292 @@
+{
+  "commit": {
+    "date": "2026-09-16T11:14:07Z",
+    "sha": "7b8be0e59647c90227c0cb945b279d7fa7ab14ef",
+    "tree": "db24488300157869a3dcca848c71a48df27588f2"
+  },
+  "archive_sha256": "2b1b3580c894f114f9762dd1a9ce2c04a97590e752115e2dbf02f20d9d212523",
+  "license_files": [],
+  "package_license": null,
+  "files": [
+    {
+      "path": "packages/mwf/README.md",
+      "sha256": "abb19bc2e2ecc3070604277f13ee9a411dc163daa9edafae0cd2cc88b4a64254"
+    },
+    {
+      "path": "packages/mwf/adapters/README.md",
+      "sha256": "51773f7062ea754a29e16206eea944c1d651a1e4a2244ff419a8a1573f7467dc"
+    },
+    {
+      "path": "packages/mwf/adapters/memory-with-files/SKILL.md",
+      "sha256": "4973546100b70dd4ccff50c9ef65f2ae29b0acee23fa19e5aa228601c2f68973"
+    },
+    {
+      "path": "packages/mwf/adapters/mwf-init/SKILL.md",
+      "sha256": "8a09add812f89ab9318d64298dc184b0b9b29dcf5b7c1b190a130b8c9a71d3b0"
+    },
+    {
+      "path": "packages/mwf/adapters/mwf-status/SKILL.md",
+      "sha256": "1b1e1723a1927feaa9b8e1771dbaaed0cf322ffb359d23260b333d2a89ff6e48"
+    },
+    {
+      "path": "packages/mwf/assets/mwf-template/agents-block.md",
+      "sha256": "52c5bc7865ebd12f46493b0375026f638c8d04c773357ffc0c9c0fa08940b42b"
+    },
+    {
+      "path": "packages/mwf/assets/mwf-template/config.json",
+      "sha256": "565c80196dc7325832a33d8c484a4677de702406f3e2de52c2501faaffb058f2"
+    },
+    {
+      "path": "packages/mwf/assets/mwf-template/handoff.md",
+      "sha256": "5a5efbbbaf107558e1e49dca3942790b7e3f61c916976e495354027e03ca4e6e"
+    },
+    {
+      "path": "packages/mwf/assets/mwf-template/inbox.md",
+      "sha256": "c701d51375a896a88fc575aebc4bb23748c16a7687b26fa73873a82b625223ce"
+    },
+    {
+      "path": "packages/mwf/assets/mwf-template/index.md",
+      "sha256": "41e1092b939b1e3b6a366cb210be1e289bd4ade545e2c7991c8d6cef09fa931a"
+    },
+    {
+      "path": "packages/mwf/assets/mwf-template/protocol.md",
+      "sha256": "47940bb2106c15485a07a6b93b6b88ad5c7f2e726860cec5bedfff80115c167d"
+    },
+    {
+      "path": "packages/mwf/package-lock.json",
+      "sha256": "4361c466d1f957ebf5b10547ceb2143132dc5f15da380b9fdf9caaca8837d096"
+    },
+    {
+      "path": "packages/mwf/package.json",
+      "sha256": "00e12f1a30b4b33bd75049ee77c80c6cfa30c6702581ef109e20b93fe601d45d"
+    },
+    {
+      "path": "packages/mwf/scripts/build.ts",
+      "sha256": "a227eb7f40cd6a01461a680182031719b9f989497fb893973576af5674ac5af7"
+    },
+    {
+      "path": "packages/mwf/scripts/check-package.ts",
+      "sha256": "956c4938305c4713f0b30631562fa0b1d520d69e228a3d01e8d58bb61d7822fd"
+    },
+    {
+      "path": "packages/mwf/scripts/check-pi.ts",
+      "sha256": "80b88b91b49d01b16681c7260ec07a073483f0b657fff733b1eaef98a69feda1"
+    },
+    {
+      "path": "packages/mwf/scripts/pi-contract.ts",
+      "sha256": "5106c0c1f9ad17dafc4f56590f4a97429fb72d5bbf071c444e56c12f44b68ab2"
+    },
+    {
+      "path": "packages/mwf/src/cli.ts",
+      "sha256": "c2158c6325f40c0c3340203524a87c8ad54ae3c058e4be235a2ddb5ecdfe2eff"
+    },
+    {
+      "path": "packages/mwf/src/core.ts",
+      "sha256": "2349ba97a03d297d55a6cc304eb4743173f12b236ed1aad07ef423773875c804"
+    },
+    {
+      "path": "packages/mwf/src/mcp.ts",
+      "sha256": "6bd009d2245a5a47642f76ee737e19baa5ada1562af5a17d7d3902ea59379fa0"
+    },
+    {
+      "path": "packages/mwf/src/pi-adapter.ts",
+      "sha256": "f2d043c8b05fef4780840a9fa69547e8e34520da52c386be7de1fb55fa0d8081"
+    },
+    {
+      "path": "packages/mwf/src/protocol.ts",
+      "sha256": "576ecc0aad81b578d94ef861b0b35e5bdc75c674469c51d17d59162e48dcdc06"
+    },
+    {
+      "path": "packages/mwf/src/setup.ts",
+      "sha256": "65664f4976e1dbdabd365658ae407c9f5eddf241f224092753702608c557945e"
+    },
+    {
+      "path": "packages/mwf/src/storage.ts",
+      "sha256": "e15cdc1d97c4fd258e2a3100d45a5d3c6d0e96263b17f4107eb13cf29380a829"
+    },
+    {
+      "path": "packages/mwf/tests/contracts.ts",
+      "sha256": "50c3a27afe571d0eb9ca2884d1f9e8d96a7fb2b42a5ad51f0d907ed710def884"
+    },
+    {
+      "path": "packages/mwf/tests/core.test.ts",
+      "sha256": "eecdd9941b46c56a5189833e6f8011cda6807c260aa6b0e7f35d8c1a7a8ce823"
+    },
+    {
+      "path": "packages/mwf/tests/fixtures/legacy-schema-1/README.md",
+      "sha256": "76fad965c7219628c4bb583b470f13e363d80fce5544501dd50ad504e068a8a7"
+    },
+    {
+      "path": "packages/mwf/tests/fixtures/legacy-schema-1/project/.gitignore",
+      "sha256": "01ef72728d3c7f5dd1a92102bb97b1a37bf3d7427a1c8c31f29199c695d799fb"
+    },
+    {
+      "path": "packages/mwf/tests/fixtures/legacy-schema-1/project/.mwf/config.json",
+      "sha256": "26f7fe70186bc3b1fce4f4bde1be597e4f5f23d789088cc8a43b8d1d907779e9"
+    },
+    {
+      "path": "packages/mwf/tests/fixtures/legacy-schema-1/project/.mwf/handoff.md",
+      "sha256": "4808757eaed5ba4dff9f75ca8ca1acf44a863dc310794595ef99875cf7cd1de4"
+    },
+    {
+      "path": "packages/mwf/tests/fixtures/legacy-schema-1/project/.mwf/inbox.md",
+      "sha256": "c701d51375a896a88fc575aebc4bb23748c16a7687b26fa73873a82b625223ce"
+    },
+    {
+      "path": "packages/mwf/tests/fixtures/legacy-schema-1/project/.mwf/incidents/inc-20260909-001-embedded-docx-conversion.md",
+      "sha256": "10e1c554f40963c4e7ac505cd961b66c81b45c5e4083ad3baba50c57a081689d"
+    },
+    {
+      "path": "packages/mwf/tests/fixtures/legacy-schema-1/project/.mwf/index.md",
+      "sha256": "ed830a7ffb2271388c0ec4bd59a8e23fe3094f77245a13a0cfa7b950352e29ec"
+    },
+    {
+      "path": "packages/mwf/tests/fixtures/legacy-schema-1/project/.mwf/protocol.md",
+      "sha256": "47940bb2106c15485a07a6b93b6b88ad5c7f2e726860cec5bedfff80115c167d"
+    },
+    {
+      "path": "packages/mwf/tests/fixtures/legacy-schema-1/project/AGENTS.md",
+      "sha256": "9be17c53ee6a49bcb8567dd247670f94e337da5545de5342f4789a30596ae256"
+    },
+    {
+      "path": "packages/mwf/tests/fixtures/legacy-schema-1/recall.json",
+      "sha256": "3a5f99c023acdc98def98fb6f2bffd2d39f546deb6006467b03e2a7bcd3c3baa"
+    },
+    {
+      "path": "packages/mwf/tests/mcp.test.ts",
+      "sha256": "87f006a73029aa0fa1794af095b9689227bf9d3e991cb42e3f69a76cfff25c9e"
+    },
+    {
+      "path": "packages/mwf/tests/pi-adapter.test.ts",
+      "sha256": "03311be12b0eb72f9b3ef19b2537fcc0b6441d714c38108af640dfbc265a7da3"
+    },
+    {
+      "path": "packages/mwf/tsconfig.json",
+      "sha256": "ee9de9f060007f6186083ff50d8eafc64ac9533ed5874173d6114ce6c33f4e90"
+    },
+    {
+      "path": "packages/mwf/tsconfig.tools.json",
+      "sha256": "5a23b7ac2cecac8c23daa8cc1f36824775f16910a1829af0cf60ca4aabf9e044"
+    },
+    {
+      "path": "scripts/install-mwf.ts",
+      "sha256": "f1c6e00ca8466263d2b731293e7b563c083616657774393523664848cf5db312"
+    }
+  ],
+  "test_names": [
+    {
+      "file": "packages/mwf/tests/core.test.ts",
+      "name": "status and initialization preview leave an unconnected project untouched"
+    },
+    {
+      "file": "packages/mwf/tests/core.test.ts",
+      "name": "init preserves user text and is idempotent; local privacy and schema are enforced"
+    },
+    {
+      "file": "packages/mwf/tests/core.test.ts",
+      "name": "malformed AGENTS markers fail before any application file is written"
+    },
+    {
+      "file": "packages/mwf/tests/core.test.ts",
+      "name": "record recall preserves scoped incident boundaries and candidates are marked"
+    },
+    {
+      "file": "packages/mwf/tests/core.test.ts",
+      "name": "strict schemas reject unknown input, missing bodies and secrets in routing too"
+    },
+    {
+      "file": "packages/mwf/tests/core.test.ts",
+      "name": "inbox redaction never echoes a credential and handoff is structured"
+    },
+    {
+      "file": "packages/mwf/tests/core.test.ts",
+      "name": "compaction preserves scope/evidence and forgetting previews by default"
+    },
+    {
+      "file": "packages/mwf/tests/core.test.ts",
+      "name": "persistent idempotency replays same write and rejects changed input"
+    },
+    {
+      "file": "packages/mwf/tests/core.test.ts",
+      "name": "concurrent processes with different titles allocate unique IDs and a complete index"
+    },
+    {
+      "file": "packages/mwf/tests/core.test.ts",
+      "name": "killed writer releases lock and next call recovers durable journal and receipt"
+    },
+    {
+      "file": "packages/mwf/tests/core.test.ts",
+      "name": "recovery refuses an external edit instead of overwriting it"
+    },
+    {
+      "file": "packages/mwf/tests/core.test.ts",
+      "name": "symlink boundaries protect records, local lock and root-owned configuration"
+    },
+    {
+      "file": "packages/mwf/tests/core.test.ts",
+      "name": "migration keeps recoverable backup and forget clears MWF-owned snapshots"
+    },
+    {
+      "file": "packages/mwf/tests/core.test.ts",
+      "name": "Codex setup installs rules/config, verifies real MCP and detaches safely"
+    },
+    {
+      "file": "packages/mwf/tests/core.test.ts",
+      "name": "setup collision leaves application files untouched"
+    },
+    {
+      "file": "packages/mwf/tests/core.test.ts",
+      "name": "legacy schema-1 golden files preserve scoped recall"
+    },
+    {
+      "file": "packages/mwf/tests/core.test.ts",
+      "name": "legacy adoption is explicit and preserves records and user content"
+    },
+    {
+      "file": "packages/mwf/tests/core.test.ts",
+      "name": "bootstrap refresh preserves outside edits and refuses edits inside the owned block"
+    },
+    {
+      "file": "packages/mwf/tests/core.test.ts",
+      "name": "every multi-file commit boundary recovers to one consistent result"
+    },
+    {
+      "file": "packages/mwf/tests/core.test.ts",
+      "name": "retrying a forgotten add cannot resurrect it or expose its old title"
+    },
+    {
+      "file": "packages/mwf/tests/core.test.ts",
+      "name": "recovery removes orphaned atomic-write temp files before forgetting"
+    },
+    {
+      "file": "packages/mwf/tests/mcp.test.ts",
+      "name": "real stdio tool calls validate roots, perform writes and return scoped bootstrap"
+    },
+    {
+      "file": "packages/mwf/tests/pi-adapter.test.ts",
+      "name": "typed Pi adapter injects once, resets across all session events and respects project boundaries"
+    },
+    {
+      "file": "packages/mwf/tests/pi-adapter.test.ts",
+      "name": "adapter failure remains visible and retries after project recovery"
+    },
+    {
+      "file": "packages/mwf/tests/pi-adapter.test.ts",
+      "name": "Pi setup refreshes a v1 owned extension to typed v2 and detach restores the original absence"
+    }
+  ],
+  "direct_dependency_licenses": {
+    "@iarna/toml": {
+      "version": "2.2.5",
+      "license": "ISC"
+    },
+    "@modelcontextprotocol/sdk": {
+      "version": "1.30.0",
+      "license": "MIT"
+    },
+    "zod": {
+      "version": "3.25.76",
+      "license": "MIT"
+    }
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "recorded_on": "2026-10-16",
+  "user_statement": "两个仓库都是我的 我就是 @zht7063，你可以在 gh 检查。请继续工作就好了",
+  "scope": "固定上游 MWF 代码迁入本项目；不代表选择公开许可证或授权发布",
+  "verification": "此前本会话已成功执行 gh api user 及两个仓库查询",
+  "login": "zht7063",
+  "repositories": [
+    {
+      "full_name": "zht7063/skills",
+      "owner": "zht7063",
+      "admin": true
+    },
+    {
+      "full_name": "zht7063/memory-with-files",
+      "owner": "zht7063",
+      "admin": true
+    }
+  ]
+}

@@ -1,0 +1,39 @@
+npm notice run @zht7063/mwf@0.1.0 test
+npm notice run npm run typecheck && node --experimental-strip-types --test tests/*.test.ts
+npm notice run @zht7063/mwf@0.1.0 typecheck
+npm notice run npm run build && tsc -p tsconfig.tools.json
+npm notice run @zht7063/mwf@0.1.0 build
+npm notice run tsc && node --experimental-strip-types scripts/build.ts
+✔ status and initialization preview leave an unconnected project untouched (7.453834ms)
+✔ init preserves user text and is idempotent; local privacy and schema are enforced (383.019ms)
+✔ malformed AGENTS markers fail before any application file is written (1.814583ms)
+✔ record recall preserves scoped incident boundaries and candidates are marked (266.996208ms)
+✔ strict schemas reject unknown input, missing bodies and secrets in routing too (126.152291ms)
+✔ inbox redaction never echoes a credential and handoff is structured (266.0245ms)
+✔ compaction preserves scope/evidence and forgetting previews by default (427.022291ms)
+✔ persistent idempotency replays same write and rejects changed input (188.344167ms)
+✔ concurrent processes with different titles allocate unique IDs and a complete index (1024.782041ms)
+✔ killed writer releases lock and next call recovers durable journal and receipt (218.716625ms)
+✔ recovery refuses an external edit instead of overwriting it (140.529417ms)
+✔ symlink boundaries protect records, local lock and root-owned configuration (140.972959ms)
+✔ migration keeps recoverable backup and forget clears MWF-owned snapshots (239.061625ms)
+✔ Codex setup installs rules/config, verifies real MCP and detaches safely (433.287709ms)
+✔ setup collision leaves application files untouched (1.531625ms)
+✔ legacy schema-1 golden files preserve scoped recall (114.658583ms)
+✔ legacy adoption is explicit and preserves records and user content (150.500125ms)
+✔ bootstrap refresh preserves outside edits and refuses edits inside the owned block (145.898959ms)
+✔ every multi-file commit boundary recovers to one consistent result (915.424583ms)
+✔ retrying a forgotten add cannot resurrect it or expose its old title (230.668791ms)
+✔ recovery removes orphaned atomic-write temp files before forgetting (210.887584ms)
+✔ real stdio tool calls validate roots, perform writes and return scoped bootstrap (491.48925ms)
+✔ typed Pi adapter injects once, resets across all session events and respects project boundaries (787.585541ms)
+✔ adapter failure remains visible and retries after project recovery (403.727833ms)
+✔ Pi setup refreshes a v1 owned extension to typed v2 and detach restores the original absence (904.059959ms)
+ℹ tests 25
+ℹ suites 0
+ℹ pass 25
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 5768.874208
