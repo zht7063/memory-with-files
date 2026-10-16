@@ -1,11 +1,28 @@
 #!/usr/bin/env node
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { randomUUID } from "node:crypto";
+import { RUNTIME_VERSION } from "./contracts/version.js";
+import { failure } from "./contracts/result.js";
+import { serialize } from "./context/output.js";
+import { z } from "zod";
 import fs from "node:fs";
 import path from "node:path";
 import { execute, Operation, schemas } from "./core.js";
 import { MWFError } from "./storage.js";
-import { serve } from "./mcp.js";
-import { detach, setup } from "./setup.js";
-const HELP = `MWF — project-local file memory\n\nmwf setup --root /project --harness codex,pi --git-mode track\nmwf mcp --root /project\nmwf bootstrap|recall|status|doctor --root /project\nmwf add|propose --root /project --type preference --title ... --summary ... --body ...\nmwf handoff|update|process-inbox|duplicates|compact|rebuild-index|migrate|forget --root /project\nmwf detach --root /project [--apply]\n\nAll operations emit JSON. Use --input JSON or --input-file FILE for structured input.\nUse --scope JSON for record routing. --path/--tool/--component/--operation flags are repeatable.\nMaintenance previews by default; --apply commits. init/setup require --git-mode track|ignore.\nsetup --dry-run previews; --no-install-pi-adapter requires the pinned adapter already configured.\nMCP servers are bound to one explicit root. --help shows this help; --version shows package version.\n`;
+import { serve, probe } from "./mcp.js";
+import { lifecycle, setup } from "./setup.js";
+const HELP = `MWF — project-local file memory
+mwf init --root /project --git-mode track|ignore
+mwf attach|rebind --root /project --harness pi|codex [--plugin-root PATH] --apply
+mwf detach --root /project --harness pi|codex|all [--apply]
+mwf migrate --root /project --from 0.1 [--legacy-stopped --apply]
+mwf bootstrap|recall|get|status|doctor --root /project
+mwf handoff --root /project --action list|read|save --task TASK --input-file FILE
+mwf mcp --root /project [--profile agent|maintenance]
+Use --input-file for structured JSON. Reads support --max-reference-tokens and --max-output-bytes.
+Maintenance and lifecycle changes preview unless --apply. setup is deprecated.
+`;
 function stringArg(value: unknown, label: string): string {
   if (typeof value !== "string")
     throw new MWFError("INVALID_INPUT", `${label} must be a string.`);
@@ -25,7 +42,13 @@ function parse(argv: string[]) {
     "blockers",
     "relevant_ids",
   ]);
-  const booleans = new Set(["apply", "dry_run", "redact"]);
+  const booleans = new Set([
+    "apply",
+    "dry_run",
+    "redact",
+    "legacy",
+    "legacy_stopped",
+  ]);
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i];
     if (flag === "--json") continue;
@@ -80,11 +103,26 @@ function parse(argv: string[]) {
     );
     delete input.body_file;
   }
-  for (const key of ["item", "limit", "threshold"])
+  for (const key of [
+    "item",
+    "limit",
+    "threshold",
+    "expected_revision",
+    "max_reference_tokens",
+    "max_output_bytes",
+  ])
     if (input[key] !== undefined) input[key] = Number(input[key]);
-  if (typeof input.harness === "string")
-    input.harness = input.harness.split(",");
+
   if (typeof input.scope === "string") input.scope = JSON.parse(input.scope);
+  if (input.task) {
+    input.task_id = input.task;
+    delete input.task;
+  }
+  if (input.scope_kind || input.scope_id) {
+    input.target_scope = { kind: input.scope_kind, id: input.scope_id };
+    delete input.scope_kind;
+    delete input.scope_id;
+  }
   return input;
 }
 async function main() {
@@ -94,7 +132,7 @@ async function main() {
     return;
   }
   if (op === "--version") {
-    console.log("0.1.0");
+    console.log(RUNTIME_VERSION);
     return;
   }
   const a = parse(argv);
@@ -122,39 +160,98 @@ async function main() {
     a.path = a.path[0];
   }
   if (op === "mcp") {
-    if (Object.keys(a).some((k) => k !== "project_root") || !a.project_root)
-      throw new MWFError("INVALID_INPUT", "mcp requires --root only.");
-    await serve(stringArg(a.project_root, "root"));
+    const opts = z
+      .object({
+        project_root: z.string(),
+        harness: z.enum(["pi", "codex"]).optional(),
+        binding_generation: z.string().optional(),
+        session_ref: z.string().optional(),
+        profile: z.enum(["agent", "maintenance"]).default("agent"),
+      })
+      .strict()
+      .parse(a);
+    await serve(opts.project_root, opts);
     return;
   }
-  let result;
-  if (op === "setup") result = await setup(a);
-  else if (op === "detach") {
+  if (
+    ["attach", "rebind", "setup"].includes(op) &&
+    typeof a.plugin_root === "string"
+  ) {
+    const runtime = path.join(
+      a.plugin_root,
+      a.harness === "pi" ? "" : "runtime",
+      "dist/cli.js",
+    );
     if (
-      Object.keys(a).some((k) => !["project_root", "apply"].includes(k)) ||
-      !a.project_root
-    )
-      throw new MWFError(
-        "INVALID_INPUT",
-        "detach requires --root and optional --apply.",
-      );
-    result = detach(stringArg(a.project_root, "root"), a.apply === true);
+      fs.realpathSync(runtime) !==
+      fs.realpathSync(fileURLToPath(import.meta.url))
+    ) {
+      const child = spawnSync(process.execPath, [runtime, op, ...argv], {
+        stdio: "inherit",
+      });
+      process.exitCode = child.status ?? 2;
+      return;
+    }
+  }
+  let result;
+  if (op === "setup") {
+    if (typeof a.harness === "string") a.harness = a.harness.split(",");
+    result = await setup(a);
+  } else if (op === "attach" || op === "rebind" || op === "detach") {
+    result = lifecycle(op, a);
+    if (op !== "detach" && a.apply && !a.dry_run && result.ok) {
+      const stages = result.data as Record<string, unknown>;
+      const probes: Record<string, unknown> = {
+        direct: "not_run",
+        mcp: "not_run",
+        scope: "standalone_runtime",
+        host_reload: "pending",
+      };
+      stages.probed = probes;
+      try {
+        execute("bootstrap", { project_root: result.project_root });
+        probes.direct = "pass";
+        probes.mcp = await probe(
+          result.project_root,
+          fileURLToPath(import.meta.url),
+        );
+      } catch {
+        probes.failed = true;
+        result.warnings.push(
+          "Resources committed, but standalone probing failed; inspect doctor and reload the host.",
+        );
+      }
+    }
   } else {
     if (!Object.hasOwn(schemas, op))
       throw new MWFError(
         "UNKNOWN_OPERATION",
         `Unknown operation ${op}. Use --help.`,
       );
+    if (
+      [
+        "add",
+        "propose",
+        "update",
+        "forget",
+        "compact",
+        "rebuild-index",
+      ].includes(op) ||
+      (op === "handoff" && a.action === "save")
+    )
+      a.request_id ??= randomUUID();
     result = execute(op as Operation, a);
   }
-  console.log(JSON.stringify(result, null, 2));
+  console.log(serialize(result));
   if (!result.ok) process.exitCode = 1;
 }
 main().catch((e) => {
-  const error =
-    e instanceof MWFError
-      ? { code: e.code, message: e.message }
-      : { code: "IO_ERROR", message: e.message };
-  console.error(JSON.stringify({ ok: false, error }));
+  const args = process.argv.slice(2),
+    at = args.indexOf("--root");
+  const output = serialize(
+    failure(args[0] ?? "unknown", at >= 0 ? args[at + 1] : "", e),
+  );
+  if (args[0] === "mcp") console.error(output);
+  else console.log(output);
   process.exitCode = 2;
 });

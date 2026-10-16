@@ -24,3 +24,13 @@
 - 产物写入已忽略的 `dist/` 与 `releases/`，不提交生成文件。
 
 实现顺序及门槛见 [构建计划](../docs/build-plan-0.2.0.md) §4、§5。远程发布需要另行授权。
+
+## 当前 0.2.0 命令
+
+- `npm test`：构建、类型检查、确定性测试（原存储回归 + v2/生命周期/接口）。
+- `npm run test:package`：真实 tarball、隔离安装、离线依赖、包导入与 CLI。
+- `npm run pack:release`：同一版本生成 tarball、完整 runtime Codex zip、SHA256SUMS、非发布资格状态；不 publish。
+- `npm run test:integrations`：默认契约测试；显式 MWF_PI_BINARY / MWF_CODEX_BINARY 才运行真实宿主脚本。需先 pack:release。桌面 GUI 永远单列。
+- `node --experimental-strip-types scripts/benchmark.ts /absolute/baseline/dist/core.js`：固定 0.1 路径、0.2 路径、无 MWF 的确定性输出比较，不替代完整性能报告。
+
+旧 check-pi.ts/pi-contract.ts 保留历史契约参考，不是当前 npm test:pi 执行路径，不能当作本版宿主证据。

@@ -96,3 +96,11 @@ M1 沿用基线工具链，未来 npm bin 指向 `dist/cli.js`，Pi 声明指向
 M5/M6 从同次 npm 产物生成 Codex runtime，不维护第二份实现。manifest、runtime 和 Pi 资产版本一致；运行依赖与 tokenizer 词表离线可用。宿主 Pi 不随 MWF 打包，Node 可执行文件仍是外部前置条件。
 
 真实支持状态只看 [兼容矩阵](compatibility.md) 和包验收证据，不由本架构文档推导。
+
+## 0.2.0 当前实现落点
+
+实际代码已沿用原存储实现归位：`storage/index.ts` 管理 SQLite 辅助锁、Transaction、journal 与恢复；`contracts/records.ts` 管理 schema 1、记录解析与匹配；`core/index.ts` 是共用 execute/schema，`core/handoff.ts` 管理 scoped handoff；`context/output.ts` 统一 tokenizer、双预算和 cursor。现有 `src/core.ts`、`protocol.ts`、`storage.ts` 是薄导出，不存在第二套业务实现。
+
+CLI/MCP 仍保留顶层入口，避免无意义构建路径变动；检索暂在 records/Core 中，不为目录占位拆空实现。生命周期使用 receipt v2；集成共享 binding、identity、context。Codex supervisor 为同步锁阻塞提供总截止时间，诊断 marker 独占创建、不等待项目锁，仅保存错误类别和时间，正常会话内容不会写入诊断。错误提示去重依赖本地目录可写；损坏/只读文件系统下只能尽力提示。
+
+协议详情见 [API 2](protocol.md)。安装/迁移边界见 [安装](install.md)和[迁移](migration-0.2.0.md)。M0 原型不在生产入口导入链内。

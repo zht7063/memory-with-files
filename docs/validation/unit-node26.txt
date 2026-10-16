@@ -1,0 +1,52 @@
+
+> @zht7063/mwf@0.2.0 test
+> npm run typecheck && node --experimental-strip-types --test tests/*.test.ts
+
+
+> @zht7063/mwf@0.2.0 typecheck
+> npm run build && tsc -p tsconfig.tools.json
+
+
+> @zht7063/mwf@0.2.0 build
+> tsc && node --experimental-strip-types scripts/build.ts
+
+✔ status and initialization preview leave an unconnected project untouched (28.799833ms)
+✔ init preserves user text and is idempotent; local privacy and schema are enforced (431.462792ms)
+✔ initialization ignores unrelated malformed AGENTS markers (307.717167ms)
+✔ record recall preserves scoped incident boundaries and candidates are marked (931.078333ms)
+✔ strict schemas reject unknown input, missing bodies and secrets in routing too (141.636417ms)
+✔ inbox redaction never echoes a credential and handoff is structured (188.614375ms)
+✔ compaction preserves scope/evidence and forgetting previews by default (296.055875ms)
+✔ persistent idempotency replays same write and rejects changed input (159.693292ms)
+✔ concurrent processes with different titles allocate unique IDs and a complete index (1296.10375ms)
+✔ killed writer releases lock and next call recovers durable journal and receipt (276.32475ms)
+✔ recovery refuses an external edit instead of overwriting it (128.731167ms)
+✔ symlink boundaries protect records, local lock and root-owned configuration (116.057416ms)
+✔ migration keeps recoverable backup and forget clears MWF-owned snapshots (198.328416ms)
+✔ legacy schema-1 golden files preserve scoped recall (10.825041ms)
+✔ legacy adoption is explicit and preserves records and user content (155.271208ms)
+✔ migration refuses edited or ambiguous legacy blocks, preserving bytes (3.308958ms)
+✔ every multi-file commit boundary recovers to one consistent result (761.169833ms)
+✔ retrying a forgotten add cannot resurrect it or expose its old title (191.50575ms)
+✔ recovery removes orphaned atomic-write temp files before forgetting (171.622292ms)
+✔ installed Codex runtime preserves unrelated TOML and disables before cleanup conflicts (3995.786125ms)
+✔ real stdio tool calls validate roots, perform writes and return scoped bootstrap (1382.711833ms)
+✔ native Pi adapter respects enablement, trust, epochs and detach (1470.70575ms)
+✔ session and task handoffs isolate, replay before revision checks and recover after interruption (1492.010583ms)
+✔ record pages preserve 200k code points, budgets measure final text, and edited cursors fail (10880.449292ms)
+✔ retrieval filters status and path, matches Chinese, and separates invalid boundaries (434.380084ms)
+✔ content hash prevents overwriting external edits but completed retry still replays (193.972375ms)
+✔ binding refuses copied projects, nested disabled roots and revoked generations (351.976708ms)
+✔ epoch output reserves atomically, deduplicates, releases only known failures and restores on reset (393.322ms)
+✔ handoff list and legacy pages are bounded and continue without omissions (1106.114ms)
+✔ CLI errors share API envelope and leave stderr for diagnostics (268.615459ms)
+✔ concurrent task saves commit once and concurrent context reservations stay within epoch (3463.701625ms)
+✔ hook failure notices persist per session and category without following symlinks (228.777958ms)
+ℹ tests 32
+ℹ suites 0
+ℹ pass 32
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 19018.59175

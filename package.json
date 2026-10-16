@@ -1,6 +1,6 @@
 {
   "name": "@zht7063/mwf",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Project-local file memory with a CLI and stdio MCP server",
   "type": "module",
   "bin": {
@@ -11,25 +11,31 @@
   },
   "files": [
     "dist",
-    "assets",
-    "adapters",
-    "README.md"
+    "assets/memory",
+    "assets/skills",
+    "assets/mwf-template/agents-block.md",
+    "README.md",
+    "LICENSE",
+    "THIRD-PARTY.md"
   ],
   "engines": {
-    "node": ">=22.16.0"
+    "node": ">=22.19.0"
   },
   "scripts": {
     "build": "tsc && node --experimental-strip-types scripts/build.ts",
     "test": "npm run typecheck && node --experimental-strip-types --test tests/*.test.ts",
     "prepack": "npm run build",
     "test:package": "npm run build && node --experimental-strip-types scripts/check-package.ts",
-    "test:pi": "node --experimental-strip-types scripts/check-pi.ts",
+    "test:pi": "npm run test:integrations",
     "format:check": "prettier --check \"src/**/*.ts\" \"tests/**/*.ts\" \"scripts/**/*.ts\" package.json \"tsconfig*.json\"",
-    "typecheck": "npm run build && tsc -p tsconfig.tools.json"
+    "typecheck": "npm run build && tsc -p tsconfig.tools.json",
+    "pack:release": "npm run build && node --experimental-strip-types scripts/pack-release.ts",
+    "test:integrations": "npm run build && node --experimental-strip-types scripts/check-integrations.ts"
   },
   "dependencies": {
     "@iarna/toml": "2.2.5",
     "@modelcontextprotocol/sdk": "1.30.0",
+    "js-tiktoken": "1.0.21",
     "zod": "3.25.76"
   },
   "devDependencies": {
@@ -40,6 +46,13 @@
   "bundleDependencies": [
     "@iarna/toml",
     "@modelcontextprotocol/sdk",
-    "zod"
-  ]
+    "zod",
+    "js-tiktoken"
+  ],
+  "pi": {
+    "extensions": [
+      "./dist/integrations/pi/index.js"
+    ]
+  },
+  "license": "MIT"
 }

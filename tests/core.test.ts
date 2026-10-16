@@ -6,10 +6,10 @@ import os from "node:os";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { execute as rawExecute } from "../dist/core.js";
-import { execute, setupData, previewData } from "./contracts.ts";
+import { execute } from "./contracts.ts";
 import type { TestContext } from "node:test";
 import { z } from "zod";
-import { setup, detach } from "../dist/setup.js";
+
 import { Transaction, withProjectLock } from "../dist/storage.js";
 const cli = fileURLToPath(new URL("../dist/cli.js", import.meta.url));
 const core = fileURLToPath(new URL("../dist/core.js", import.meta.url));
@@ -78,6 +78,13 @@ test("status and initialization preview leave an unconnected project untouched",
 test("init preserves user text and is idempotent; local privacy and schema are enforced", (t) => {
   const root = temp(t);
   fs.writeFileSync(path.join(root, "AGENTS.md"), "# User rules\nKeep these.\n");
+  fs.writeFileSync(
+    path.join(root, "CLAUDE.md"),
+    "# User Claude rules\r\nKeep these too.\r\n",
+  );
+  const rules = ["AGENTS.md", "CLAUDE.md"].map(
+    (file) => [file, fs.readFileSync(path.join(root, file))] as const,
+  );
   fs.writeFileSync(path.join(root, ".gitignore"), "build/\n");
   init(root);
   assert.match(
@@ -89,7 +96,7 @@ test("init preserves user text and is idempotent; local privacy and schema are e
   execute("init", { project_root: root, git_mode: "ignore" });
   assert.match(
     fs.readFileSync(path.join(root, ".gitignore"), "utf8"),
-    /^\.mwf\/$/m,
+    /^\.mwf\/local\/$/m,
   );
   const config = path.join(root, ".mwf/config.json");
   const c = JSON.parse(fs.readFileSync(config, "utf8"));
@@ -99,15 +106,17 @@ test("init preserves user text and is idempotent; local privacy and schema are e
   assert.throws(() => init(root), /newer/);
   assert.equal(fs.readFileSync(path.join(root, "AGENTS.md"), "utf8"), agents);
   assert.throws(() => add(root), /newer/);
+  for (const [file, bytes] of rules)
+    assert.deepEqual(fs.readFileSync(path.join(root, file)), bytes);
 });
-test("malformed AGENTS markers fail before any application file is written", (t) => {
+test("initialization ignores unrelated malformed AGENTS markers", (t) => {
   const root = temp(t);
   fs.writeFileSync(
     path.join(root, "AGENTS.md"),
     "<!-- memory-with-files:end -->\n<!-- memory-with-files:start -->",
   );
-  assert.throws(() => init(root), /Malformed/);
-  assert.equal(fs.existsSync(path.join(root, ".mwf/config.json")), false);
+  init(root);
+  assert.equal(fs.existsSync(path.join(root, ".mwf/config.json")), true);
 });
 test("record recall preserves scoped incident boundaries and candidates are marked", (t) => {
   const root = temp(t);
@@ -126,20 +135,18 @@ test("record recall preserves scoped incident boundaries and candidates are mark
     },
   });
   assert.deepEqual(
-    execute("recall", { project_root: root, file_type: [".docx"] }).data,
+    execute("recall", { project_root: root, file_type: [".docx"] }).data
+      .entries,
     [],
   );
   const matches = execute("recall", {
     project_root: root,
     file_type: [".docx"],
     operation: ["conversion"],
-  }).data;
+  }).data.entries;
   assert.equal(matches[0].id, incident.data.id);
-  assert.ok(matches[0].incident_boundaries);
-  assert.match(
-    matches[0].incident_boundaries.applicability,
-    /Pandoc remains valid/,
-  );
+  assert.ok(matches[0].boundaries);
+  assert.match(matches[0].boundaries.applicability, /Pandoc remains valid/);
   const proposed = execute("propose", {
     project_root: root,
     type: "preference",
@@ -227,12 +234,19 @@ test("inbox redaction never echoes a credential and handoff is structured", (t) 
   );
   execute("handoff", {
     project_root: root,
-    goal: "Migrate MWF",
-    next_action: "Test installed package",
-    completed: ["Core implemented"],
+    action: "save",
+    task_id: "migration",
+    expected_revision: 0,
+    request_id: "handoff",
+    data: {
+      goal: "Migrate MWF",
+      next_action: "Test installed package",
+      completed: ["Core implemented"],
+    },
   });
   assert.match(
-    execute("bootstrap", { project_root: root }).data.handoff,
+    execute("bootstrap", { project_root: root, task_id: "migration" }).data
+      .handoff!.next_action,
     /Test installed package/,
   );
   assert.equal(execute("doctor", { project_root: root }).ok, true);
@@ -405,49 +419,6 @@ test("migration keeps recoverable backup and forget clears MWF-owned snapshots",
   execute("forget", { project_root: root, id: a.data.id, apply: true });
   assert.equal(fs.existsSync(path.join(root, result.data.backup)), false);
 });
-test("Codex setup installs rules/config, verifies real MCP and detaches safely", async (t) => {
-  const root = temp(t);
-  fs.mkdirSync(path.join(root, ".codex"));
-  fs.writeFileSync(
-    path.join(root, ".codex/config.toml"),
-    '# User comment\nmodel = "user-model"\n',
-  );
-  const input = { project_root: root, git_mode: "track", harness: ["codex"] };
-  const preview = await setup({ ...input, dry_run: true });
-  assert.equal(setupData.parse(preview.data).preview, true);
-  assert.equal(fs.existsSync(path.join(root, ".mwf")), false);
-  const result = await setup(input);
-  assert.equal(setupData.parse(result.data).mcp?.bootstrap_verified, true);
-  assert.match(
-    fs.readFileSync(path.join(root, ".codex/config.toml"), "utf8"),
-    /User comment/,
-  );
-  assert.deepEqual((await setup(input)).changed_files, []);
-  assert.match(
-    fs.readFileSync(path.join(root, "AGENTS.md"), "utf8"),
-    /bootstrap v2/,
-  );
-  assert.ok(previewData.parse(detach(root).data).preview);
-  detach(root, true);
-  assert.equal(
-    fs.readFileSync(path.join(root, ".codex/config.toml"), "utf8"),
-    '# User comment\nmodel = "user-model"\n',
-  );
-  assert.ok(fs.existsSync(path.join(root, ".mwf/config.json")));
-});
-test("setup collision leaves application files untouched", async (t) => {
-  const root = temp(t);
-  fs.mkdirSync(path.join(root, ".codex"));
-  fs.writeFileSync(
-    path.join(root, ".codex/config.toml"),
-    '[mcp_servers.mwf]\ncommand="someone-else"\n',
-  );
-  await assert.rejects(
-    setup({ project_root: root, git_mode: "track", harness: ["codex"] }),
-    /not owned/,
-  );
-  assert.equal(fs.existsSync(path.join(root, ".mwf")), false);
-});
 test("legacy schema-1 golden files preserve scoped recall", (t) => {
   const root = legacyProject(t);
   const expected = JSON.parse(
@@ -461,10 +432,16 @@ test("legacy schema-1 golden files preserve scoped recall", (t) => {
     operation: ["conversion"],
   };
   const recall = () =>
-    execute("recall", query).data.map(({ body, ...rest }) => rest);
+    execute("recall", query).data.entries.map(
+      ({ content_hash, complete, boundaries, ...rest }) => ({
+        ...rest,
+        incident_boundaries: boundaries,
+      }),
+    );
   assert.deepEqual(recall(), expected);
   assert.deepEqual(
-    execute("recall", { project_root: root, file_type: [".docx"] }).data,
+    execute("recall", { project_root: root, file_type: [".docx"] }).data
+      .entries,
     [],
   );
   init(root);
@@ -484,7 +461,7 @@ test("legacy adoption is explicit and preserves records and user content", (t) =
     execute("status", { project_root: root }).data.runtime_owner,
     "legacy",
   );
-  assert.throws(() => add(root), /explicit init\/setup/);
+  assert.throws(() => add(root), /migrate/);
   execute("init", { project_root: root, git_mode: "track", dry_run: true });
   assert.equal(fs.readFileSync(configPath, "utf8"), configBefore);
   const agents = path.join(root, "AGENTS.md");
@@ -495,7 +472,12 @@ test("legacy adoption is explicit and preserves records and user content", (t) =
   const inbox = path.join(root, ".mwf/inbox.md");
   const inboxBefore = fs.readFileSync(inbox, "utf8") + "\nUser intake note.\n";
   fs.writeFileSync(inbox, inboxBefore);
-  init(root);
+  execute("migrate", {
+    project_root: root,
+    from: "0.1",
+    apply: true,
+    legacy_stopped: true,
+  });
   assert.equal(
     execute("status", { project_root: root }).data.runtime_owner,
     "mwf-typescript",
@@ -508,22 +490,22 @@ test("legacy adoption is explicit and preserves records and user content", (t) =
   assert.equal(execute("doctor", { project_root: root }).ok, true);
 });
 
-test("bootstrap refresh preserves outside edits and refuses edits inside the owned block", (t) => {
-  const root = temp(t);
-  init(root);
-  const p = path.join(root, "AGENTS.md");
-  const before = fs.readFileSync(p, "utf8");
-  fs.writeFileSync(p, "# New project rules\n\n" + before);
-  init(root);
-  assert.match(fs.readFileSync(p, "utf8"), /New project rules/);
-  fs.writeFileSync(
-    p,
-    fs
-      .readFileSync(p, "utf8")
-      .replace("MWF bootstrap v2", "User modified bootstrap"),
+test("migration refuses edited or ambiguous legacy blocks, preserving bytes", (t) => {
+  const root = legacyProject(t),
+    p = path.join(root, "AGENTS.md"),
+    before = fs.readFileSync(p, "utf8") + "\n<!-- memory-with-files:start -->";
+  fs.writeFileSync(p, before);
+  assert.throws(
+    () =>
+      execute("migrate", {
+        project_root: root,
+        from: "0.1",
+        apply: true,
+        legacy_stopped: true,
+      }),
+    /markers/,
   );
-  assert.throws(() => init(root), /bootstrap block was edited/);
-  assert.match(fs.readFileSync(p, "utf8"), /User modified bootstrap/);
+  assert.equal(fs.readFileSync(p, "utf8"), before);
 });
 test("every multi-file commit boundary recovers to one consistent result", (t) => {
   for (const stage of [

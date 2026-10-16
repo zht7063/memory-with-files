@@ -1,0 +1,370 @@
+{
+  "kind": "deterministic memory-output comparison",
+  "rows": [
+    {
+      "records": 10,
+      "scenario": "new-session",
+      "version": "0.1.0",
+      "memory_reference_tokens": 863,
+      "memory_bytes": 2838,
+      "read_ms": 4.61
+    },
+    {
+      "records": 10,
+      "scenario": "new-session",
+      "version": "0.2.0",
+      "memory_reference_tokens": 275,
+      "memory_bytes": 885,
+      "read_ms": 5.53
+    },
+    {
+      "records": 10,
+      "scenario": "new-session",
+      "version": "no-mwf",
+      "memory_reference_tokens": 0,
+      "memory_bytes": 0,
+      "read_ms": 0
+    },
+    {
+      "records": 10,
+      "scenario": "known-solution",
+      "version": "0.1.0",
+      "memory_reference_tokens": 891,
+      "memory_bytes": 3090,
+      "read_ms": 6.83
+    },
+    {
+      "records": 10,
+      "scenario": "known-solution",
+      "version": "0.2.0",
+      "memory_reference_tokens": 1259,
+      "memory_bytes": 3543,
+      "read_ms": 13.34
+    },
+    {
+      "records": 10,
+      "scenario": "known-solution",
+      "version": "no-mwf",
+      "memory_reference_tokens": 0,
+      "memory_bytes": 0,
+      "read_ms": 0
+    },
+    {
+      "records": 10,
+      "scenario": "no-relevant",
+      "version": "0.1.0",
+      "memory_reference_tokens": 148,
+      "memory_bytes": 466,
+      "read_ms": 2.16
+    },
+    {
+      "records": 10,
+      "scenario": "no-relevant",
+      "version": "0.2.0",
+      "memory_reference_tokens": 249,
+      "memory_bytes": 746,
+      "read_ms": 2.62
+    },
+    {
+      "records": 10,
+      "scenario": "no-relevant",
+      "version": "no-mwf",
+      "memory_reference_tokens": 0,
+      "memory_bytes": 0,
+      "read_ms": 0
+    },
+    {
+      "records": 10,
+      "scenario": "task-switch",
+      "version": "0.1.0",
+      "memory_reference_tokens": 877,
+      "memory_bytes": 2995,
+      "read_ms": 1.87
+    },
+    {
+      "records": 10,
+      "scenario": "task-switch",
+      "version": "0.2.0",
+      "memory_reference_tokens": 1205,
+      "memory_bytes": 3367,
+      "read_ms": 6.77
+    },
+    {
+      "records": 10,
+      "scenario": "task-switch",
+      "version": "no-mwf",
+      "memory_reference_tokens": 0,
+      "memory_bytes": 0,
+      "read_ms": 0
+    },
+    {
+      "records": 10,
+      "scenario": "parallel-session-read",
+      "version": "0.1.0",
+      "memory_reference_tokens": 1592,
+      "memory_bytes": 5367,
+      "read_ms": 2.92
+    },
+    {
+      "records": 10,
+      "scenario": "parallel-session-read",
+      "version": "0.2.0",
+      "memory_reference_tokens": 1018,
+      "memory_bytes": 2929,
+      "read_ms": 11.35
+    },
+    {
+      "records": 10,
+      "scenario": "parallel-session-read",
+      "version": "no-mwf",
+      "memory_reference_tokens": 0,
+      "memory_bytes": 0,
+      "read_ms": 0
+    },
+    {
+      "records": 100,
+      "scenario": "new-session",
+      "version": "0.1.0",
+      "memory_reference_tokens": 5786,
+      "memory_bytes": 18454,
+      "read_ms": 16.74
+    },
+    {
+      "records": 100,
+      "scenario": "new-session",
+      "version": "0.2.0",
+      "memory_reference_tokens": 993,
+      "memory_bytes": 2888,
+      "read_ms": 26.97
+    },
+    {
+      "records": 100,
+      "scenario": "new-session",
+      "version": "no-mwf",
+      "memory_reference_tokens": 0,
+      "memory_bytes": 0,
+      "read_ms": 0
+    },
+    {
+      "records": 100,
+      "scenario": "known-solution",
+      "version": "0.1.0",
+      "memory_reference_tokens": 909,
+      "memory_bytes": 3190,
+      "read_ms": 12.31
+    },
+    {
+      "records": 100,
+      "scenario": "known-solution",
+      "version": "0.2.0",
+      "memory_reference_tokens": 1262,
+      "memory_bytes": 3643,
+      "read_ms": 16.59
+    },
+    {
+      "records": 100,
+      "scenario": "known-solution",
+      "version": "no-mwf",
+      "memory_reference_tokens": 0,
+      "memory_bytes": 0,
+      "read_ms": 0
+    },
+    {
+      "records": 100,
+      "scenario": "no-relevant",
+      "version": "0.1.0",
+      "memory_reference_tokens": 859,
+      "memory_bytes": 2960,
+      "read_ms": 9.11
+    },
+    {
+      "records": 100,
+      "scenario": "no-relevant",
+      "version": "0.2.0",
+      "memory_reference_tokens": 1172,
+      "memory_bytes": 3323,
+      "read_ms": 13.37
+    },
+    {
+      "records": 100,
+      "scenario": "no-relevant",
+      "version": "no-mwf",
+      "memory_reference_tokens": 0,
+      "memory_bytes": 0,
+      "read_ms": 0
+    },
+    {
+      "records": 100,
+      "scenario": "task-switch",
+      "version": "0.1.0",
+      "memory_reference_tokens": 879,
+      "memory_bytes": 3004,
+      "read_ms": 8.54
+    },
+    {
+      "records": 100,
+      "scenario": "task-switch",
+      "version": "0.2.0",
+      "memory_reference_tokens": 1204,
+      "memory_bytes": 3375,
+      "read_ms": 14.7
+    },
+    {
+      "records": 100,
+      "scenario": "task-switch",
+      "version": "no-mwf",
+      "memory_reference_tokens": 0,
+      "memory_bytes": 0,
+      "read_ms": 0
+    },
+    {
+      "records": 100,
+      "scenario": "parallel-session-read",
+      "version": "0.1.0",
+      "memory_reference_tokens": 5806,
+      "memory_bytes": 18498,
+      "read_ms": 13.19
+    },
+    {
+      "records": 100,
+      "scenario": "parallel-session-read",
+      "version": "0.2.0",
+      "memory_reference_tokens": 1018,
+      "memory_bytes": 2930,
+      "read_ms": 19.5
+    },
+    {
+      "records": 100,
+      "scenario": "parallel-session-read",
+      "version": "no-mwf",
+      "memory_reference_tokens": 0,
+      "memory_bytes": 0,
+      "read_ms": 0
+    },
+    {
+      "records": 1000,
+      "scenario": "new-session",
+      "version": "0.1.0",
+      "memory_reference_tokens": 47909,
+      "memory_bytes": 150577,
+      "read_ms": 112.66
+    },
+    {
+      "records": 1000,
+      "scenario": "new-session",
+      "version": "0.2.0",
+      "memory_reference_tokens": 994,
+      "memory_bytes": 2889,
+      "read_ms": 97.46
+    },
+    {
+      "records": 1000,
+      "scenario": "new-session",
+      "version": "no-mwf",
+      "memory_reference_tokens": 0,
+      "memory_bytes": 0,
+      "read_ms": 0
+    },
+    {
+      "records": 1000,
+      "scenario": "known-solution",
+      "version": "0.1.0",
+      "memory_reference_tokens": 910,
+      "memory_bytes": 3191,
+      "read_ms": 75.56
+    },
+    {
+      "records": 1000,
+      "scenario": "known-solution",
+      "version": "0.2.0",
+      "memory_reference_tokens": 1263,
+      "memory_bytes": 3644,
+      "read_ms": 79.97
+    },
+    {
+      "records": 1000,
+      "scenario": "known-solution",
+      "version": "no-mwf",
+      "memory_reference_tokens": 0,
+      "memory_bytes": 0,
+      "read_ms": 0
+    },
+    {
+      "records": 1000,
+      "scenario": "no-relevant",
+      "version": "0.1.0",
+      "memory_reference_tokens": 860,
+      "memory_bytes": 2961,
+      "read_ms": 82.94
+    },
+    {
+      "records": 1000,
+      "scenario": "no-relevant",
+      "version": "0.2.0",
+      "memory_reference_tokens": 1173,
+      "memory_bytes": 3324,
+      "read_ms": 79.95
+    },
+    {
+      "records": 1000,
+      "scenario": "no-relevant",
+      "version": "no-mwf",
+      "memory_reference_tokens": 0,
+      "memory_bytes": 0,
+      "read_ms": 0
+    },
+    {
+      "records": 1000,
+      "scenario": "task-switch",
+      "version": "0.1.0",
+      "memory_reference_tokens": 880,
+      "memory_bytes": 3005,
+      "read_ms": 77.6
+    },
+    {
+      "records": 1000,
+      "scenario": "task-switch",
+      "version": "0.2.0",
+      "memory_reference_tokens": 1205,
+      "memory_bytes": 3376,
+      "read_ms": 90.86
+    },
+    {
+      "records": 1000,
+      "scenario": "task-switch",
+      "version": "no-mwf",
+      "memory_reference_tokens": 0,
+      "memory_bytes": 0,
+      "read_ms": 0
+    },
+    {
+      "records": 1000,
+      "scenario": "parallel-session-read",
+      "version": "0.1.0",
+      "memory_reference_tokens": 47929,
+      "memory_bytes": 150621,
+      "read_ms": 115.8
+    },
+    {
+      "records": 1000,
+      "scenario": "parallel-session-read",
+      "version": "0.2.0",
+      "memory_reference_tokens": 1019,
+      "memory_bytes": 2931,
+      "read_ms": 91.21
+    },
+    {
+      "records": 1000,
+      "scenario": "parallel-session-read",
+      "version": "no-mwf",
+      "memory_reference_tokens": 0,
+      "memory_bytes": 0,
+      "read_ms": 0
+    }
+  ],
+  "limitations": [
+    "Not end-to-end model task completion or billed token measurements",
+    "Tool schema and maintenance call costs require the same real model task harness",
+    "Parallel-session correctness is covered by separate tests, not latency simulation"
+  ]
+}

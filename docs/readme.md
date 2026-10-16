@@ -28,12 +28,15 @@
 - [迁移授权记录](validation/M0-authorization.json)：所有者确认和 GitHub 身份核对。
 - [M0 可复跑探针](../tests/integrations/m0/readme.md)：运行前置、命令与覆盖边界。
 
-## 后续文档交付
+## 0.2.0 实施文档
 
-- M3：随迁移实现编写 `migration-0.2.0.md`。
-- M4–M6：随实际安装与接口实现编写 `install.md`、`protocol.md`，更新架构和兼容矩阵。
-- M6：补齐根目录 `CHANGELOG.md` 和发布说明，用户命令以实际包执行结果为准。
-- 阶段验证完成后新增 `validation/` 中的实际报告并在本索引登记；未运行前不创建假结果或空白占位文档。
+- [安装、升级与卸载](install.md)：实际 CLI 与包路径，桌面未验证边界。
+- [迁移说明](migration-0.2.0.md)：预检、停旧入口、精确清理与失败恢复。
+- [API 2 协议](protocol.md)：共享结果、8 个默认工具、身份、版本和预算。
+- [实施验收记录](validation/implementation-0.2.0.md)：当前结果、44 项逐条追踪、剩余发布阻塞。
+- [桌面人工验收](validation/desktop-checklist.md)：可复现操作与需要记录的证据。
+- [三路确定性输出基准](validation/implementation-benchmark.json)：非完整端到端性能报告，不推导节省比例。
+- [CHANGELOG](../CHANGELOG.md) · [MIT 许可证](../LICENSE)
 
 ## 维护约定
 

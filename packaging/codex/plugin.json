@@ -1,0 +1,10 @@
+{
+  "name": "mwf",
+  "description": "Project memory stored in local files",
+  "extensions": {
+    "com.openai": {
+      "hooks": "./hooks/hooks.json",
+      "onboardingSkill": "./skills/setup/SKILL.md"
+    }
+  }
+}

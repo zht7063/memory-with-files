@@ -5,19 +5,23 @@ import type { Operation } from "../dist/core.js";
 export const recordData = z
   .object({ id: z.string(), path: z.string(), status: z.string() })
   .passthrough();
-export const recallData = z.array(
-  z
-    .object({
-      id: z.string(),
-      path: z.string(),
-      body: z.string(),
-      summary: z.string(),
-      incident_boundaries: z.record(z.string()).optional(),
-    })
-    .passthrough(),
-);
+export const entryData = z
+  .object({
+    id: z.string(),
+    path: z.string(),
+    summary: z.string(),
+    content_hash: z.string(),
+    boundaries: z.record(z.string()).optional(),
+  })
+  .passthrough();
+export const recallData = z
+  .object({ entries: z.array(entryData) })
+  .passthrough();
 export const bootstrapData = z
-  .object({ handoff: z.string(), index: z.string(), matches: recallData })
+  .object({
+    entries: z.array(entryData),
+    handoff: z.object({ next_action: z.string() }).passthrough().nullable(),
+  })
   .passthrough();
 const contracts = {
   init: z.object({ preview: z.boolean().optional() }).passthrough(),
@@ -31,6 +35,14 @@ const contracts = {
   }),
   bootstrap: bootstrapData,
   recall: recallData,
+  get: z
+    .object({
+      fragment: z.string(),
+      cursor: z.string().nullable(),
+      content_hash: z.string(),
+      partial: z.boolean(),
+    })
+    .passthrough(),
   add: recordData,
   propose: recordData,
   duplicates: z.array(z.unknown()),

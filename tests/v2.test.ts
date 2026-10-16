@@ -1,0 +1,462 @@
+import test from "node:test";
+import type { TestContext } from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { spawnSync, spawn } from "node:child_process";
+import { z } from "zod";
+import { execute, type Result } from "../dist/core.js";
+import { Transaction, withProjectLock, hash } from "../dist/storage.js";
+import { registerSession } from "../dist/integrations/shared/identity.js";
+import {
+  checkBinding,
+  receipt,
+  type Binding,
+} from "../dist/integrations/shared/binding.js";
+import {
+  beginContext,
+  prepareContext,
+  finishContext,
+} from "../dist/integrations/shared/context.js";
+import { lifecycle } from "../dist/setup.js";
+import { measure, serialize } from "../dist/context/output.js";
+const cli = fileURLToPath(new URL("../dist/cli.js", import.meta.url));
+function temp(t: TestContext) {
+  const root = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), "mwf-v2-")),
+  );
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  return root;
+}
+function project(t: TestContext) {
+  const root = temp(t);
+  execute("init", { project_root: root, git_mode: "track" });
+  return root;
+}
+function add(root: string, args: Record<string, unknown> = {}) {
+  return z.object({ id: z.string(), path: z.string() }).parse(
+    execute("add", {
+      project_root: root,
+      type: "knowledge",
+      title: "中文代理设置",
+      summary: "这里记录中文代理设置流程",
+      body: "详情",
+      ...args,
+    }).data,
+  );
+}
+function data(r: Result) {
+  return z.record(z.unknown()).parse(r.data);
+}
+function binding(root: string): Binding {
+  lifecycle("attach", {
+    project_root: root,
+    harness: "pi",
+    plugin_root: process.cwd(),
+    apply: true,
+  });
+  const r = receipt(new Transaction(root))!;
+  return {
+    root,
+    harness: "pi",
+    generation: r.clients.pi!.binding_generation!,
+    runtime: cli,
+    cwd: root,
+  };
+}
+function save(root: string, overrides: Record<string, unknown> = {}) {
+  return execute("handoff", {
+    project_root: root,
+    action: "save",
+    task_id: "任务/../../x",
+    expected_revision: 0,
+    request_id: "save",
+    data: { goal: "目标", next_action: "下一步" },
+    ...overrides,
+  });
+}
+test("session and task handoffs isolate, replay before revision checks and recover after interruption", (t) => {
+  const root = project(t);
+  const refs = withProjectLock(root, () => {
+    const tx = new Transaction(root);
+    const refs = ["A", "B"].map(
+      (id) => registerSession(tx, "codex", id).session_ref,
+    );
+    tx.commit();
+    return refs;
+  });
+  for (const [i, ref] of refs.entries())
+    save(root, {
+      task_id: undefined,
+      session_ref: ref,
+      request_id: ref,
+      data: { goal: "Goal " + i, next_action: "next" },
+    });
+  assert.notDeepEqual(
+    data(execute("bootstrap", { project_root: root, session_ref: refs[0] }))
+      .handoff,
+    data(execute("bootstrap", { project_root: root, session_ref: refs[1] }))
+      .handoff,
+  );
+  save(root);
+  assert.equal(save(root).replayed, true);
+  assert.throws(
+    () => save(root, { request_id: "different" }),
+    /Current revision: 1/,
+  );
+  assert.throws(
+    () =>
+      save(root, {
+        request_id: "invalid-ref",
+        task_id: undefined,
+        session_ref: "s_" + "0".repeat(64),
+      }),
+    /reference/,
+  );
+  assert.throws(
+    () => save(root, { request_id: "no-scope", task_id: undefined }),
+    /task_id/,
+  );
+  assert.equal(fs.existsSync(path.join(root, "x")), false);
+  const input = {
+    project_root: root,
+    action: "save",
+    task_id: "crash",
+    expected_revision: 0,
+    request_id: "crash",
+    data: { goal: "Recover", next_action: "read" },
+  };
+  assert.throws(
+    () =>
+      execute("handoff", input, {
+        fault(stage) {
+          if (stage === "applied:0") throw Error("interrupted");
+        },
+      }),
+    /interrupted/,
+  );
+  assert.equal(execute("handoff", input).replayed, true);
+  assert.throws(
+    () =>
+      save(root, {
+        task_id: "large",
+        request_id: "large",
+        data: { goal: "x".repeat(2001), next_action: "n" },
+      }),
+    /2000/,
+  );
+});
+test("record pages preserve 200k code points, budgets measure final text, and edited cursors fail", (t) => {
+  const root = project(t);
+  const body = "中😀ab".repeat(50000);
+  const r = add(root, { body });
+  const expected = "# 中文代理设置\n\n" + body;
+  let joined = "",
+    cursor: unknown = undefined,
+    first: unknown;
+  do {
+    const result = execute("get", {
+      project_root: root,
+      id: r.id,
+      cursor,
+      max_reference_tokens: 8192,
+      max_output_bytes: 65536,
+    });
+    const d = data(result);
+    first ??= d.cursor;
+    joined += d.fragment;
+    cursor = d.cursor ?? undefined;
+    const b = z
+      .object({ used_reference_tokens: z.number(), output_bytes: z.number() })
+      .parse(d.budget);
+    assert.deepEqual(measure(serialize(result)), {
+      reference_tokens: b.used_reference_tokens,
+      bytes: b.output_bytes,
+    });
+    assert.ok(b.used_reference_tokens <= 8192 && b.output_bytes <= 65536);
+  } while (cursor);
+  assert.equal(joined, expected);
+  fs.appendFileSync(path.join(root, r.path), "\nchanged");
+  assert.throws(
+    () => execute("get", { project_root: root, id: r.id, cursor: first }),
+    /changed/,
+  );
+  assert.throws(
+    () => execute("get", { project_root: root, id: r.id, max_output_bytes: 1 }),
+    /Budget/,
+  );
+});
+test("retrieval filters status and path, matches Chinese, and separates invalid boundaries", (t) => {
+  const root = project(t),
+    r = add(root);
+  const candidate = add(root, { status: "candidate", title: "Candidate" });
+  add(root, { title: "Tool", scope: { tools: ["ts", "bun"] } });
+  add(root, { title: "Scoped", scope: { paths: ["src/**"] } });
+  const getEntries = (args: Record<string, unknown>) =>
+    z
+      .array(z.record(z.unknown()))
+      .parse(data(execute("recall", { project_root: root, ...args })).entries);
+  const entries = getEntries({ query: "代理设置", path: "docs/a.md" });
+  assert.ok(entries.some((e) => e.id === r.id));
+  assert.ok(!entries.some((e) => e.id === candidate.id));
+  assert.ok(
+    !entries.some((e) =>
+      (e.reasons as string[]).some((x) => x.startsWith("tools:")),
+    ),
+  );
+  const misses = getEntries({ query: "tests bundle" });
+  assert.ok(
+    !misses.some((e) =>
+      (e.reasons as string[]).some((x) => x.startsWith("tools:")),
+    ),
+  );
+  assert.throws(
+    () => execute("get", { project_root: root, id: candidate.id }),
+    /eligible/,
+  );
+  assert.ok(getEntries({ mode: "review" }).some((e) => e.id === candidate.id));
+  const incident = add(root, {
+    type: "incident",
+    title: "Incident",
+    body: "## Invalid when\n不适用条件",
+  });
+  const e = getEntries({}).find((e) => e.id === incident.id)!;
+  assert.equal(e.complete, false);
+  assert.deepEqual(e.boundaries, { invalid_when: "不适用条件" });
+  assert.match(
+    JSON.stringify(execute("doctor", { project_root: root })),
+    /boundaries/,
+  );
+  const chinese = add(root, {
+    type: "incident",
+    title: "中文边界",
+    body: "## 适用条件\n代理版本 1\n## 失效条件\n代理版本 2",
+  });
+  assert.deepEqual(
+    getEntries({}).find((e) => e.id === chinese.id)!.boundaries,
+    { applicability: "代理版本 1", invalid_when: "代理版本 2" },
+  );
+  const extensionOnly = add(root, {
+    type: "incident",
+    title: "Converter",
+    summary: "converter issue",
+    scope: { file_types: [".docx"], operations: ["convert"] },
+    body: "## Applicability\nOnly convert\n## Invalid when\nVersion changes",
+  });
+  assert.ok(
+    !getEntries({ query: "unrelated", path: "report.docx" }).some(
+      (e) => e.id === extensionOnly.id,
+    ),
+  );
+  const long = add(root, {
+    type: "incident",
+    title: "Large",
+    body:
+      "## Applicability\n" +
+      "条件".repeat(6000) +
+      "\n## Invalid when\nVersion changes",
+  });
+  const bounded = getEntries({ max_reference_tokens: 1024 });
+  assert.ok(!bounded.some((e) => e.id === long.id));
+});
+test("content hash prevents overwriting external edits but completed retry still replays", (t) => {
+  const root = project(t),
+    r = add(root);
+  const input = {
+    project_root: root,
+    id: r.id,
+    expected_content_hash: hash(
+      fs.readFileSync(path.join(root, r.path), "utf8"),
+    ),
+    body: "new",
+    request_id: "update",
+    apply: true,
+  };
+  execute("update", input);
+  assert.equal(execute("update", input).replayed, true);
+  assert.throws(
+    () => execute("update", { ...input, request_id: "new" }),
+    /Record changed/,
+  );
+});
+test("binding refuses copied projects, nested disabled roots and revoked generations", (t) => {
+  const root = project(t),
+    b = binding(root),
+    copy = temp(t);
+  fs.cpSync(root, copy, { recursive: true });
+  assert.throws(
+    () => checkBinding(new Transaction(root), { ...b, cwd: copy }),
+    /Host project/,
+  );
+  const nested = path.join(root, "nested");
+  fs.mkdirSync(nested);
+  execute("init", { project_root: nested, git_mode: "track" });
+  assert.throws(
+    () => checkBinding(new Transaction(root), { ...b, cwd: nested }),
+    /Host project/,
+  );
+  lifecycle("detach", {
+    project_root: root,
+    harness: "pi",
+    plugin_root: process.cwd(),
+    apply: true,
+  });
+  assert.throws(() => checkBinding(new Transaction(root), b), /disabled/);
+  binding(root);
+  assert.throws(() => checkBinding(new Transaction(root), b), /revoked/);
+  assert.equal(execute("bootstrap", { project_root: root }).ok, true);
+});
+test("epoch output reserves atomically, deduplicates, releases only known failures and restores on reset", (t) => {
+  const root = project(t),
+    b = binding(root);
+  add(root);
+  const ref = beginContext(b, "host", true);
+  const first = prepareContext(b, ref, "", true)!;
+  assert.ok(first);
+  assert.equal(prepareContext(b, ref), null);
+  finishContext(b, ref, first.id, "failed");
+  const retry = prepareContext(b, ref)!;
+  assert.ok(retry);
+  finishContext(b, ref, retry.id, "unknown");
+  assert.equal(prepareContext(b, ref), null);
+  beginContext(b, "host", true);
+  assert.ok(prepareContext(b, ref));
+  const state = JSON.parse(
+    fs.readFileSync(
+      path.join(root, `.mwf/local/contexts/${ref}-state.json`),
+      "utf8",
+    ),
+  );
+  assert.ok(state.used <= 8192);
+});
+test("handoff list and legacy pages are bounded and continue without omissions", (t) => {
+  const root = project(t);
+  for (let i = 0; i < 25; i++)
+    save(root, { task_id: "task-" + i, request_id: "id-" + i });
+  let cursor: unknown = undefined;
+  const found: string[] = [];
+  do {
+    const d = data(
+      execute("handoff", {
+        project_root: root,
+        action: "list",
+        cursor,
+        max_output_bytes: 1500,
+      }),
+    );
+    for (const e of z
+      .array(z.object({ scope: z.object({ id: z.string() }) }))
+      .parse(d.entries))
+      found.push(e.scope.id);
+    cursor = d.cursor ?? undefined;
+  } while (cursor);
+  assert.equal(new Set(found).size, 25);
+  assert.equal(found.length, 25);
+  fs.writeFileSync(path.join(root, ".mwf/handoff.md"), "旧😀".repeat(10000));
+  assert.equal(
+    data(execute("bootstrap", { project_root: root })).handoff,
+    null,
+  );
+  const d = data(
+    execute("handoff", { project_root: root, action: "read", legacy: true }),
+  );
+  assert.equal(d.partial, true);
+});
+test("CLI errors share API envelope and leave stderr for diagnostics", (t) => {
+  const root = project(t),
+    r = spawnSync(
+      process.execPath,
+      [cli, "get", "--root", root, "--id", "absent"],
+      { encoding: "utf8" },
+    );
+  assert.equal(r.status, 2);
+  const v = JSON.parse(r.stdout);
+  assert.equal(v.api_version, 2);
+  assert.equal(v.error.code, "NOT_FOUND");
+});
+
+test("concurrent task saves commit once and concurrent context reservations stay within epoch", async (t) => {
+  const root = project(t);
+  const b = binding(root);
+  const ref = beginContext(b, "concurrent-host", false);
+  for (let i = 0; i < 12; i++)
+    add(root, { title: `Memory ${i}`, summary: "并发上下文预算 ".repeat(40) });
+  const coreURL = new URL("../dist/core.js", import.meta.url).href;
+  const contextURL = new URL(
+    "../dist/integrations/shared/context.js",
+    import.meta.url,
+  ).href;
+  async function child(source: string) {
+    return new Promise<string>((resolve, reject) => {
+      const p = spawn(process.execPath, ["--input-type=module", "-e", source], {
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let out = "",
+        err = "";
+      p.stdout.on("data", (v) => (out += v));
+      p.stderr.on("data", (v) => (err += v));
+      p.on("error", reject);
+      p.on("close", (code) =>
+        code === 0 ? resolve(out.trim()) : reject(new Error(err)),
+      );
+    });
+  }
+  const saves = await Promise.all(
+    [0, 1].map((i) =>
+      child(
+        `import {execute} from ${JSON.stringify(coreURL)};try { execute('handoff',${JSON.stringify({ project_root: root, action: "save", task_id: "race", expected_revision: 0, request_id: `race-${i}`, data: { goal: `writer ${i}`, next_action: "Continue" } })});console.log('saved');}catch(e){console.log(e.code);}`,
+      ),
+    ),
+  );
+  assert.equal(saves.filter((v) => v === "saved").length, 1);
+  assert.equal(saves.filter((v) => v === "HANDOFF_CONFLICT").length, 1);
+  await Promise.all(
+    Array.from({ length: 6 }, () =>
+      child(
+        `import {prepareContext} from ${JSON.stringify(contextURL)};prepareContext(${JSON.stringify(b)},${JSON.stringify(ref)},'并发上下文预算',true);`,
+      ),
+    ),
+  );
+  const state = JSON.parse(
+    fs.readFileSync(
+      path.join(root, `.mwf/local/contexts/${ref}-state.json`),
+      "utf8",
+    ),
+  );
+  assert.ok(state.used <= 8192);
+  assert.equal(
+    state.used,
+    state.outputs.reduce(
+      (sum: number, o: { tokens: number }) => sum + o.tokens,
+      0,
+    ),
+  );
+  const keys = state.outputs.flatMap((o: { keys: string[] }) => o.keys);
+  assert.equal(keys.length, new Set(keys).size);
+});
+
+test("hook failure notices persist per session and category without following symlinks", async (t) => {
+  const { failureNotice } = await import(
+    "../dist/integrations/codex/notice.js"
+  );
+  const root = project(t),
+    input = { cwd: root, session_id: "host-a" };
+  assert.deepEqual(failureNotice(input, "timeout", "failed"), {
+    systemMessage: "failed",
+  });
+  assert.deepEqual(failureNotice(input, "timeout", "failed"), {});
+  assert.deepEqual(failureNotice(input, "read-failed", "failed"), {
+    systemMessage: "failed",
+  });
+  assert.deepEqual(
+    failureNotice({ ...input, session_id: "host-b" }, "timeout", "failed"),
+    { systemMessage: "failed" },
+  );
+  const other = project(t),
+    outside = temp(t);
+  fs.symlinkSync(outside, path.join(other, ".mwf/local/hook-notices"));
+  failureNotice({ cwd: other, session_id: "host-a" }, "timeout", "failed");
+  assert.deepEqual(fs.readdirSync(outside), []);
+});

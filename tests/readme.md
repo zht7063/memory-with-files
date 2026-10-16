@@ -1,7 +1,6 @@
 # 测试组织与证据要求
 
-状态：已原样迁入 `core.test.ts`、`mcp.test.ts`、`pi-adapter.test.ts`、辅助契约和 legacy schema 1 fixture，共 25 项原测试。通过根目录 `npm test` 执行；原 `integrations/m0/` 探针独立运行。下列分层是后续改写目标，暂不拆分原测试，也不据旧版回归宣称 0.2.0 验收完成。
-
+状态：原存储测试保留并调整 0.2.0 语义；新增 v2、lifecycle 与真实 release 宿主脚本。`npm test` 执行确定性测试，`npm run test:package` 测试实际离线 tarball，`npm run test:integrations` 默认仅运行契约测试。设置 MWF_PI_BINARY / MWF_CODEX_BINARY 才调用 `integrations/release/` 的真实宿主测试；需先生成 releases。未运行宿主明确报告 not_run，不计通过。M0 探针保留历史用途。
 ## 测试落点
 
 随实际测试加入下列子目录，不预建空 fixture 或空测试：

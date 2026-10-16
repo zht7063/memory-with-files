@@ -33,7 +33,7 @@ test("real stdio tool calls validate roots, perform writes and return scoped boo
     await transport.close();
   });
   const tools = await client.listTools();
-  assert.equal(tools.tools.length, 15);
+  assert.equal(tools.tools.length, 8);
   assert.equal(
     tools.tools.find((t) => t.name === "mwf_recall")?.annotations?.readOnlyHint,
     true,
@@ -43,13 +43,9 @@ test("real stdio tool calls validate roots, perform writes and return scoped boo
     arguments: { project_root: other },
   });
   assert.equal(reply.isError, true);
-  assert.match(JSON.stringify(reply), /ROOT_NOT_ALLOWED/);
+  assert.match(JSON.stringify(reply), /ROOT_MISMATCH/);
   assert.deepEqual(fs.readdirSync(other), []);
-  reply = await client.callTool({
-    name: "mwf_init",
-    arguments: { project_root: root, git_mode: "track" },
-  });
-  assert.equal(reply.isError, false);
+  execute("init", { project_root: root, git_mode: "track" });
   reply = await client.callTool({
     name: "mwf_add",
     arguments: {
@@ -69,9 +65,15 @@ test("real stdio tool calls validate roots, perform writes and return scoped boo
   assert.equal(reply.isError, false);
   const result = z
     .object({ data: bootstrapData })
-    .parse(reply.structuredContent);
+    .parse(
+      JSON.parse(
+        z
+          .array(z.object({ type: z.literal("text"), text: z.string() }))
+          .parse(reply.content)[0].text,
+      ),
+    );
   assert.ok(
-    result.data.matches.some((m) => m.summary === "Always verify setup"),
+    result.data.entries.some((m) => m.summary === "Always verify setup"),
   );
   assert.equal(execute("doctor", { project_root: root }).ok, true);
 });

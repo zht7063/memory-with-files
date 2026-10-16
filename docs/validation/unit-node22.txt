@@ -1,0 +1,224 @@
+TAP version 13
+# (node:PID) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: status and initialization preview leave an unconnected project untouched
+ok 1 - status and initialization preview leave an unconnected project untouched
+  ---
+  duration_ms: 13.910541
+  type: 'test'
+  ...
+# Subtest: init preserves user text and is idempotent; local privacy and schema are enforced
+ok 2 - init preserves user text and is idempotent; local privacy and schema are enforced
+  ---
+  duration_ms: 490.608917
+  type: 'test'
+  ...
+# Subtest: initialization ignores unrelated malformed AGENTS markers
+ok 3 - initialization ignores unrelated malformed AGENTS markers
+  ---
+  duration_ms: 284.497542
+  type: 'test'
+  ...
+# Subtest: record recall preserves scoped incident boundaries and candidates are marked
+ok 4 - record recall preserves scoped incident boundaries and candidates are marked
+  ---
+  duration_ms: 889.0725
+  type: 'test'
+  ...
+# Subtest: strict schemas reject unknown input, missing bodies and secrets in routing too
+ok 5 - strict schemas reject unknown input, missing bodies and secrets in routing too
+  ---
+  duration_ms: 122.209041
+  type: 'test'
+  ...
+# Subtest: inbox redaction never echoes a credential and handoff is structured
+ok 6 - inbox redaction never echoes a credential and handoff is structured
+  ---
+  duration_ms: 175.431292
+  type: 'test'
+  ...
+# Subtest: compaction preserves scope/evidence and forgetting previews by default
+ok 7 - compaction preserves scope/evidence and forgetting previews by default
+  ---
+  duration_ms: 321.968709
+  type: 'test'
+  ...
+# Subtest: persistent idempotency replays same write and rejects changed input
+ok 8 - persistent idempotency replays same write and rejects changed input
+  ---
+  duration_ms: 162.51775
+  type: 'test'
+  ...
+# Subtest: concurrent processes with different titles allocate unique IDs and a complete index
+ok 9 - concurrent processes with different titles allocate unique IDs and a complete index
+  ---
+  duration_ms: 1482.642292
+  type: 'test'
+  ...
+# Subtest: killed writer releases lock and next call recovers durable journal and receipt
+ok 10 - killed writer releases lock and next call recovers durable journal and receipt
+  ---
+  duration_ms: 222.26625
+  type: 'test'
+  ...
+# Subtest: recovery refuses an external edit instead of overwriting it
+ok 11 - recovery refuses an external edit instead of overwriting it
+  ---
+  duration_ms: 137.042542
+  type: 'test'
+  ...
+# Subtest: symlink boundaries protect records, local lock and root-owned configuration
+ok 12 - symlink boundaries protect records, local lock and root-owned configuration
+  ---
+  duration_ms: 117.265791
+  type: 'test'
+  ...
+# Subtest: migration keeps recoverable backup and forget clears MWF-owned snapshots
+ok 13 - migration keeps recoverable backup and forget clears MWF-owned snapshots
+  ---
+  duration_ms: 217.77775
+  type: 'test'
+  ...
+# Subtest: legacy schema-1 golden files preserve scoped recall
+ok 14 - legacy schema-1 golden files preserve scoped recall
+  ---
+  duration_ms: 12.093459
+  type: 'test'
+  ...
+# Subtest: legacy adoption is explicit and preserves records and user content
+ok 15 - legacy adoption is explicit and preserves records and user content
+  ---
+  duration_ms: 154.500292
+  type: 'test'
+  ...
+# Subtest: migration refuses edited or ambiguous legacy blocks, preserving bytes
+ok 16 - migration refuses edited or ambiguous legacy blocks, preserving bytes
+  ---
+  duration_ms: 3.923958
+  type: 'test'
+  ...
+# Subtest: every multi-file commit boundary recovers to one consistent result
+ok 17 - every multi-file commit boundary recovers to one consistent result
+  ---
+  duration_ms: 793.244917
+  type: 'test'
+  ...
+# Subtest: retrying a forgotten add cannot resurrect it or expose its old title
+ok 18 - retrying a forgotten add cannot resurrect it or expose its old title
+  ---
+  duration_ms: 191.284625
+  type: 'test'
+  ...
+# Subtest: recovery removes orphaned atomic-write temp files before forgetting
+ok 19 - recovery removes orphaned atomic-write temp files before forgetting
+  ---
+  duration_ms: 165.425875
+  type: 'test'
+  ...
+# (node:PID) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:PID) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:PID) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:PID) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:PID) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:PID) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:PID) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: installed Codex runtime preserves unrelated TOML and disables before cleanup conflicts
+ok 20 - installed Codex runtime preserves unrelated TOML and disables before cleanup conflicts
+  ---
+  duration_ms: 3976.614417
+  type: 'test'
+  ...
+# (node:PID) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: real stdio tool calls validate roots, perform writes and return scoped bootstrap
+ok 21 - real stdio tool calls validate roots, perform writes and return scoped bootstrap
+  ---
+  duration_ms: 1335.910542
+  type: 'test'
+  ...
+# (node:PID) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: native Pi adapter respects enablement, trust, epochs and detach
+ok 22 - native Pi adapter respects enablement, trust, epochs and detach
+  ---
+  duration_ms: 1523.580709
+  type: 'test'
+  ...
+# (node:PID) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: session and task handoffs isolate, replay before revision checks and recover after interruption
+ok 23 - session and task handoffs isolate, replay before revision checks and recover after interruption
+  ---
+  duration_ms: 1430.578458
+  type: 'test'
+  ...
+# Subtest: record pages preserve 200k code points, budgets measure final text, and edited cursors fail
+ok 24 - record pages preserve 200k code points, budgets measure final text, and edited cursors fail
+  ---
+  duration_ms: 11228.631125
+  type: 'test'
+  ...
+# Subtest: retrieval filters status and path, matches Chinese, and separates invalid boundaries
+ok 25 - retrieval filters status and path, matches Chinese, and separates invalid boundaries
+  ---
+  duration_ms: 383.292
+  type: 'test'
+  ...
+# Subtest: content hash prevents overwriting external edits but completed retry still replays
+ok 26 - content hash prevents overwriting external edits but completed retry still replays
+  ---
+  duration_ms: 171.628583
+  type: 'test'
+  ...
+# Subtest: binding refuses copied projects, nested disabled roots and revoked generations
+ok 27 - binding refuses copied projects, nested disabled roots and revoked generations
+  ---
+  duration_ms: 308.731834
+  type: 'test'
+  ...
+# Subtest: epoch output reserves atomically, deduplicates, releases only known failures and restores on reset
+ok 28 - epoch output reserves atomically, deduplicates, releases only known failures and restores on reset
+  ---
+  duration_ms: 373.320125
+  type: 'test'
+  ...
+# Subtest: handoff list and legacy pages are bounded and continue without omissions
+ok 29 - handoff list and legacy pages are bounded and continue without omissions
+  ---
+  duration_ms: 1220.198208
+  type: 'test'
+  ...
+# Subtest: CLI errors share API envelope and leave stderr for diagnostics
+ok 30 - CLI errors share API envelope and leave stderr for diagnostics
+  ---
+  duration_ms: 248.068291
+  type: 'test'
+  ...
+# Subtest: concurrent task saves commit once and concurrent context reservations stay within epoch
+ok 31 - concurrent task saves commit once and concurrent context reservations stay within epoch
+  ---
+  duration_ms: 3275.311917
+  type: 'test'
+  ...
+# Subtest: hook failure notices persist per session and category without following symlinks
+ok 32 - hook failure notices persist per session and category without following symlinks
+  ---
+  duration_ms: 237.698541
+  type: 'test'
+  ...
+1..32
+# tests 32
+# suites 0
+# pass 32
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 19165.676584

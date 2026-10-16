@@ -56,3 +56,18 @@ Node.js ≥22.19.0 是目标运行要求；本次仅使用 Node 26.8.2，最低�
 - `not_run`：未运行，包括环境不具备；不得当作测试通过。
 - 阶段被环境或能力阻塞时标 `blocked`，不采用规则文件注入回退。
 - 发布前，必需验收项不得停留在 not_run；可选宿主维持“未验证／不声明支持”。
+
+## 2026-10-16 0.2.0 实施验证（不覆盖历史报告）
+
+| 组合 | 已实测 | 尚未证明 |
+| - | - | - |
+| macOS arm64 / Node 26 | Core、事务回归、真实离线包、中文空格路径 | 不推导其他系统 |
+| macOS arm64 / Node 22.19.0 | 同一源码自动测试 | GUI PATH、Linux |
+| Pi 1.1.0 / 本地合成模型端点 | 正常 package 安装发现、自动读、实际 MCP 写、后续请求、未信任/停用 | 完整 compact/tree/hot replacement，见实施台账 |
+| Codex CLI 0.163.0-alpha.10.2 | 正常插件安装、hooks、实际 app-server MCP 写、后续请求、复制项目、旧连接撤销 | 独立分发 CLI 及完整故障矩阵 |
+| Codex 桌面 GUI | not_run | 安装、信任、重载、Node 路径、全部 GUI 工作流 |
+| Linux / Node 22.19.0 | not_run | 全部适用组合 |
+
+Codex 本次实测发现：官方示例的根 `$schema` 字段在上述运行时导致 hooks/list 为空；同一产物移除该可选字段后正常。仅去掉 onboardingSkill 无效，保留 onboardingSkill、去掉 `$schema` 有效。当前 manifest 省略 `$schema`，仍提供包内 setup skill，不降低 hooks 功能范围。此结论仅针对实测版本。
+
+真实测试使用隔离 home 和回环合成模型端点，不计收费 token，不冒充真人 GUI 信任。附带 CLI 成功不能标记桌面已支持。后续发布按 [实施验收记录](validation/implementation-0.2.0.md) 补证。

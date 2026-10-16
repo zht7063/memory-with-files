@@ -1,0 +1,181 @@
+{
+  "pi": {
+    "status": "pass",
+    "pi_version": "1.1.0",
+    "requests": [
+      {
+        "seed": true,
+        "saved": false,
+        "tools": [
+          "read",
+          "bash",
+          "edit",
+          "write",
+          "mcp__mwf__mwf_bootstrap",
+          "mcp__mwf__mwf_recall",
+          "mcp__mwf__mwf_get",
+          "mcp__mwf__mwf_add",
+          "mcp__mwf__mwf_propose",
+          "mcp__mwf__mwf_update",
+          "mcp__mwf__mwf_handoff",
+          "mcp__mwf__mwf_status"
+        ]
+      },
+      {
+        "seed": true,
+        "saved": true,
+        "tools": [
+          "read",
+          "bash",
+          "edit",
+          "write",
+          "mcp__mwf__mwf_bootstrap",
+          "mcp__mwf__mwf_recall",
+          "mcp__mwf__mwf_get",
+          "mcp__mwf__mwf_add",
+          "mcp__mwf__mwf_propose",
+          "mcp__mwf__mwf_update",
+          "mcp__mwf__mwf_handoff",
+          "mcp__mwf__mwf_status"
+        ]
+      },
+      {
+        "seed": true,
+        "saved": true,
+        "tools": [
+          "read",
+          "bash",
+          "edit",
+          "write",
+          "mcp__mwf__mwf_bootstrap",
+          "mcp__mwf__mwf_recall",
+          "mcp__mwf__mwf_get",
+          "mcp__mwf__mwf_add",
+          "mcp__mwf__mwf_propose",
+          "mcp__mwf__mwf_update",
+          "mcp__mwf__mwf_handoff",
+          "mcp__mwf__mwf_status"
+        ]
+      },
+      {
+        "seed": true,
+        "saved": true,
+        "tools": [
+          "read",
+          "bash",
+          "edit",
+          "write",
+          "mcp__mwf__mwf_bootstrap",
+          "mcp__mwf__mwf_recall",
+          "mcp__mwf__mwf_get",
+          "mcp__mwf__mwf_add",
+          "mcp__mwf__mwf_propose",
+          "mcp__mwf__mwf_update",
+          "mcp__mwf__mwf_handoff",
+          "mcp__mwf__mwf_status"
+        ]
+      },
+      {
+        "seed": false,
+        "saved": false,
+        "tools": [
+          "read",
+          "bash",
+          "edit",
+          "write"
+        ]
+      },
+      {
+        "seed": false,
+        "saved": false,
+        "tools": [
+          "read",
+          "bash",
+          "edit",
+          "write"
+        ]
+      },
+      {
+        "seed": false,
+        "saved": false,
+        "tools": [
+          "read",
+          "bash",
+          "edit",
+          "write"
+        ]
+      },
+      {
+        "seed": true,
+        "saved": true,
+        "tools": [
+          "read",
+          "bash",
+          "edit",
+          "write",
+          "mcp__mwf__mwf_bootstrap",
+          "mcp__mwf__mwf_recall",
+          "mcp__mwf__mwf_get",
+          "mcp__mwf__mwf_add",
+          "mcp__mwf__mwf_propose",
+          "mcp__mwf__mwf_update",
+          "mcp__mwf__mwf_handoff",
+          "mcp__mwf__mwf_status"
+        ]
+      }
+    ],
+    "limits": [
+      "Synthetic model endpoint, not billed model tokens",
+      "Compact/tree and hot replacement still require separate real-host scenarios"
+    ],
+    "artifact_sha256": "5e74dad820a0cebec1e21936912dc95b5efbbf1637f670cf2c110819295df10a"
+  },
+  "codex_cli": {
+    "status": "pass",
+    "runtime": "codex-cli 0.163.0-alpha.10.2",
+    "requests": [
+      {
+        "path": "/v1/responses",
+        "marker": false,
+        "saved": false,
+        "at": 1792144901.089828
+      },
+      {
+        "path": "/v1/responses",
+        "marker": true,
+        "saved": false,
+        "at": 1792144903.582939
+      },
+      {
+        "path": "/v1/responses",
+        "marker": false,
+        "saved": false,
+        "at": 1792144905.4079309
+      },
+      {
+        "path": "/v1/responses",
+        "marker": true,
+        "saved": true,
+        "at": 1792144908.980875
+      },
+      {
+        "path": "/v1/responses",
+        "marker": false,
+        "saved": false,
+        "at": 1792144910.700108
+      }
+    ],
+    "limits": [
+      "Bundled runtime only; GUI not tested",
+      "One-invocation hook trust bypass is test-only, not GUI trust evidence",
+      "Synthetic model endpoint; real billed model costs not measured"
+    ],
+    "artifact_sha256": "60374efa9ec6ad2f973d0c7a388580b8109066b1ac23476ff4f81e94564ca8d1",
+    "actual_mcp": {
+      "add": true,
+      "handoff": true,
+      "old_connection_rejected_after_detach": true,
+      "old_connection_rejected_after_reattach": true
+    }
+  }
+}
