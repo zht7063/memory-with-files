@@ -19,6 +19,12 @@ export function handleHook(input: unknown) {
       session_id: z.string().min(1).optional(),
       hook_event_name: z.enum(["SessionStart", "UserPromptSubmit"]),
       source: z.string().optional(),
+      context_limits: z
+        .object({
+          max_reference_tokens: z.number().int().positive().optional(),
+          max_output_bytes: z.number().int().positive().optional(),
+        })
+        .optional(),
       prompt: z.string().max(20000).optional(),
     })
     .passthrough()
@@ -50,6 +56,7 @@ export function handleHook(input: unknown) {
     ref,
     a.prompt ?? "",
     a.hook_event_name === "SessionStart",
+    a.context_limits,
   );
   if (!output) return {};
   // stdout completion is not a host acknowledgement.
