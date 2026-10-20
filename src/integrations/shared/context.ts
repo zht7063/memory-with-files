@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { execute, type Result } from "../../core/index.js";
+import { execute, type Result } from "../../core.js";
 import {
   Transaction,
   withProjectLock,

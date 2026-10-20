@@ -1,6 +1,8 @@
-import { resolveSession } from "../integrations/shared/identity.js";
-import { migrateIntegration } from "../lifecycle/migrate.js";
-import { receipt } from "../integrations/shared/binding.js";
+import { records, validRecords } from "../storage/records.js";
+import { recallRecords, eligible, tokens } from "../retrieval/index.js";
+export { recallRecords, eligible } from "../retrieval/index.js";
+import { resolveSession } from "./identity.js";
+import { receipt } from "../storage/receipt.js";
 import type { BudgetInput } from "../context/output.js";
 import { boundResult, decodeCursor, encodeCursor } from "../context/output.js";
 import {
@@ -30,27 +32,22 @@ import {
 } from "../storage/index.js";
 import {
   active,
-  normalize,
   ALL_DIRS,
   boundaries,
   date,
   emptyScope,
-  globMatch,
   managed,
   MemoryRecord,
   parseRecord,
   RECORD_DIRS,
-  records,
   render,
   requireSafe,
   SCHEMA_VERSION,
   scopeSchema,
   SCOPE_KEYS,
   secrets,
-  tokens,
   TYPES,
   typeSchema,
-  validRecords,
   validateRecord,
 } from "../contracts/records.js";
 export { MWFError } from "../storage/index.js";
@@ -419,104 +416,6 @@ export function rebuild(tx: Transaction) {
   tx.set(".mwf/index.md", lines.join("\n"));
   return { indexed: list.filter(active).length };
 }
-type RecallArgs = z.infer<typeof schemas.recall>;
-export function recallRecords(tx: Transaction, a: RecallArgs) {
-  const result = [];
-  for (const r of validRecords(tx)) {
-    if (!eligible(r, a.mode)) continue;
-    const scope = r.metadata.scope;
-    const reasons: string[] = [];
-    let score = 0;
-    const has = (v: string, h: string) => normalize(h).includes(normalize(v));
-    if (SCOPE_KEYS.every((k) => !scope[k].length)) {
-      score += 5;
-      reasons.push("global");
-    }
-    if (a.path) {
-      const p = a.path.replaceAll("\\", "/");
-      const match = scope.paths.find(
-        (pattern) => globMatch(p, pattern) || p === pattern.replace(/\/$/, ""),
-      );
-      if (!match && scope.paths.length && a.mode === "default") continue;
-      if (match) {
-        score += 100;
-        reasons.push(`path:${match}`);
-      }
-    }
-    for (const [key, provided, weight] of [
-      ["components", a.component, 80],
-      ["tools", a.tool, 80],
-      ["operations", a.operation, 50],
-      ["phases", a.phase, 50],
-    ] as const) {
-      const m = scope[key].find(
-        (v) =>
-          provided.some((p) => normalize(v) === normalize(p)) ||
-          new RegExp(
-            "(^|[^a-z0-9_])" +
-              normalize(v).replace(/[.*+?^${}()|[\]\\]/g, "\\$&") +
-              "($|[^a-z0-9_])",
-            "u",
-          ).test(normalize(a.query)),
-      );
-      if (m) {
-        score += weight;
-        reasons.push(`${key}:${m}`);
-      }
-    }
-    const haystack = [
-      a.query,
-      a.path ?? "",
-      ...a.component,
-      ...a.tool,
-      ...a.operation,
-      ...a.phase,
-      ...a.file_type,
-    ].join(" ");
-    const keywords = scope.keywords.filter((v) => has(v, haystack)).slice(0, 3);
-    score += 15 * keywords.length;
-    reasons.push(...keywords.map((v) => "keyword:" + v));
-    const inputs = [
-      ...a.file_type,
-      ...(a.path ? [path.extname(a.path), path.basename(a.path)] : []),
-    ];
-    if (
-      scope.file_types.some((p) =>
-        inputs.some((v) => v && (globMatch(v, p) || v === p)),
-      ) &&
-      (keywords.length || reasons.some((r) => r.startsWith("operations:")))
-    ) {
-      score += 20;
-      reasons.push("file_type");
-    }
-    const rt = tokens(r.title + " " + r.metadata.summary);
-    const overlap = [...tokens(a.query)].filter((t) => rt.has(t)).sort();
-    if (overlap.length) {
-      score += Math.min(10, overlap.length * 2);
-      reasons.push("summary:" + overlap.slice(0, 4).join(","));
-    }
-    if (score > 0) {
-      const b = boundaries(r);
-      requireSafe(JSON.stringify(r));
-      result.push({
-        score,
-        id: r.metadata.id,
-        type: r.metadata.type,
-        status: r.metadata.status,
-        summary: r.metadata.summary,
-        path: r.path,
-        reasons,
-        content_hash: hash(tx.get(r.path)),
-        ...(r.metadata.type === "incident"
-          ? { boundaries: b, complete: !!b.applicability && !!b.invalid_when }
-          : {}),
-      });
-    }
-  }
-  return result
-    .sort((a, b) => b.score - a.score || a.id.localeCompare(b.id))
-    .slice(0, a.limit);
-}
 function nextId(tx: Transaction, type: keyof typeof TYPES) {
   const prefix = `${TYPES[type].prefix}-${date().replaceAll("-", "")}-`;
   // Include archive: maintenance must not recycle IDs of archived records.
@@ -524,14 +423,6 @@ function nextId(tx: Transaction, type: keyof typeof TYPES) {
     .filter((r) => r.metadata.id.startsWith(prefix))
     .map((r) => Number(r.metadata.id.slice(prefix.length)));
   return prefix + String(Math.max(0, ...used) + 1).padStart(3, "0");
-}
-export function eligible(
-  r: MemoryRecord,
-  mode: "default" | "review" | "history",
-) {
-  if (mode === "history") return true;
-  if (mode === "review") return active(r);
-  return active(r) && !["candidate", "proposed"].includes(r.metadata.status);
 }
 function getRecord(tx: Transaction, id: string) {
   const r = validRecords(tx, true).find((r) => r.metadata.id === id);
@@ -682,7 +573,17 @@ type OperationArguments = { [K in Operation]: z.output<(typeof schemas)[K]> };
 type Command = {
   [K in Operation]: [op: K, args: OperationArguments[K]];
 }[Operation];
-export function operate(tx: Transaction, ...[op, a]: Command): unknown {
+export type Migration = (
+  tx: Transaction,
+  config: Record<string, unknown>,
+  stopped: boolean,
+  apply: boolean,
+) => { migration_required: boolean };
+export function operateWithMigration(
+  tx: Transaction,
+  migrateIntegration: Migration,
+  ...[op, a]: Command
+): unknown {
   if (op === "init") return initialize(tx, a.git_mode, a.language);
   if (op === "doctor") return diagnose(tx);
   if (op === "status") {
@@ -1085,6 +986,7 @@ export function execute(
   options: {
     fault?: (stage: string) => void;
     guard?: (tx: Transaction) => void;
+    migrateIntegration?: Migration;
   } = {},
 ): Result {
   const parsed = schemas[op].safeParse(input);
@@ -1138,7 +1040,11 @@ export function execute(
       }
     }
     // safeParse above establishes the correlation between operation and arguments.
-    const data = operate(tx, ...([op, a] as Command));
+    const data = operateWithMigration(
+      tx,
+      options.migrateIntegration ?? missingMigration,
+      ...([op, a] as Command),
+    );
     const changed = tx.changes().map((c) => c.path);
     const result: Result = {
       ok:
@@ -1210,4 +1116,14 @@ export function execute(
   // New-project previews/status/doctor do not create .mwf as a side effect.
   if (!fs.existsSync(safePath(root, ".mwf")) && !mutation) return run(false);
   return withProjectLock(root, run);
+}
+
+function missingMigration(): never {
+  throw new MWFError(
+    "INVALID_CONFIG",
+    "Integration migration callback is required.",
+  );
+}
+export function operate(tx: Transaction, ...command: Command): unknown {
+  return operateWithMigration(tx, missingMigration, ...command);
 }

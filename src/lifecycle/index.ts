@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import TOML from "@iarna/toml";
 import { z } from "zod";
-import { config, initialize, execute, type Result } from "../core/index.js";
+import { config, initialize, execute, type Result } from "../core.js";
 import {
   canonicalRoot,
   hash,

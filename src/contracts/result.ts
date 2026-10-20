@@ -1,5 +1,5 @@
 import { RUNTIME_VERSION, API_VERSION } from "./version.js";
-import { MWFError } from "../storage/index.js";
+import { MWFError } from "./error.js";
 export function failure(operation: string, root: string, error: unknown) {
   return {
     ok: false,
