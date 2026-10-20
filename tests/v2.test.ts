@@ -687,3 +687,132 @@ test("Codex lifecycle sources rebuild epochs and forward host budgets", async (t
     );
   }
 });
+
+test("real Git worktrees isolate identical task IDs and session mappings", (t) => {
+  const base = temp(t);
+  const repo = path.join(base, "repo");
+  fs.mkdirSync(repo);
+  const git = (cwd: string, ...args: string[]) => {
+    const result = spawnSync("git", args, { cwd, encoding: "utf8" });
+    if (result.error) throw result.error;
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout.trim();
+  };
+  git(repo, "init");
+  git(
+    repo,
+    "-c",
+    "user.name=MWF Test",
+    "-c",
+    "user.email=mwf@example.test",
+    "-c",
+    "commit.gpgsign=false",
+    "commit",
+    "--allow-empty",
+    "-m",
+    "fixture",
+  );
+  const roots = ["甲 worktree", "乙 worktree"].map((name, i) => {
+    const root = path.join(base, name);
+    git(repo, "worktree", "add", "-b", `test-${i}`, root);
+    assert.equal(fs.statSync(path.join(root, ".git")).isFile(), true);
+    execute("init", { project_root: root, git_mode: "ignore" });
+    return fs.realpathSync(root);
+  });
+  assert.equal(
+    git(roots[0], "rev-parse", "HEAD"),
+    git(roots[1], "rev-parse", "HEAD"),
+  );
+  const refs = roots.map((root, i) => {
+    const tx = new Transaction(root);
+    const ref = registerSession(tx, "codex", "same-host-session").session_ref;
+    tx.commit();
+    save(root, {
+      task_id: "shared-task",
+      session_ref: ref,
+      request_id: "same-request",
+      data: { goal: `Worktree ${i}`, next_action: `Next ${i}` },
+    });
+    return ref;
+  });
+  assert.notEqual(refs[0], refs[1]);
+  for (const [i, root] of roots.entries()) {
+    const listed = z
+      .object({
+        entries: z.array(
+          z.object({
+            scope: z.object({ kind: z.literal("task"), id: z.string() }),
+            revision: z.number(),
+          }),
+        ),
+      })
+      .parse(execute("handoff", { project_root: root, action: "list" }).data);
+    assert.equal(listed.entries.length, 1);
+    assert.equal(listed.entries[0].revision, 1);
+    const read = data(
+      execute("handoff", {
+        project_root: root,
+        action: "read",
+        target_scope: listed.entries[0].scope,
+      }),
+    );
+    const page = z
+      .object({
+        fragment: z.string(),
+        cursor: z.null(),
+        partial: z.literal(false),
+        revision: z.literal(1),
+      })
+      .parse(read);
+    assert.deepEqual(JSON.parse(page.fragment), {
+      goal: `Worktree ${i}`,
+      next_action: `Next ${i}`,
+      completed: [],
+      decisions: [],
+      blockers: [],
+      relevant_ids: [],
+    });
+    assert.equal(
+      z
+        .object({ handoff: z.object({ next_action: z.string() }) })
+        .parse(
+          execute("bootstrap", { project_root: root, task_id: "shared-task" })
+            .data,
+        ).handoff.next_action,
+      `Next ${i}`,
+    );
+    assert.throws(
+      () =>
+        save(root, {
+          task_id: "shared-task",
+          session_ref: refs[1 - i],
+          expected_revision: 1,
+          request_id: "cross-worktree",
+        }),
+      { code: "CONTEXT_REQUIRED" },
+    );
+  }
+});
+
+test("session registration rejects corrupt persisted mappings without replacing them", (t) => {
+  const root = project(t);
+  const tx = new Transaction(root);
+  const identity = registerSession(tx, "codex", "resume");
+  tx.commit();
+  const file = path.join(
+    root,
+    `.mwf/local/contexts/${identity.session_ref}.json`,
+  );
+  for (const raw of [
+    "",
+    "{",
+    JSON.stringify({ ...identity, session_key: "0".repeat(64) }),
+  ]) {
+    fs.writeFileSync(file, raw);
+    assert.throws(
+      () => registerSession(new Transaction(root), "codex", "resume"),
+      { code: "CONTEXT_REQUIRED" },
+    );
+    assert.equal(fs.readFileSync(file, "utf8"), raw);
+  }
+});

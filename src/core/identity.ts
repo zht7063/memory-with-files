@@ -35,13 +35,10 @@ export function registerSession(
   const identity = sessionIdentity(tx.root, client, hostId, branch);
   const file = `.mwf/local/contexts/${identity.session_ref}.json`;
   const raw = tx.get(file);
-  if (
-    raw &&
-    JSON.stringify(identitySchema.parse(JSON.parse(raw))) !==
-      JSON.stringify(identity)
-  )
-    throw new MWFError("CONTEXT_REQUIRED", "Session mapping conflicts.");
-  if (!raw) tx.set(file, JSON.stringify(identity));
+  // Reuse the same root and integrity checks when a later hook process resumes.
+  // A corrupt mapping must never be silently replaced by registration.
+  if (raw !== null) resolveSession(tx, identity.session_ref);
+  else tx.set(file, JSON.stringify(identity));
   return identity;
 }
 export function resolveSession(tx: Transaction, ref: string) {
