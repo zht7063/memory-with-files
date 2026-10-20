@@ -1,6 +1,6 @@
 import path from "node:path";
 import { z } from "zod";
-import { MWFError, Transaction } from "../storage/index.js";
+import { MWFError } from "./error.js";
 export const SCHEMA_VERSION = 1;
 export const SCOPE_KEYS = [
   "paths",
@@ -234,30 +234,6 @@ export function validateRecord(r: MemoryRecord): string[] {
     errors.push("candidate directory requires candidate status");
   return errors;
 }
-export function records(tx: Transaction, archive = false): MemoryRecord[] {
-  return (archive ? [...RECORD_DIRS, "archive"] : RECORD_DIRS).flatMap((dir) =>
-    tx
-      .files(`.mwf/${dir}`)
-      .filter((p) => p.endsWith(".md"))
-      .map((p) => parseRecord(p, tx.get(p)!)),
-  );
-}
-export function validRecords(tx: Transaction, archive = false) {
-  const result = records(tx, archive);
-  const ids = new Set<string>();
-  for (const r of result) {
-    const errors = validateRecord(r);
-    if (errors.length)
-      throw new MWFError("INVALID_RECORD", `${r.path}: ${errors.join(", ")}`);
-    if (ids.has(r.metadata.id))
-      throw new MWFError(
-        "DUPLICATE_ID",
-        `Duplicate ID ${r.metadata.id}; run doctor.`,
-      );
-    ids.add(r.metadata.id);
-  }
-  return result;
-}
 export function render(r: MemoryRecord) {
   const m = r.metadata;
   const head = [
@@ -315,39 +291,4 @@ export function boundaries(r: MemoryRecord) {
       result.invalid_when ??= text;
   }
   return result;
-}
-export const normalize = (s: string) => s.normalize("NFKC").toLowerCase();
-export function tokens(s: string) {
-  const text = normalize(s);
-  const result = new Set(text.match(/[a-z0-9_]+/g) ?? []);
-  for (const run of text.match(/\p{Script=Han}+/gu) ?? []) {
-    const chars = [...run];
-    for (let i = 0; i < chars.length - 1; i++)
-      result.add(chars[i] + chars[i + 1]);
-    if (chars.length === 1 && text.trim() === run) result.add(run);
-  }
-  return result;
-}
-// Python fnmatch's '*' also matches '/'. Preserve the legacy routing semantics.
-export function globMatch(value: string, pattern: string) {
-  let regex = "^";
-  for (let i = 0; i < pattern.length; i++) {
-    const c = pattern[i];
-    if (c === "*") regex += ".*";
-    else if (c === "?") regex += ".";
-    else if (c === "[") {
-      const end = pattern.indexOf("]", i + 1);
-      if (end > i) {
-        let cls = pattern.slice(i + 1, end);
-        if (cls.startsWith("!")) cls = "^" + cls.slice(1);
-        regex += "[" + cls + "]";
-        i = end;
-      } else regex += "\\[";
-    } else regex += c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  }
-  try {
-    return new RegExp(regex + "$").test(value);
-  } catch {
-    return value === pattern;
-  }
 }

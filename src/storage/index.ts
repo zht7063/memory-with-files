@@ -3,16 +3,8 @@ import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
-export class MWFError extends Error {
-  constructor(
-    public code: string,
-    message: string,
-    public details?: Record<string, unknown>,
-  ) {
-    super(message);
-    this.name = "MWFError";
-  }
-}
+import { MWFError } from "../contracts/error.js";
+export { MWFError } from "../contracts/error.js";
 export const hash = (value: string | null) =>
   value === null ? null : createHash("sha256").update(value).digest("hex");
 export function canonicalRoot(input: string): string {

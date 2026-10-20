@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { hash, MWFError, Transaction } from "../storage/index.js";
 import { requireSafe } from "../contracts/records.js";
-import { resolveSession } from "../integrations/shared/identity.js";
+import { resolveSession } from "./identity.js";
 export const scopeSchema = z
   .object({
     kind: z.enum(["session", "task"]),

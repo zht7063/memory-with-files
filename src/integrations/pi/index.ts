@@ -1,4 +1,4 @@
-import { execute } from "../../core/index.js";
+import { execute } from "../../core.js";
 import { fileURLToPath } from "node:url";
 import { Transaction } from "../../storage/index.js";
 import {
