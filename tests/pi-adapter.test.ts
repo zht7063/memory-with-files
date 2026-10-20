@@ -62,9 +62,38 @@ test("native Pi adapter respects enablement, trust, epochs and detach", (t) => {
     handlers.get("before_agent_start")!({ prompt: "policy" }, ctx),
     undefined,
   );
-  handlers.get("session_compact")!({}, ctx);
+  for (const event of ["session_compact", "session_tree", "session_start"]) {
+    handlers.get(event)!({}, ctx);
+    assert.equal(registered, 1);
+    assert.match(
+      JSON.stringify(handlers.get("before_agent_start")!({}, ctx)),
+      /Use policy/,
+    );
+  }
+  const replacement = {
+    ...ctx,
+    sessionManager: { getSessionId: () => "replacement" },
+  };
   assert.match(
-    JSON.stringify(handlers.get("before_agent_start")!({}, ctx)),
+    JSON.stringify(handlers.get("before_agent_start")!({}, replacement)),
+    /Use policy/,
+  );
+  assert.equal(registered, 1);
+  handlers.get("session_start")!({}, ctx);
+  assert.equal(
+    handlers.get("before_agent_start")!(
+      {},
+      {
+        ...ctx,
+        contextLimits: { max_output_bytes: 1 },
+      },
+    ),
+    undefined,
+  );
+  assert.match(
+    JSON.stringify(
+      handlers.get("before_agent_start")!({ prompt: "policy" }, ctx),
+    ),
     /Use policy/,
   );
   lifecycle("detach", {

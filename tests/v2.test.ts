@@ -584,3 +584,106 @@ test("doctor checks Codex owned configuration and reports copied root bindings",
   assert.ok(status.configured.codex.issues.includes("ROOT_MISMATCH"));
   assert.equal(execute("doctor", { project_root: root }).ok, false);
 });
+test("automatic context skips empty and trimmed bootstrap and respects host limits", (t) => {
+  const root = project(t),
+    b = binding(root);
+  const ref = beginContext(b, "limits", true);
+  assert.equal(prepareContext(b, ref, "", true), null);
+  add(root, { type: "preference", summary: "预算约束" });
+  assert.equal(prepareContext(b, ref, "", true, { max_output_bytes: 1 }), null);
+  assert.equal(
+    prepareContext(b, ref, "", true, { max_reference_tokens: 1 }),
+    null,
+  );
+  const output = prepareContext(b, ref, "", true, {
+    max_reference_tokens: 900,
+    max_output_bytes: 7000,
+  })!;
+  assert.ok(output);
+  assert.ok(measure(output.text).reference_tokens <= 900);
+  assert.ok(measure(output.text).bytes <= 7000);
+  assert.equal(JSON.parse(output.text).data.budget.max_output_bytes, 7000);
+});
+test("resumed pending becomes unknown without releasing charge; updates and explicit bodies remain readable", (t) => {
+  const root = project(t),
+    b = binding(root);
+  const record = add(root, { type: "preference" });
+  const ref = beginContext(b, "recovery", true);
+  const output = prepareContext(b, ref, "", true)!;
+  const readState = () =>
+    JSON.parse(
+      fs.readFileSync(
+        path.join(root, `.mwf/local/contexts/${ref}-state.json`),
+        "utf8",
+      ),
+    );
+  const before = readState();
+  beginContext(b, "recovery", false);
+  const resumed = readState();
+  assert.equal(resumed.epoch, before.epoch);
+  assert.equal(resumed.outputs[0].status, "unknown");
+  assert.equal(resumed.used, before.used);
+  assert.equal(resumed.bytes, before.bytes);
+  assert.equal(prepareContext(b, ref, "", true), null);
+  assert.equal(execute("get", { project_root: root, id: record.id }).ok, true);
+  const file = path.join(root, record.path);
+  fs.writeFileSync(
+    file,
+    fs
+      .readFileSync(file, "utf8")
+      .replace("这里记录中文代理设置流程", "更新后的摘要"),
+  );
+  assert.match(prepareContext(b, ref, "", true)!.text, /更新后的摘要/);
+  finishContext(b, ref, output.id, "failed");
+  assert.equal(
+    readState().used,
+    readState().outputs.reduce(
+      (sum: number, o: { tokens: number }) => sum + o.tokens,
+      0,
+    ),
+  );
+  beginContext(b, "recovery", true);
+  assert.notEqual(readState().epoch, before.epoch);
+  assert.equal(readState().used, 0);
+  assert.equal(readState().bytes, 0);
+});
+test("Codex lifecycle sources rebuild epochs and forward host budgets", async (t) => {
+  const { handleHook } = await import("../dist/integrations/codex/hook.js");
+  const root = project(t);
+  // Seed a validated receipt: this unit test exercises hook state, not packaging.
+  binding(root);
+  const receiptFile = path.join(root, ".mwf/local/integration.json");
+  const installed = JSON.parse(fs.readFileSync(receiptFile, "utf8"));
+  installed.clients.codex = { ...installed.clients.pi };
+  fs.writeFileSync(receiptFile, JSON.stringify(installed));
+  add(root, { type: "preference" });
+  let previous: string | undefined;
+  for (const source of [
+    "startup",
+    "compact",
+    "resume",
+    "clear",
+    "replacement",
+  ]) {
+    const input = {
+      cwd: root,
+      session_id: "codex",
+      hook_event_name: "SessionStart",
+      source,
+    };
+    const response = handleHook(input);
+    const output = JSON.parse(
+      response.hookSpecificOutput!.additionalContext,
+    ).data;
+    assert.notEqual(output.epoch, previous);
+    previous = output.epoch;
+    assert.deepEqual(
+      handleHook({ ...input, hook_event_name: "UserPromptSubmit" }),
+      {},
+    );
+    assert.deepEqual(
+      handleHook({ ...input, context_limits: { max_output_bytes: 1 } }),
+      {},
+    );
+  }
+});

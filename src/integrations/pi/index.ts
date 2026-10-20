@@ -13,7 +13,9 @@ import {
   prepareContext,
   finishContext,
 } from "../shared/context.js";
+import type { BudgetInput } from "../../context/output.js";
 export interface PiContext {
+  contextLimits?: Omit<BudgetInput, "cursor">;
   cwd: string;
   isProjectTrusted(): boolean;
   sessionManager: { getSessionId(): string };
@@ -33,13 +35,15 @@ export interface PiAPI {
 export default function extension(pi: PiAPI) {
   let binding: Binding | undefined,
     ref: string | undefined,
-    snapshot: boolean | undefined;
+    snapshot: boolean | undefined,
+    hostSession: string | undefined;
   let lastError = "";
   const clear = () => {
     if (binding) pi.unregisterMcpServer("mwf");
     binding = undefined;
     ref = undefined;
     snapshot = undefined;
+    hostSession = undefined;
   };
   const report = (ctx: PiContext) => {
     if (lastError !== ctx.sessionManager.getSessionId()) {
@@ -67,7 +71,8 @@ export default function extension(pi: PiAPI) {
         cwd: ctx.cwd,
       };
       checkBinding(new Transaction(root), binding);
-      ref = beginContext(binding, ctx.sessionManager.getSessionId(), true);
+      hostSession = ctx.sessionManager.getSessionId();
+      ref = beginContext(binding, hostSession, true);
       execute(
         "bootstrap",
         { project_root: root, session_ref: ref },
@@ -105,9 +110,12 @@ export default function extension(pi: PiAPI) {
       return;
     }
     try {
-      if (discover(ctx.cwd) !== binding.root) {
+      if (
+        discover(ctx.cwd) !== binding.root ||
+        hostSession !== ctx.sessionManager.getSessionId()
+      ) {
         start(event, ctx);
-        return;
+        if (!binding || !ref) return;
       }
       checkBinding(new Transaction(binding.root), binding);
       const output = prepareContext(
@@ -115,6 +123,7 @@ export default function extension(pi: PiAPI) {
         ref,
         typeof event.prompt === "string" ? event.prompt : "",
         snapshot === true,
+        ctx.contextLimits,
       );
       snapshot = undefined;
       if (!output) return;

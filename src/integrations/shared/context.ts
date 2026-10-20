@@ -11,7 +11,13 @@ import {
 } from "../../storage/index.js";
 import { checkBinding, type Binding } from "./binding.js";
 import { registerSession, resolveSession } from "./identity.js";
-import { boundResult, measure, serialize } from "../../context/output.js";
+import {
+  boundResult,
+  measure,
+  serialize,
+  limits,
+  type BudgetInput,
+} from "../../context/output.js";
 const outputSchema = z.object({
   id: z.string(),
   keys: z.array(z.string()),
@@ -72,6 +78,10 @@ export function beginContext(
   return locked(binding, (tx) => {
     const identity = registerSession(tx, binding.harness, hostId, branch);
     const s = state(tx, identity.session_ref);
+    // A new host invocation cannot confirm delivery of an unfinished reservation.
+    // Preserve its keys and charge until an explicit failure or epoch reset.
+    for (const output of s.outputs)
+      if (output.status === "pending") output.status = "unknown";
     if (reset) {
       s.epoch = randomUUID();
       s.used = 0;
@@ -87,6 +97,7 @@ export function prepareContext(
   ref: string,
   query: string = "",
   bootstrap = false,
+  hostLimits: Omit<BudgetInput, "cursor"> = {},
 ) {
   const result = execute(
     bootstrap ? "bootstrap" : "recall",
@@ -113,8 +124,7 @@ export function prepareContext(
       ? "handoff:" + hash(JSON.stringify(d.handoff))
       : null;
     if (handoffKey && loaded.has(handoffKey)) d.handoff = null;
-    if (!d.entries.length && !d.handoff && (!bootstrap || s.outputs.length))
-      return null;
+    if (!d.entries.length && !d.handoff) return null;
     const remaining = 8192 - s.used;
     if (remaining <= 0) return null;
     d.session_ref = ref;
@@ -127,14 +137,24 @@ export function prepareContext(
     try {
       boundResult(
         result,
-        { max_reference_tokens: Math.min(bootstrap ? 1024 : 2048, remaining) },
+        {
+          max_reference_tokens: Math.min(
+            bootstrap ? 1024 : 2048,
+            remaining,
+            hostLimits.max_reference_tokens ?? Infinity,
+          ),
+          max_output_bytes: Math.min(
+            limits[bootstrap ? "bootstrap" : "recall"][1],
+            hostLimits.max_output_bytes ?? Infinity,
+          ),
+        },
         bootstrap ? "bootstrap" : "recall",
       );
     } catch (e) {
       if (e instanceof MWFError && e.code === "BUDGET_TOO_SMALL") return null;
       throw e;
     }
-    if (!d.entries.length && !d.handoff && !bootstrap) return null;
+    if (!d.entries.length && !d.handoff) return null;
     const text = serialize(result),
       m = measure(text),
       id = randomUUID();
