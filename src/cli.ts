@@ -11,6 +11,9 @@ import path from "node:path";
 import { execute, Operation, schemas } from "./core.js";
 import { MWFError } from "./storage.js";
 import { serve, probe } from "./mcp.js";
+import { locateRuntime, persistProbe } from "./lifecycle/index.js";
+import { receipt } from "./storage/receipt.js";
+import { Transaction } from "./storage/index.js";
 import { lifecycle, setup } from "./setup.js";
 const HELP = `MWF — project-local file memory
 mwf init --root /project --git-mode track|ignore
@@ -173,27 +176,41 @@ async function main() {
     await serve(opts.project_root, opts);
     return;
   }
-  if (
-    ["attach", "rebind", "setup"].includes(op) &&
-    typeof a.plugin_root === "string"
-  ) {
-    const runtime = path.join(
-      a.plugin_root,
-      a.harness === "pi" ? "" : "runtime",
-      "dist/cli.js",
-    );
-    if (
-      fs.realpathSync(runtime) !==
-      fs.realpathSync(fileURLToPath(import.meta.url))
-    ) {
-      const child = spawnSync(process.execPath, [runtime, op, ...argv], {
-        stdio: "inherit",
-      });
-      process.exitCode = child.status ?? 2;
-      return;
+  if (["attach", "rebind", "setup"].includes(op)) {
+    const harness = typeof a.harness === "string" ? a.harness : "codex";
+    if (harness === "pi" || harness === "codex") {
+      const target = locateRuntime(
+        typeof a.plugin_root === "string" ? a.plugin_root : undefined,
+        harness,
+        String(a.project_root),
+      );
+      if (target.entry !== fs.realpathSync(fileURLToPath(import.meta.url))) {
+        const version = spawnSync(
+          process.execPath,
+          [target.entry, "--version"],
+          { encoding: "utf8", timeout: 15000 },
+        );
+        if (
+          version.error ||
+          version.status !== 0 ||
+          version.stdout.trim() !== target.version
+        )
+          throw new MWFError(
+            "RUNTIME_MISMATCH",
+            "Installed runtime executable does not match its package version.",
+          );
+        const child = spawnSync(
+          process.execPath,
+          [target.entry, op, ...argv, "--plugin-root", target.plugin_root],
+          { stdio: "inherit" },
+        );
+        if (child.error) throw child.error;
+        process.exitCode = child.status ?? 2;
+        return;
+      }
     }
   }
-  let result;
+  let result: import("./core.js").Result;
   if (op === "setup") {
     if (typeof a.harness === "string") a.harness = a.harness.split(",");
     result = await setup(a);
@@ -208,19 +225,50 @@ async function main() {
         host_reload: "pending",
       };
       stages.probed = probes;
-      try {
-        execute("bootstrap", { project_root: result.project_root });
-        probes.direct = "pass";
-        probes.mcp = await probe(
-          result.project_root,
-          fileURLToPath(import.meta.url),
-        );
-      } catch {
-        probes.failed = true;
-        result.warnings.push(
-          "Resources committed, but standalone probing failed; inspect doctor and reload the host.",
-        );
+      const harness = a.harness as "pi" | "codex";
+      const binding = receipt(new Transaction(result.project_root))!.clients[
+        harness
+      ]!;
+      Object.assign(probes, {
+        source: "attach_standalone",
+        time: new Date().toISOString(),
+        root: result.project_root,
+        runtime_path: binding.runtime_path,
+        runtime_version: RUNTIME_VERSION,
+        api_version: 2,
+        binding_generation: binding.binding_generation,
+        host_confirmed: "unknown",
+      });
+      for (const stage of ["direct", "mcp"] as const) {
+        try {
+          if (stage === "direct") {
+            const direct = execute("bootstrap", {
+              project_root: result.project_root,
+            });
+            if (!direct.ok) throw new Error(JSON.stringify(direct));
+            probes.direct = "pass";
+          } else
+            probes.mcp = await probe(
+              result.project_root,
+              fileURLToPath(import.meta.url),
+            );
+        } catch (error) {
+          probes[stage] = { result: "fail", error: String(error) };
+          probes.failed = true;
+          stages.state = "configured/degraded";
+          result.warnings.push(
+            `${stage} standalone probing failed; reload and verify the host.`,
+          );
+        }
       }
+      result.changed_files.push(
+        ...persistProbe(
+          result.project_root,
+          harness,
+          binding.binding_generation!,
+          probes,
+        ).filter((file) => !result.changed_files.includes(file)),
+      );
     }
   } else {
     if (!Object.hasOwn(schemas, op))

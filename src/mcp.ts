@@ -211,12 +211,23 @@ export async function probe(root: string, cli: string) {
         "Root, version, tools or status verification failed.",
       );
     return {
+      scope: "standalone_runtime",
+      source: "stdio",
+      time: new Date().toISOString(),
+      root: canonicalRoot(root),
+      runtime_path: cli,
+      runtime_version: status.runtime_version,
+      api_version: status.api_version,
+      result: "pass",
       connected: true,
       tool_count: list.tools.length,
       status_verified: true,
     };
   } finally {
-    await client.close();
-    await transport.close();
+    try {
+      await client.close();
+    } finally {
+      await transport.close();
+    }
   }
 }
