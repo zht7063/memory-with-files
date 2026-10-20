@@ -56,6 +56,23 @@ try {
     );
   invoke("init", "--root", project, "--git-mode", "track");
   assert.equal(fs.existsSync(path.join(project, "AGENTS.md")), false);
+  fs.mkdirSync(path.join(project, ".pi"));
+  fs.writeFileSync(
+    path.join(project, ".pi/settings.json"),
+    JSON.stringify({ packages: [installed] }),
+  );
+  const attached = invoke(
+    "attach",
+    "--root",
+    project,
+    "--harness",
+    "pi",
+    "--apply",
+  );
+  assert.equal(attached.data.probed.direct, "pass");
+  assert.equal(attached.data.probed.mcp.status_verified, true);
+  assert.equal(attached.data.session_observed, "unknown");
+  assert.equal(attached.data.probed.host_reload, "pending");
   const added = invoke(
     "add",
     "--root",

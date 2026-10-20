@@ -95,86 +95,134 @@ export function piConflicts(root: string) {
   }
   return problems;
 }
+export function locateRuntime(
+  pluginRoot: string | undefined,
+  harness: Harness,
+  root: string,
+) {
+  const own = fileURLToPath(new URL("../../", import.meta.url));
+  const candidates: string[] = [];
+  if (pluginRoot) candidates.push(path.resolve(pluginRoot));
+  else if (harness === "pi") {
+    for (const dir of [
+      path.join(root, ".pi"),
+      process.env.PI_CODING_AGENT_DIR ??
+        path.join(process.env.HOME ?? "", ".pi/agent"),
+    ]) {
+      const file = path.join(dir, "settings.json");
+      if (!fs.existsSync(file)) continue;
+      const settings = object(fs.readFileSync(file, "utf8"));
+      for (const value of Array.isArray(settings.packages)
+        ? settings.packages
+        : []) {
+        const source = typeof value === "string" ? value : value?.source;
+        if (typeof source === "string")
+          candidates.push(
+            source.startsWith("npm:@zht7063/mwf")
+              ? path.join(dir, "npm/node_modules/@zht7063/mwf")
+              : path.resolve(dir, source),
+          );
+      }
+    }
+  } else {
+    // A bundled runtime can identify its enclosing plugin without a global CLI.
+    if (fs.existsSync(path.join(own, "../plugin.json")))
+      candidates.push(path.resolve(own, ".."));
+    else {
+      const cache = path.join(
+        process.env.CODEX_HOME ?? path.join(process.env.HOME ?? "", ".codex"),
+        "plugins/cache",
+      );
+      const visit = (dir: string, depth: number) => {
+        if (!fs.existsSync(dir)) return;
+        if (fs.existsSync(path.join(dir, "plugin.json"))) {
+          candidates.push(dir);
+          return;
+        }
+        if (depth)
+          for (const item of fs.readdirSync(dir, { withFileTypes: true }))
+            if (item.isDirectory()) visit(path.join(dir, item.name), depth - 1);
+      };
+      visit(cache, 3);
+    }
+  }
+  const valid: { plugin_root: string; entry: string; version: string }[] = [];
+  for (const candidate of [...new Set(candidates)]) {
+    try {
+      const base = fs.realpathSync(candidate);
+      const runtimeRoot =
+        harness === "codex" ? path.join(base, "runtime") : base;
+      const pkg = object(
+        fs.readFileSync(path.join(runtimeRoot, "package.json"), "utf8"),
+      );
+      if (pkg.name !== "@zht7063/mwf" || typeof pkg.version !== "string")
+        throw Error("Invalid runtime package");
+      if (harness === "codex") {
+        const manifest = object(
+          fs.readFileSync(path.join(base, "plugin.json"), "utf8"),
+        );
+        if (manifest.name !== "mwf" || manifest.version !== pkg.version)
+          throw Error("Plugin/runtime version mismatch");
+      } else if (
+        !pkg.pi ||
+        !fs.existsSync(path.join(runtimeRoot, "dist/integrations/pi/index.js"))
+      )
+        throw Error("Missing Pi extension");
+      const entry = fs.realpathSync(path.join(runtimeRoot, "dist/cli.js"));
+      if (!valid.some((v) => v.entry === entry))
+        valid.push({ plugin_root: base, entry, version: pkg.version });
+    } catch (error) {
+      if (pluginRoot)
+        throw new MWFError(
+          "PLUGIN_RUNTIME_REQUIRED",
+          `Invalid plugin runtime: ${String(error)}`,
+        );
+    }
+  }
+  if (valid.length !== 1)
+    throw new MWFError(
+      "PLUGIN_RUNTIME_REQUIRED",
+      valid.length
+        ? "Multiple installed runtimes; specify --plugin-root."
+        : "Cannot locate an installed plugin runtime; specify --plugin-root.",
+    );
+  return valid[0];
+}
 function runtime(
   pluginRoot: string | undefined,
   harness: Harness,
   root: string,
 ) {
-  const base = fs.realpathSync(
-    pluginRoot ?? fileURLToPath(new URL("../../", import.meta.url)),
-  );
-  if (harness === "pi" && !pluginRoot) {
-    const bases = [
-      path.join(root, ".pi"),
-      process.env.PI_CODING_AGENT_DIR ??
-        path.join(process.env.HOME ?? "", ".pi/agent"),
-    ];
-    const installed = bases.some((dir) => {
-      const file = path.join(dir, "settings.json");
-      if (!fs.existsSync(file)) return false;
-      const settings = object(fs.readFileSync(file, "utf8"));
-      return (
-        Array.isArray(settings.packages) &&
-        settings.packages.some((value) => {
-          const source = typeof value === "string" ? value : value?.source;
-          if (typeof source !== "string") return false;
-          const candidate = source.startsWith("npm:@zht7063/mwf")
-            ? path.join(dir, "npm/node_modules/@zht7063/mwf")
-            : path.resolve(dir, source);
-          try {
-            return fs.realpathSync(candidate) === base;
-          } catch {
-            return false;
-          }
-        })
-      );
-    });
-    if (!installed)
-      throw new MWFError(
-        "PLUGIN_RUNTIME_REQUIRED",
-        "Use the Pi-installed package runtime, or explicitly pass its --plugin-root.",
-      );
-  }
-  let runtimeRoot = base;
-  if (harness === "codex") {
-    const manifest = path.join(base, "plugin.json");
-    if (!fs.existsSync(manifest))
-      throw new MWFError(
-        "PLUGIN_RUNTIME_REQUIRED",
-        "Pass --plugin-root for the installed Codex plugin.",
-      );
-    const m = object(fs.readFileSync(manifest, "utf8"));
-    if (m.name !== "mwf" || m.version !== RUNTIME_VERSION)
-      throw new MWFError(
-        "RUNTIME_MISMATCH",
-        "Plugin version differs; execute its own runtime.",
-      );
-    runtimeRoot = path.join(base, "runtime");
-  }
-  const pkg = object(
-    fs.readFileSync(path.join(runtimeRoot, "package.json"), "utf8"),
-  );
-  if (pkg.name !== "@zht7063/mwf" || pkg.version !== RUNTIME_VERSION)
+  const target = locateRuntime(pluginRoot, harness, root);
+  if (target.version !== RUNTIME_VERSION)
     throw new MWFError(
       "RUNTIME_MISMATCH",
       "Execute the installed plugin runtime version.",
     );
-  if (
-    harness === "pi" &&
-    (!pkg.pi ||
-      !fs.existsSync(path.join(runtimeRoot, "dist/integrations/pi/index.js")))
-  )
+  if (target.entry !== fs.realpathSync(cli))
     throw new MWFError(
       "PLUGIN_RUNTIME_REQUIRED",
-      "Pi package extension is missing.",
+      `Run ${target.entry} to bind the installed runtime.`,
     );
-  const entry = fs.realpathSync(path.join(runtimeRoot, "dist/cli.js"));
-  if (entry !== fs.realpathSync(cli))
-    throw new MWFError(
-      "PLUGIN_RUNTIME_REQUIRED",
-      `Run ${entry} to bind the installed runtime.`,
-    );
-  return entry;
+  return target.entry;
+}
+export function persistProbe(
+  root: string,
+  harness: Harness,
+  generation: string,
+  evidence: Record<string, unknown>,
+) {
+  return withProjectLock(root, () => {
+    recover(root);
+    const tx = new Transaction(root),
+      r = receipt(tx);
+    const client = r?.clients[harness];
+    if (!r || !client?.enabled || client.binding_generation !== generation)
+      throw new MWFError("BINDING_STALE", "Binding changed during probing.");
+    client.probe = evidence;
+    tx.set(receiptFile, JSON.stringify(r, null, 2) + "\n");
+    return tx.commit();
+  });
 }
 function legacy(tx: Transaction) {
   const c = config(tx);

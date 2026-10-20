@@ -30,6 +30,7 @@ export const resourceSchema = z.discriminatedUnion("kind", [
 export const clientSchema = z
   .object({
     enabled: z.boolean(),
+    probe: z.record(z.unknown()).optional(),
     binding_generation: z.string().optional(),
     runtime_version: z.string().optional(),
     api_version: z.number().optional(),
