@@ -2,7 +2,7 @@ import { records, validRecords } from "../storage/records.js";
 import { recallRecords, eligible, tokens } from "../retrieval/index.js";
 export { recallRecords, eligible } from "../retrieval/index.js";
 import { resolveSession } from "./identity.js";
-import { receipt } from "../storage/receipt.js";
+import { integrationDiagnostics } from "./diagnostics.js";
 import type { BudgetInput } from "../context/output.js";
 import { boundResult, decodeCursor, encodeCursor } from "../context/output.js";
 import {
@@ -102,7 +102,9 @@ export const schemas = {
   status: z
     .object({ ...rootField, session_ref: z.string().optional() })
     .strict(),
-  doctor: z.object(rootField).strict(),
+  doctor: z
+    .object({ ...rootField, session_ref: z.string().optional() })
+    .strict(),
   bootstrap: z
     .object({ ...rootField, ...recallFields, ...routingFields })
     .strict(),
@@ -585,7 +587,24 @@ export function operateWithMigration(
   ...[op, a]: Command
 ): unknown {
   if (op === "init") return initialize(tx, a.git_mode, a.language);
-  if (op === "doctor") return diagnose(tx);
+  if (op === "doctor") {
+    const data = diagnose(tx);
+    const integration = integrationDiagnostics(tx);
+    const status = operateWithMigration(
+      tx,
+      migrateIntegration,
+      "status",
+      a,
+    ) as { session_observed: unknown };
+    return {
+      ...data,
+      ok: data.ok && !integration.errors.length,
+      data: { ...data },
+      ...integration,
+      errors: [...data.errors, ...integration.errors],
+      session_observed: status.session_observed,
+    };
+  }
   if (op === "status") {
     const c = config(tx, false);
     let observed: unknown = "unknown";
@@ -600,6 +619,7 @@ export function operateWithMigration(
           used_reference_tokens: state.used,
           output_bytes: state.bytes,
           last_event: state.diagnostics?.at(-1) ?? null,
+          diagnostics: state.diagnostics?.slice(-100) ?? [],
           outputs: state.outputs?.map(
             (o: { status: string; hash: string }) => ({
               status: o.status,
@@ -614,10 +634,9 @@ export function operateWithMigration(
       data: {
         initialized: c.schema_version !== undefined,
         schema_version: c.schema_version ?? null,
+        health: diagnose(tx),
       },
-      configured: receipt(tx),
-      installed: { runtime_version: RUNTIME_VERSION },
-      probed: { direct: true, mcp: "unknown" },
+      ...integrationDiagnostics(tx),
       session_observed: observed,
       runtime_owner: c.runtime_owner ?? "legacy",
 

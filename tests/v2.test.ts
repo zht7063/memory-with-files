@@ -460,3 +460,127 @@ test("hook failure notices persist per session and category without following sy
   failureNotice({ cwd: other, session_id: "host-a" }, "timeout", "failed");
   assert.deepEqual(fs.readdirSync(outside), []);
 });
+
+test("status and doctor inspect runtime, binding and ownership without inventing probes", (t) => {
+  const root = project(t);
+  assert.deepEqual(
+    data(execute("status", { project_root: root })).installed,
+    {},
+  );
+  const b = binding(root);
+  const status = () => data(execute("status", { project_root: root })) as any;
+  assert.equal(status().installed.pi.valid, true);
+  assert.equal(status().configured.pi.valid, true);
+  assert.equal(status().probed.pi.direct, "unknown");
+  const file = path.join(root, ".mwf/local/integration.json");
+  const r = JSON.parse(fs.readFileSync(file, "utf8"));
+  r.clients.pi.probe = {
+    source: "test_standalone",
+    time: new Date().toISOString(),
+    root,
+    runtime_path: b.runtime,
+    runtime_version: "0.2.0",
+    api_version: 2,
+    binding_generation: b.generation,
+    direct: "pass",
+    mcp: { result: "fail" },
+  };
+  fs.writeFileSync(file, JSON.stringify(r));
+  assert.equal(status().probed.pi.mcp.result, "fail");
+  r.clients.pi.runtime_path += ".missing";
+  fs.writeFileSync(file, JSON.stringify(r));
+  assert.equal(status().installed.pi.valid, false);
+  assert.equal(status().probed.pi.direct, "unknown");
+  assert.equal(execute("doctor", { project_root: root }).ok, false);
+  r.clients.pi.enabled = false;
+  fs.writeFileSync(file, JSON.stringify(r));
+  assert.equal(execute("doctor", { project_root: root }).ok, true);
+  r.clients.pi.enabled = true;
+  r.clients.pi.runtime_path = b.runtime;
+  r.clients.pi.owned_resources = [
+    {
+      kind: "file",
+      path: ".pi/extensions/mwf.js",
+      installed_hash: "wrong",
+      before: null,
+    },
+  ];
+  fs.writeFileSync(file, JSON.stringify(r));
+  assert.equal(status().configured.pi.valid, false);
+  assert.equal(execute("doctor", { project_root: root }).ok, false);
+  assert.equal(status().data.health.ok, true);
+});
+
+test("session diagnostics are bounded, complete and isolated", (t) => {
+  const root = project(t),
+    b = binding(root);
+  add(root);
+  const ref = beginContext(b, "diagnostic-session", false);
+  const other = beginContext(b, "other-session", false);
+  const output = prepareContext(b, ref, "", true)!;
+  for (let i = 0; i < 105; i++) finishContext(b, ref, output.id, "submitted");
+  const status = data(
+    execute("status", { project_root: root, session_ref: ref }),
+  ) as any;
+  assert.equal(status.session_observed.diagnostics.length, 100);
+  const event = status.session_observed.last_event;
+  assert.equal(event.client, "pi");
+  assert.equal(event.session_ref, ref);
+  assert.equal(event.epoch, output.epoch);
+  assert.equal(event.runtime_version, "0.2.0");
+  assert.equal(event.api_version, 2);
+  assert.equal(event.result_code, "submitted");
+  assert.equal(event.entry_count, 1);
+  assert.ok(Date.parse(event.at));
+  assert.ok(event.hash && event.reference_tokens > 0 && event.bytes > 0);
+  assert.equal(
+    data(execute("status", { project_root: root })).session_observed,
+    "unknown",
+  );
+  const isolated = data(
+    execute("doctor", { project_root: root, session_ref: other }),
+  ) as any;
+  assert.equal(isolated.session_observed.last_event, null);
+  assert.equal(JSON.stringify(event).includes("详情"), false);
+});
+
+test("doctor checks Codex owned configuration and reports copied root bindings", (t) => {
+  const root = project(t);
+  binding(root);
+  const receiptPath = path.join(root, ".mwf/local/integration.json");
+  const initial = JSON.parse(fs.readFileSync(receiptPath, "utf8"));
+  const owned =
+    '# mwf:mcp:start\n[mcp_servers.mwf]\ncommand = "node"\n# mwf:mcp:end';
+  initial.clients.codex = {
+    ...initial.clients.pi,
+    owned_resources: [
+      {
+        kind: "block",
+        path: ".codex/config.toml",
+        installed: owned,
+        created: true,
+      },
+    ],
+  };
+  fs.mkdirSync(path.join(root, ".codex"));
+  fs.writeFileSync(path.join(root, ".codex/config.toml"), owned);
+  fs.writeFileSync(receiptPath, JSON.stringify(initial));
+  assert.equal(execute("doctor", { project_root: root }).ok, true);
+  const configFile = path.join(root, ".codex/config.toml");
+  const original = fs.readFileSync(configFile, "utf8");
+  fs.writeFileSync(configFile, original + "\n[unrelated]\nvalue = true\n");
+  assert.equal(execute("doctor", { project_root: root }).ok, true);
+  fs.writeFileSync(
+    configFile,
+    original.replace("command = ", "changed_command = "),
+  );
+  assert.equal(execute("doctor", { project_root: root }).ok, false);
+  fs.writeFileSync(configFile, original);
+  const file = path.join(root, ".mwf/local/integration.json");
+  const r = JSON.parse(fs.readFileSync(file, "utf8"));
+  r.canonical_root = path.join(root, "other");
+  fs.writeFileSync(file, JSON.stringify(r));
+  const status = data(execute("status", { project_root: root })) as any;
+  assert.ok(status.configured.codex.issues.includes("ROOT_MISMATCH"));
+  assert.equal(execute("doctor", { project_root: root }).ok, false);
+});

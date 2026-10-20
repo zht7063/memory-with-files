@@ -1,3 +1,4 @@
+import { RUNTIME_VERSION } from "../../contracts/version.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { execute, type Result } from "../../core.js";
@@ -18,6 +19,7 @@ const outputSchema = z.object({
   bytes: z.number(),
   status: z.enum(["pending", "submitted", "accepted", "unknown"]),
   hash: z.string(),
+  entry_count: z.number().optional(),
 });
 const stateSchema = z.object({
   epoch: z.string(),
@@ -26,6 +28,13 @@ const stateSchema = z.object({
   outputs: z.array(outputSchema),
   diagnostics: z.array(
     z.object({
+      client: z.enum(["pi", "codex"]).optional(),
+      session_ref: z.string().optional(),
+      epoch: z.string().optional(),
+      runtime_version: z.string().optional(),
+      api_version: z.number().optional(),
+      result_code: z.string().optional(),
+      entry_count: z.number().optional(),
       event: z.string(),
       at: z.string(),
       hash: z.string(),
@@ -138,6 +147,7 @@ export function prepareContext(
       tokens: m.reference_tokens,
       bytes: m.bytes,
       status: "pending",
+      entry_count: d.entries.length,
       hash: hash(text)!,
     });
     s.used += m.reference_tokens;
@@ -162,6 +172,13 @@ export function finishContext(
       s.outputs = s.outputs.filter((v) => v.id !== id);
     } else o.status = outcome;
     s.diagnostics.push({
+      client: binding.harness,
+      session_ref: ref,
+      epoch: s.epoch,
+      runtime_version: RUNTIME_VERSION,
+      api_version: 2,
+      result_code: outcome,
+      entry_count: o.entry_count ?? 0,
       event: outcome,
       at: new Date().toISOString(),
       hash: o.hash,
