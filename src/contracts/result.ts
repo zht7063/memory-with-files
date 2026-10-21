@@ -1,5 +1,18 @@
 import { RUNTIME_VERSION, API_VERSION } from "./version.js";
 import { MWFError } from "./error.js";
+export type Result = {
+  ok: boolean;
+  operation: string;
+  project_root: string;
+  schema_version: number;
+  runtime_version: string;
+  api_version: number;
+  changed_files: string[];
+  warnings: string[];
+  data: unknown;
+  replayed?: boolean;
+  request_id?: string;
+};
 export function failure(operation: string, root: string, error: unknown) {
   return {
     ok: false,
