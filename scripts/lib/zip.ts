@@ -22,7 +22,7 @@ export function zipDirectory(directory: string, destination: string) {
   function visit(relative: string) {
     for (const entry of fs
       .readdirSync(path.join(directory, relative), { withFileTypes: true })
-      .sort((a, b) => a.name.localeCompare(b.name))) {
+      .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) {
       const name = relative ? `${relative}/${entry.name}` : entry.name;
       if (entry.isDirectory()) {
         visit(name);
