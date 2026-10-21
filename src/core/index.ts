@@ -224,7 +224,7 @@ export function config(
     if (required)
       throw new MWFError(
         "NOT_INITIALIZED",
-        "Project is not connected. Run mwf setup or init with an explicit root.",
+        "Project is not connected. Run mwf init with an explicit root.",
       );
     return {};
   }

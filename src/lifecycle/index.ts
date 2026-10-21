@@ -415,8 +415,23 @@ export function lifecycle(
   return withProjectLock(root, () => {
     recover(root);
     let tx = new Transaction(root);
+    let changed: string[] = [];
+    const previousReceipt = receipt(tx);
+    if (
+      op !== "detach" &&
+      previousReceipt &&
+      previousReceipt.canonical_root !== root
+    ) {
+      // Revoke every copied/moved binding durably before attempting one rebind.
+      // Keep the old root until the requested client's configuration succeeds.
+      for (const client of Object.values(previousReceipt.clients))
+        client.enabled = false;
+      tx.set(receiptFile, JSON.stringify(previousReceipt, null, 2) + "\n");
+      changed = tx.commit();
+      tx = new Transaction(root);
+    }
     const { r, clients } = plan(tx);
-    let changed = tx.commit();
+    changed.push(...tx.commit());
     const conflicts: string[] = [];
     if (op === "detach") {
       tx = new Transaction(root);
