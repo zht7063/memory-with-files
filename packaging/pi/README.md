@@ -1,21 +1,26 @@
 # Pi package
 
-MWF ships to Pi as an npm tarball, not a plugin zip.
+MWF ships to Pi as an npm tarball built by `npm run pack:release`.
 
 ## Build
 
 ```sh
+npm ci
+npm run build
 npm run pack:release
 ```
 
-This writes `releases/zht7063-mwf-0.2.0.tgz` (built in pure Node, byte-for-byte reproducible) and lists it in `releases/SHA256SUMS` and `releases/RELEASE-STATUS.json`.
+This writes `releases/zht7063-mwf-0.2.0.tgz` (deterministic: fixed tar metadata, gzip OS byte 255) and lists it in `releases/SHA256SUMS` and `releases/RELEASE-STATUS.json`.
 
 ## Verify and install
+
+Pi 1.3.0 loads extensions from a directory, not from a `.tgz` path. Extract first, then install the package folder:
 
 ```sh
 cd releases
 sha256sum -c SHA256SUMS --ignore-missing
-pi install ./zht7063-mwf-0.2.0.tgz
+mkdir -p /tmp/mwf-pi && tar -xzf zht7063-mwf-0.2.0.tgz -C /tmp/mwf-pi
+pi install /tmp/mwf-pi/package
 ```
 
-Pi finds the extension through the `pi.extensions` field in the package's `package.json` (`./dist/integrations/pi/index.js`).
+Pi finds the extension through `pi.extensions` in `package/package.json` (`./dist/integrations/pi/index.js`).

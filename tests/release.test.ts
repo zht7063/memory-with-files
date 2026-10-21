@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createHash } from "node:crypto";
@@ -121,7 +122,26 @@ test("pure Node ZIP round-trips nested UTF-8, empty and binary files", (t) => {
 test(
   "packed releases are deterministic and include complete Codex and Pi runtimes",
   { timeout: 180_000 },
-  async () => {
+  async (t) => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), "mwf-release-test-"));
+    t.after(() => fs.rmSync(base, { recursive: true, force: true }));
+    const npmPack = JSON.parse(
+      (
+        await promisify(execFile)(
+          "npm",
+          [
+            "pack",
+            "--ignore-scripts",
+            "--json",
+            "--pack-destination",
+            base,
+            "--cache",
+            path.join(base, "cache"),
+          ],
+          { encoding: "utf8" },
+        )
+      ).stdout,
+    );
     await promisify(execFile)(
       process.execPath,
       ["--experimental-strip-types", "scripts/pack-release.ts"],
@@ -130,18 +150,30 @@ test(
     const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
     const filename = `${pkg.name.replace(/^@/, "").replaceAll("/", "-")}-${pkg.version}.tgz`;
     const tgz = fs.readFileSync(path.join("releases", filename));
+    const zipBefore = fs.readFileSync(`releases/mwf-codex-${pkg.version}.zip`);
     const hash = (bytes: Buffer) =>
       createHash("sha256").update(bytes).digest("hex");
     await promisify(execFile)(
       process.execPath,
       ["--experimental-strip-types", "scripts/pack-release.ts"],
-      { timeout: 150_000, env: { ...process.env, PATH: "" } },
+      { timeout: 150_000 },
     );
     assert.equal(
       hash(fs.readFileSync(path.join("releases", filename))),
       hash(tgz),
     );
+    assert.equal(
+      hash(fs.readFileSync(`releases/mwf-codex-${pkg.version}.zip`)),
+      hash(zipBefore),
+    );
+    assert.equal(tgz[9], 255);
     const tar = untgz(tgz);
+    assert.deepEqual(
+      [...tar.keys()].sort(),
+      npmPack[0].files
+        .map((file: { path: string }) => `package/${file.path}`)
+        .sort(),
+    );
     const packed = JSON.parse(tar.get("package/package.json")!.toString());
     assert.ok(Array.isArray(packed.pi.extensions));
     assert.ok(packed.pi.extensions.length > 0);
@@ -167,6 +199,26 @@ test(
     const files = unzip(
       fs.readFileSync(`releases/mwf-codex-${pkg.version}.zip`),
     );
+    for (const [directory, entries, entrypoint] of [
+      ["pi", tar, "package/dist/integrations/pi/index.js"],
+      ["codex", files, "runtime/dist/mcp.js"],
+    ] as const) {
+      const extracted = path.join(base, directory);
+      for (const [name, data] of entries) {
+        const target = path.join(extracted, name);
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.writeFileSync(target, data);
+      }
+      await promisify(execFile)(
+        process.execPath,
+        [
+          "--input-type=module",
+          "--eval",
+          `await import(${JSON.stringify(pathToFileURL(path.join(extracted, entrypoint)).href)})`,
+        ],
+        { cwd: extracted, timeout: 30_000 },
+      );
+    }
     const manifest = JSON.parse(files.get("plugin.json")!.toString());
     const runtime = JSON.parse(files.get("runtime/package.json")!.toString());
     const source = JSON.parse(

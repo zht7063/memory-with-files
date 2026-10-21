@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { gzipSync } from "node:zlib";
+import { gunzipSync, gzipSync } from "node:zlib";
 
 /** Minimal deterministic ustar archive of regular files, rooted at package/. */
 export function tgzDirectory(directory: string, destination: string) {
@@ -58,5 +58,64 @@ export function tgzDirectory(directory: string, destination: string) {
     blocks.push(header, data, Buffer.alloc((512 - (data.length % 512)) % 512));
   }
   blocks.push(Buffer.alloc(1024));
-  fs.writeFileSync(destination, gzipSync(Buffer.concat(blocks), { level: 9 }));
+  const compressed = gzipSync(Buffer.concat(blocks), { level: 9 });
+  compressed[9] = 255; // Unknown OS, independent of the build platform.
+  fs.writeFileSync(destination, compressed);
+}
+
+/** Extract npm's ustar files, including POSIX extended path headers. */
+export function extractTgz(compressed: Buffer, destination: string) {
+  const tar = gunzipSync(compressed);
+  let extendedPath: string | undefined;
+  for (let offset = 0; offset + 512 <= tar.length; ) {
+    const header = tar.subarray(offset, offset + 512);
+    if (header.every((byte) => byte === 0)) break;
+    const field = (start: number, length: number) =>
+      header
+        .subarray(start, start + length)
+        .toString()
+        .split("\0")[0];
+    const size = parseInt(field(124, 12), 8);
+    if (
+      !Number.isSafeInteger(size) ||
+      size < 0 ||
+      offset + 512 + size > tar.length
+    )
+      throw new Error("Invalid tar entry size");
+    const data = tar.subarray(offset + 512, offset + 512 + size);
+    offset += 512 + Math.ceil(size / 512) * 512;
+    const type = field(156, 1);
+    if (type === "x") {
+      for (let cursor = 0; cursor < data.length; ) {
+        const space = data.indexOf(32, cursor);
+        const length = Number(data.subarray(cursor, space).toString());
+        if (
+          space < cursor ||
+          !Number.isSafeInteger(length) ||
+          length <= space - cursor + 1 ||
+          cursor + length > data.length
+        )
+          throw new Error("Invalid tar extended header");
+        const record = data.subarray(space + 1, cursor + length - 1).toString();
+        if (record.startsWith("path=")) extendedPath = record.slice(5);
+        cursor += length;
+      }
+      continue;
+    }
+    const prefix = field(345, 155);
+    const name = extendedPath ?? (prefix ? prefix + "/" : "") + field(0, 100);
+    extendedPath = undefined;
+    if (
+      !name.startsWith("package/") ||
+      name.split("/").some((part) => part === "..") ||
+      name.includes("\\")
+    )
+      throw new Error(`Unsafe tar path: ${name}`);
+    const target = path.join(destination, name);
+    if (type === "5") fs.mkdirSync(target, { recursive: true });
+    else if (type === "0" || type === "") {
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, data);
+    } else throw new Error(`Unsupported tar entry type: ${type}`);
+  }
 }
