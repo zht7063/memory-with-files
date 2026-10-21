@@ -1,6 +1,13 @@
 # 0.2.0 安装与生命周期
 
-这是未发布候选产物的可复跑命令；不要从 npm 拉取假定已发布的 0.2.0。要求 Node ≥22.19.0。运行 `npm run pack:release` 生成 `releases/` 中的 tarball、Codex zip 和 SHA256SUMS。校验 `shasum -a 256 -c SHA256SUMS`。本机实测范围见实施验收记录。
+这是未发布候选产物的可复跑命令；不要从 npm 拉取假定已发布的 0.2.0。要求 Node ≥22.19.0。运行 `npm run pack:release` 在 `releases/` 生成 4 个文件：
+
+- `zht7063-mwf-0.2.0.tgz`：独立 CLI 与 Pi 共用的 npm 包（可重复构建）
+- `mwf-codex-0.2.0.zip`：Codex 插件
+- `SHA256SUMS`：上面两个产物的校验和
+- `RELEASE-STATUS.json`：发布状态，`publishable: false`
+
+安装前在 `releases/` 内校验：Linux 用 `sha256sum -c SHA256SUMS`，macOS 用 `shasum -a 256 -c SHA256SUMS`。本机实测范围见实施验收记录。
 
 ## 独立 CLI
 
@@ -19,7 +26,7 @@ node node_modules/@zht7063/mwf/dist/cli.js doctor --root /absolute/project
 
 ## Pi
 
-宿主包为 `@earendil-works/pi-coding-agent`（T07 实测 1.3.0；旧包名 `@mariozechner/pi-coding-agent` 停在 0.73.1，不再使用）。解压 tarball 到稳定安装路径，以 Pi 正常 package 机制安装：
+宿主包为 `@earendil-works/pi-coding-agent`（T07 实测 1.3.0；旧包名 `@mariozechner/pi-coding-agent` 停在 0.73.1，不再使用）。Pi 从目录加载扩展，不能直接 `pi install` 一个 `.tgz` 文件：先把 tarball 解压到稳定安装路径，再对解压出的 `package/` 目录执行安装。Pi 不会拷贝这个目录，安装期间不要删除它。Pi 通过包内 `package.json` 的 `pi.extensions` 字段找到扩展。
 
 ```sh
 mkdir -p /absolute/mwf-install
@@ -56,7 +63,23 @@ node /absolute/runtime/dist/cli.js detach --root /absolute/project --harness pi 
 node /absolute/runtime/dist/cli.js detach --root /absolute/project --harness codex --apply
 ```
 
-`detach --harness all` 可一次停用两个客户端；不加 `--apply` 只预览。先持久停用，再清理自有配置。出现 cleanup pending 时保留用户修改和 receipt，解决冲突后重复 detach。不要直接删除 `.mwf/local/`。最后用 `pi remove /absolute/mwf-install/package --local --approve` 或 Codex 正常插件卸载入口移除程序并重载；CLI 安装目录中可执行 `npm uninstall @zht7063/mwf`。这些操作均保留记忆数据。卸载命令的实际覆盖范围见验收记录。
+`detach --harness all` 可一次停用两个客户端；不加 `--apply` 只预览。先持久停用，再清理自有配置。成功时状态为 `disabled_clean`；出现 `disabled_cleanup_pending` 时保留用户修改和 receipt，解决冲突后重复 detach。在 detach 报告 `disabled_clean` 且宿主已退出之前，不要删除 `.mwf/local/`。
+
+然后移除程序并重载宿主：
+
+- Pi：`pi remove /absolute/mwf-install/package`（当初用 `--local` 安装就加 `--local`），再 `rm -rf /absolute/mwf-install`。
+- Codex：GUI 卸载，或 `codex plugin remove mwf@<marketplace>`；如果当初添加过 marketplace，再执行 `codex plugin marketplace remove <marketplace>`。解压出的 zip 目录自行删除。
+- 独立 CLI：在其安装目录执行 `npm uninstall @zht7063/mwf`。
+
+以上操作都保留记忆数据。卸载后会留下几处需要手动处理的东西：
+
+- `.mwf/local/`（receipt、锁文件、会话状态等本机状态）：detach 后仍在，确认 `disabled_clean` 后可 `rm -rf`。
+- `.mwf/` 其余部分是记忆数据，默认保留；不想要数据才删。
+- `.gitignore` 里 `# memory-with-files:start … end` 一段：detach 不删，需要手动删。如果 `.gitignore` 是 `init` 新建的，删掉这段后文件为空，可以把整个文件删掉。
+- 空的 `.codex/` 目录：detach 删掉受管块（和 MWF 新建的 `config.toml`）后留下，可 `rmdir`。
+- 宿主自己的残留，不属于 MWF：Pi settings 里的 `"packages": []`，以及 `~/.codex/plugins/cache/<marketplace>/` 空目录。
+
+完整的写入清单、逐步卸载命令和已知遗留见 [packaging/UNINSTALL.md](../packaging/UNINSTALL.md)。
 
 单宿主 detach 仅停用指定客户端；另一个客户端的 enabled、generation 和配置不变。
 停用后旧连接立即拒绝请求；Pi 在下一个扩展事件注销动态工具，Codex 需要重载才能
