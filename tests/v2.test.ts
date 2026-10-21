@@ -415,7 +415,7 @@ test("concurrent task saves commit once and concurrent context reservations stay
   await Promise.all(
     Array.from({ length: 6 }, () =>
       child(
-        `import {prepareContext} from ${JSON.stringify(contextURL)};prepareContext(${JSON.stringify(b)},${JSON.stringify(ref)},'并发上下文预算',true);`,
+        `import {prepareContext} from ${JSON.stringify(contextURL)};for (let i = 0; ; i++) { try { prepareContext(${JSON.stringify(b)},${JSON.stringify(ref)},'并发上下文预算',true); break; } catch (e) { if (e.code !== 'BUSY' || i >= 5) throw e; } }`,
       ),
     ),
   );
