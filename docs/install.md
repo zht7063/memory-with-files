@@ -2,7 +2,7 @@
 
 这是未发布候选产物的可复跑命令；不要从 npm 拉取假定已发布的 0.2.0。要求 Node ≥22.19.0。运行 `npm run pack:release` 在 `releases/` 生成 4 个文件：
 
-- `zht7063-mwf-0.2.0.tgz`：独立 CLI 与 Pi 共用的 npm 包（可重复构建）
+- `zht7063-mwf-0.2.0.tgz`：独立 CLI 与 Pi 共用的 npm 包
 - `mwf-codex-0.2.0.zip`：Codex 插件
 - `SHA256SUMS`：上面两个产物的校验和
 - `RELEASE-STATUS.json`：发布状态，`publishable: false`
