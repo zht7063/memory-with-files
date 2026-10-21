@@ -32,19 +32,29 @@ export interface PiAPI {
   ): void;
   unregisterMcpServer(name: string): void;
 }
+// A replacement invalidates callbacks retained by the previous loader instance.
+const owners = new WeakMap<PiAPI, () => void>();
 export default function extension(pi: PiAPI) {
+  owners.get(pi)?.();
+  let active = true;
+  let registered = false;
   let binding: Binding | undefined,
     ref: string | undefined,
     snapshot: boolean | undefined,
     hostSession: string | undefined;
   let lastError = "";
   const clear = () => {
-    if (binding) pi.unregisterMcpServer("mwf");
+    if (registered) pi.unregisterMcpServer("mwf");
+    registered = false;
     binding = undefined;
     ref = undefined;
     snapshot = undefined;
     hostSession = undefined;
   };
+  owners.set(pi, () => {
+    active = false;
+    clear();
+  });
   const report = (ctx: PiContext) => {
     if (lastError !== ctx.sessionManager.getSessionId()) {
       lastError = ctx.sessionManager.getSessionId();
@@ -55,6 +65,7 @@ export default function extension(pi: PiAPI) {
     }
   };
   const start = (_event: Record<string, unknown>, ctx: PiContext) => {
+    if (!active) return;
     clear();
     if (!ctx.isProjectTrusted()) return;
     try {
@@ -79,24 +90,30 @@ export default function extension(pi: PiAPI) {
         { guard: (tx) => checkBinding(tx, binding!) },
       );
       snapshot = true;
-      pi.registerMcpServer("mwf", {
-        command: process.execPath,
-        args: [
-          binding.runtime,
-          "mcp",
-          "--root",
-          root,
-          "--harness",
-          "pi",
-          "--binding-generation",
-          binding.generation,
-          "--session-ref",
-          ref,
-          "--profile",
-          "agent",
-        ],
-        exposure: "direct",
-      });
+      try {
+        pi.registerMcpServer("mwf", {
+          command: process.execPath,
+          args: [
+            binding.runtime,
+            "mcp",
+            "--root",
+            root,
+            "--harness",
+            "pi",
+            "--binding-generation",
+            binding.generation,
+            "--session-ref",
+            ref,
+            "--profile",
+            "agent",
+          ],
+          exposure: "direct",
+        });
+        registered = true;
+      } catch {
+        // Direct recovery is independent of the tool connection.
+        report(ctx);
+      }
     } catch {
       clear();
       report(ctx);
@@ -105,6 +122,7 @@ export default function extension(pi: PiAPI) {
   pi.on("session_start", start);
   for (const event of ["session_compact", "session_tree"]) pi.on(event, start);
   pi.on("before_agent_start", (event, ctx) => {
+    if (!active) return;
     if (!binding || !ref || !ctx.isProjectTrusted()) {
       clear();
       return;
@@ -136,5 +154,7 @@ export default function extension(pi: PiAPI) {
       report(ctx);
     }
   });
-  pi.on("session_shutdown", () => clear());
+  pi.on("session_shutdown", () => {
+    if (active) clear();
+  });
 }

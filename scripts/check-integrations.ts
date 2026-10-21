@@ -7,6 +7,7 @@ const contracts = spawnSync(
     "tests/mcp.test.ts",
     "tests/pi-adapter.test.ts",
     "tests/lifecycle.test.ts",
+    "tests/codex-desktop.test.ts",
   ],
   { stdio: "inherit" },
 );
@@ -29,7 +30,8 @@ for (const [variable, script, key] of [
     ["tests/integrations/release/" + script, binary],
     { stdio: "inherit" },
   );
-  summary[key] = host.status === 0 ? "pass" : "fail";
+  summary[key] =
+    host.status === 0 ? (key === "real_pi" ? "partial" : "pass") : "fail";
   if (host.status !== 0) process.exitCode = 1;
 }
 console.log(JSON.stringify(summary));

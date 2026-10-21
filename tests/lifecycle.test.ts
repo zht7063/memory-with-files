@@ -339,3 +339,37 @@ test("CLI validates root and harness before runtime discovery", () => {
     assert.equal(result.error.code, "INVALID_INPUT");
   }
 });
+
+test("attach rejects an unknown harness and setup help states its default", () => {
+  const cli = path.join(source, "dist/cli.js");
+  const invalid = spawnSync(
+    process.execPath,
+    [cli, "attach", "--root", source, "--harness", "bogus"],
+    { encoding: "utf8" },
+  );
+  assert.equal(invalid.status, 2);
+  assert.equal(JSON.parse(invalid.stdout).error.code, "INVALID_INPUT");
+  const help = execFileSync(process.execPath, [cli, "setup", "--help"], {
+    encoding: "utf8",
+  });
+  assert.match(help, /setup[^\n]*default: codex/);
+});
+
+test("probe persistence degrades only stale bindings and rethrows other errors", async () => {
+  const { probePersistenceWarning } = await import(
+    "../dist/lifecycle/index.js"
+  );
+  const { MWFError } = await import("../dist/storage.js");
+  assert.match(
+    probePersistenceWarning(new MWFError("BINDING_STALE", "changed")),
+    /BINDING_STALE/,
+  );
+  for (const error of [
+    new MWFError("INVALID_INPUT", "invalid"),
+    new Error("I/O failure"),
+  ])
+    assert.throws(
+      () => probePersistenceWarning(error),
+      (actual) => actual === error,
+    );
+});

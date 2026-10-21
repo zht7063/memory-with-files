@@ -88,7 +88,9 @@ export function piConflicts(root: string) {
         problems.push(file + ": mcpServers.mwf");
       if (
         name === "settings.json" &&
-        JSON.stringify(v.packages ?? []).includes("pi-mcp-adapter")
+        JSON.stringify([v.packages ?? [], v.extensions ?? []]).includes(
+          "pi-mcp-adapter",
+        )
       )
         problems.push(file + ": pi-mcp-adapter");
     }
@@ -570,4 +572,10 @@ export function detach(
   harness: "pi" | "codex" | "all" = "all",
 ) {
   return lifecycle("detach", { project_root: root, apply, harness });
+}
+
+export function probePersistenceWarning(error: unknown): string {
+  if (!(error instanceof MWFError) || error.code !== "BINDING_STALE")
+    throw error;
+  return `Probe evidence could not be persisted: ${error.code}: ${error.message}; reload and verify the host.`;
 }

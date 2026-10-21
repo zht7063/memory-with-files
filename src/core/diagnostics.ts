@@ -12,6 +12,13 @@ export function integrationDiagnostics(tx: Transaction) {
   try {
     const r = receipt(tx);
     for (const [client, c] of Object.entries(r?.clients ?? {})) {
+      if (!c.enabled) {
+        const issues = c.cleanup_pending ? ["CLEANUP_PENDING"] : [];
+        installed[client] = { enabled: false };
+        configured[client] = { enabled: false, valid: !issues.length, issues };
+        probed[client] = { direct: "disabled", mcp: "disabled" };
+        continue;
+      }
       let version: string | null = null;
       let exists = false;
       try {

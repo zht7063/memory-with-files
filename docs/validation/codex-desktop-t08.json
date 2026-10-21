@@ -1,0 +1,111 @@
+{
+  "task": "T08",
+  "environment": {
+    "desktop_build": null,
+    "os": null,
+    "gui_node_path": null,
+    "gui_node_version": null,
+    "installation": null,
+    "trust": null,
+    "reload": null,
+    "artifact_sha256": null
+  },
+  "scenarios": {
+    "desktop_environment": {
+      "status": "not_run",
+      "source": "none",
+      "artifacts": [],
+      "trust_bypass": false
+    },
+    "normal_install": {
+      "status": "not_run",
+      "source": "none",
+      "artifacts": [],
+      "trust_bypass": false
+    },
+    "normal_trust_reload": {
+      "status": "not_run",
+      "source": "none",
+      "artifacts": [],
+      "trust_bypass": false
+    },
+    "unenabled_project": {
+      "status": "not_run",
+      "source": "none",
+      "artifacts": [],
+      "trust_bypass": false
+    },
+    "mcp_delayed": {
+      "status": "not_run",
+      "source": "none",
+      "artifacts": [],
+      "trust_bypass": false
+    },
+    "mcp_failed": {
+      "status": "not_run",
+      "source": "none",
+      "artifacts": [],
+      "trust_bypass": false
+    },
+    "hooks_disabled": {
+      "status": "not_run",
+      "source": "none",
+      "artifacts": [],
+      "trust_bypass": false
+    },
+    "hooks_untrusted": {
+      "status": "not_run",
+      "source": "none",
+      "artifacts": [],
+      "trust_bypass": false
+    },
+    "copied_project": {
+      "status": "not_run",
+      "source": "none",
+      "artifacts": [],
+      "trust_bypass": false
+    },
+    "unicode_space_path": {
+      "status": "not_run",
+      "source": "none",
+      "artifacts": [],
+      "trust_bypass": false
+    },
+    "subdirectory": {
+      "status": "not_run",
+      "source": "none",
+      "artifacts": [],
+      "trust_bypass": false
+    },
+    "deleted_runtime": {
+      "status": "not_run",
+      "source": "none",
+      "artifacts": [],
+      "trust_bypass": false
+    },
+    "request_v1": {
+      "status": "not_run",
+      "source": "none",
+      "artifacts": [],
+      "trust_bypass": false
+    },
+    "request_v2_compact": {
+      "status": "not_run",
+      "source": "none",
+      "artifacts": [],
+      "trust_bypass": false
+    },
+    "request_v2_resume": {
+      "status": "not_run",
+      "source": "none",
+      "artifacts": [],
+      "trust_bypass": false
+    },
+    "request_v2_clear": {
+      "status": "not_run",
+      "source": "none",
+      "artifacts": [],
+      "trust_bypass": false
+    }
+  }
+}

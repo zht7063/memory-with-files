@@ -38,6 +38,8 @@ def session(trust=True):
  assert r.returncode==0,(r.stdout,r.stderr)
 try:
  subprocess.run([pi,'install',str(pkg),'--local','--approve'],cwd=project,env=env,capture_output=True,check=True)
+ start=len(requests);session();assert not requests[start]['seed'] and not any('mwf_' in n for n in requests[start]['tools'])
+ assert not (project/'.mwf').exists(), 'Disabled discovery must not create memory state'
  mwf('init','--root',str(project),'--git-mode','track');mwf('attach','--root',str(project),'--harness','pi','--apply')
  mwf('add','--root',str(project),'--type','knowledge','--title','Seed','--summary','MWF_V2_HOST_SEED','--body','Synthetic startup memory')
  session();assert requests and requests[0]['seed'],requests
@@ -53,6 +55,6 @@ try:
  start=len(requests);session();assert not requests[start]['seed'] and not any('mwf_' in n for n in requests[start]['tools'])
  subprocess.run([pi,'install',str(pkg),'--local','--approve'],cwd=project,env=env,capture_output=True,check=True)
  mwf('rebind','--root',str(project),'--harness','pi','--apply');start=len(requests);session();assert requests[start]['saved']
- result={'status':'pass','pi_version':subprocess.check_output([pi,'--version'],text=True).strip(),'requests':requests,'evidence_dir':str(base),'limits':['Synthetic model endpoint, not billed model tokens','Compact/tree and hot replacement still require separate real-host scenarios']}
+ result={'status':'partial','pi_version':subprocess.check_output([pi,'--version'],text=True).strip(),'requests':requests,'evidence_dir':str(base),'limits':['Synthetic model endpoint, not billed model tokens','Compact/tree/resume/clear/reload, conflicting configuration, session replacement and slow/failed MCP require separate real-host scenarios']}
  (base/'evidence.json').write_text(json.dumps(result,indent=2));print(json.dumps(result))
 finally: server.shutdown()

@@ -58,7 +58,11 @@ type RecallArgs = {
   max_reference_tokens?: number;
   max_output_bytes?: number;
 };
-export function recallRecords(tx: Transaction, a: RecallArgs) {
+export function recallRecords(
+  tx: Transaction,
+  a: RecallArgs,
+  requireRelevance = a.query.trim().length > 0,
+) {
   const result = [];
   for (const r of validRecords(tx)) {
     if (!eligible(r, a.mode)) continue;
@@ -133,7 +137,10 @@ export function recallRecords(tx: Transaction, a: RecallArgs) {
       score += Math.min(10, overlap.length * 2);
       reasons.push("summary:" + overlap.slice(0, 4).join(","));
     }
-    if (score > 0) {
+    if (
+      score > 0 &&
+      (!requireRelevance || reasons.some((reason) => reason !== "global"))
+    ) {
       const b = boundaries(r);
       requireSafe(JSON.stringify(r));
       result.push({

@@ -83,6 +83,6 @@ try:
   except subprocess.TimeoutExpired:app.kill();app.wait()
  r=command([*args[:-1],'--dangerously-bypass-hook-trust',args[-1]]);assert requests[-1]['saved']
  mwf('detach','--root',str(project),'--harness','codex','--apply');r=command([*args[:-1],'--dangerously-bypass-hook-trust',args[-1]]);assert not requests[-1]['marker'] and not requests[-1]['saved']
- result={'status':'pass','runtime':subprocess.check_output([binary,'--version'],text=True).strip(),'requests':requests,'evidence_dir':str(base),'limits':['Bundled runtime only; GUI not tested','One-invocation hook trust bypass is test-only, not GUI trust evidence','Synthetic model endpoint; real billed model costs not measured']}
+ result={'status':'partial','scope':'bundled_cli_app_server','bundled_runtime_status':'pass','codex_desktop':'not_run','desktop_evidence':'docs/validation/codex-desktop-t08.json','runtime':subprocess.check_output([binary,'--version'],text=True).strip(),'requests':requests,'evidence_dir':str(base),'limits':['Bundled runtime only; GUI not tested','One-invocation hook trust bypass is test-only, not GUI trust evidence','Synthetic model endpoint; real billed model costs not measured']}
  (base/'evidence.json').write_text(json.dumps(result,indent=2));print(json.dumps(result))
 finally:server.shutdown()
