@@ -48,26 +48,6 @@ const KNOWN_VIOLATIONS: Known[] = [
     why: "Codex TOML diagnosis moves into the adapter's diagnose()",
   },
   {
-    key: 'host-literal cli.ts :: compare a.harness !== "pi"',
-    removedBy: "PR-06",
-    why: "host knowledge moves behind managed-surface/registry/adapters",
-  },
-  {
-    key: 'host-literal cli.ts :: compare a.harness !== "codex"',
-    removedBy: "PR-06",
-    why: "host knowledge moves behind managed-surface/registry/adapters",
-  },
-  {
-    key: 'host-literal cli.ts :: compare harness === "pi"',
-    removedBy: "PR-06",
-    why: "host knowledge moves behind managed-surface/registry/adapters",
-  },
-  {
-    key: 'host-literal cli.ts :: compare harness === "codex"',
-    removedBy: "PR-06",
-    why: "host knowledge moves behind managed-surface/registry/adapters",
-  },
-  {
     key: 'host-literal core/diagnostics.ts :: compare client === "codex"',
     removedBy: "PR-07",
     why: "host knowledge moves behind managed-surface/registry/adapters",
@@ -90,38 +70,6 @@ const KNOWN_VIOLATIONS: Known[] = [
   {
     key: 'host-literal lifecycle/index.ts :: compare h === "pi"',
     removedBy: "PR-07",
-    why: "host knowledge moves behind managed-surface/registry/adapters",
-  },
-  {
-    key: 'host-literal lifecycle/index.ts :: path ".codex"',
-    removedBy: "PR-06",
-    why: "host knowledge moves behind managed-surface/registry/adapters",
-  },
-  {
-    key: 'host-literal lifecycle/index.ts :: compare harness === "codex"',
-    count: 2,
-    removedBy: "PR-06",
-    why: "host knowledge moves behind managed-surface/registry/adapters",
-  },
-  {
-    key: 'host-literal lifecycle/index.ts :: compare harness !== "codex"',
-    removedBy: "PR-06",
-    why: "host knowledge moves behind managed-surface/registry/adapters",
-  },
-  {
-    key: 'host-literal lifecycle/index.ts :: path ".codex/config.toml"',
-    count: 2,
-    removedBy: "PR-06",
-    why: "host knowledge moves behind managed-surface/registry/adapters",
-  },
-  {
-    key: 'host-literal lifecycle/index.ts :: path ".codex/config.toml is tracked; absolute local runtime paths will be included. Git index was not changed."',
-    removedBy: "PR-06",
-    why: "host knowledge moves behind managed-surface/registry/adapters",
-  },
-  {
-    key: 'host-literal lifecycle/index.ts :: compare h === "codex"',
-    removedBy: "PR-06",
     why: "host knowledge moves behind managed-surface/registry/adapters",
   },
   {
@@ -311,9 +259,11 @@ test("storage holds no host literals and only storage validates managed surfaces
   assert.ok(
     !KNOWN_VIOLATIONS.some((k) => k.key.startsWith("host-literal storage/")),
   );
+  // Value imports: storage validates; lifecycle maps PlannedChange surfaces to
+  // paths for its Transaction. Everyone else may only import the types.
   const importers = edges
-    .filter((e) => e.to === "contracts/managed-surface.ts")
+    .filter((e) => e.to === "contracts/managed-surface.ts" && !e.typeOnly)
     .map((e) => e.from)
-    .filter((f) => !f.startsWith("storage/"));
-  assert.deepEqual(importers, [], "only storage/ may import managed-surface");
+    .filter((f) => !/^(storage|contracts|lifecycle)\//.test(f));
+  assert.deepEqual(importers, [], "managed-surface value importers");
 });

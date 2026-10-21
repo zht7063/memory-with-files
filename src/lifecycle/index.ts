@@ -1,9 +1,7 @@
 import fs from "node:fs";
-import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
-import TOML from "@iarna/toml";
 import { z } from "zod";
 import { config, initialize, execute, type Result } from "../core/index.js";
 import {
@@ -17,10 +15,19 @@ import {
 import { RUNTIME_VERSION } from "../contracts/version.js";
 import { receipt, receiptFile, type Harness } from "../storage/receipt.js";
 import { piConflicts } from "../integrations/pi/conflicts.js";
+import { adapterFor, adapterForSurface } from "../integrations/registry.js";
+import { jsonObject, selectRuntime } from "../integrations/shared/runtime.js";
+import {
+  HARNESS_IDS,
+  type HarnessContext,
+  type OwnedResource,
+} from "../contracts/harness.js";
+import {
+  MANAGED_SURFACES,
+  type ManagedSurfaceId,
+} from "../contracts/managed-surface.js";
 export { piConflicts };
 const cli = fileURLToPath(new URL("../cli.js", import.meta.url));
-const start = "# mwf:mcp:start",
-  end = "# mwf:mcp:end";
 const inputSchema = z
   .object({
     project_root: z.string(),
@@ -50,54 +57,55 @@ function output(
     data,
   };
 }
-function block(text: string) {
-  const n = text.split(start).length - 1,
-    m = text.split(end).length - 1;
-  if (n !== m || n > 1 || (n && text.indexOf(end) < text.indexOf(start)))
-    throw new MWFError("OWNERSHIP_CONFLICT", "Malformed MWF TOML markers.");
-  return n
-    ? text.slice(text.indexOf(start), text.indexOf(end) + end.length)
-    : null;
+const object = jsonObject;
+/** Adapter view of the project, reading staged content through the transaction. */
+function harnessContext(root: string, tx: Transaction): HarnessContext {
+  return {
+    root,
+    env: process.env,
+    nodePath: process.execPath,
+    read: (surface) => tx.get(MANAGED_SURFACES[surface].path),
+  };
 }
-function object(raw: string | null): Record<string, unknown> {
-  const value = JSON.parse(raw ?? "{}");
-  if (!value || typeof value !== "object" || Array.isArray(value))
-    throw new MWFError("INVALID_CONFIG", "Expected JSON object.");
-  return value;
-}
-function semverParts(version: string) {
-  return /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([\da-zA-Z-]+(?:\.[\da-zA-Z-]+)*))?(?:\+[\da-zA-Z-]+(?:\.[\da-zA-Z-]+)*)?$/.exec(
-    version,
+function surfaceOf(file: string): ManagedSurfaceId | undefined {
+  return (Object.keys(MANAGED_SURFACES) as ManagedSurfaceId[]).find(
+    (id) => MANAGED_SURFACES[id].path === file,
   );
 }
-function compareVersions(a: string, b: string) {
-  const x = semverParts(a)!,
-    y = semverParts(b)!;
-  for (let i = 1; i <= 3; i++) {
-    const difference = Number(x[i]) - Number(y[i]);
-    if (difference) return difference;
-  }
-  if (!x[4] || !y[4]) return x[4] ? -1 : y[4] ? 1 : 0;
-  const left = x[4].split("."),
-    right = y[4].split(".");
-  for (let i = 0; i < Math.max(left.length, right.length); i++) {
-    if (left[i] === undefined) return -1;
-    if (right[i] === undefined) return 1;
-    if (left[i] === right[i]) continue;
-    const ln = /^\d+$/.test(left[i]),
-      rn = /^\d+$/.test(right[i]);
-    if (ln && rn) return Number(left[i]) - Number(right[i]);
-    if (ln !== rn) return ln ? -1 : 1;
-    return left[i] < right[i] ? -1 : 1;
-  }
-  return 0;
+function toOwned(resource: {
+  kind: string;
+  path: string;
+  installed?: unknown;
+  created?: boolean;
+}): OwnedResource {
+  const surface = surfaceOf(resource.path);
+  if (resource.kind !== "block" || surface !== "codex.config.block")
+    throw new Error("not a block resource");
+  return {
+    kind: "block",
+    surface,
+    installed: String(resource.installed),
+    created: !!resource.created,
+  };
 }
 export function locateRuntime(
   pluginRoot: string | undefined,
   harness: Harness,
   root: string,
 ) {
-  const own = fileURLToPath(new URL("../../", import.meta.url));
+  const adapter = adapterFor(harness);
+  if (adapter) {
+    const found = adapter.detect(
+      harnessContext(root, new Transaction(root)),
+      pluginRoot ? { pluginRoot } : {},
+    );
+    return {
+      plugin_root: found.pluginRoot,
+      entry: found.runtimePath,
+      version: found.version,
+    };
+  }
+  // Pi runtime discovery moves into the Pi adapter in PR-07.
   const candidates: string[] = [];
   if (pluginRoot) candidates.push(path.resolve(pluginRoot));
   else if (harness === "pi") {
@@ -121,78 +129,19 @@ export function locateRuntime(
           );
       }
     }
-  } else {
-    // A bundled runtime can identify its enclosing plugin without a global CLI.
-    if (fs.existsSync(path.join(own, "../plugin.json")))
-      candidates.push(path.resolve(own, ".."));
-    else {
-      const cache = path.join(
-        process.env.CODEX_HOME ?? path.join(process.env.HOME ?? "", ".codex"),
-        "plugins/cache",
-      );
-      const directories = (dir: string) =>
-        fs.existsSync(dir)
-          ? fs
-              .readdirSync(dir, { withFileTypes: true })
-              .filter((item) => item.isDirectory())
-              .map((item) => item.name)
-          : [];
-      for (const marketplace of directories(cache)) {
-        for (const plugin of directories(path.join(cache, marketplace))) {
-          const base = path.join(cache, marketplace, plugin);
-          const versions = directories(base);
-          const selected = versions.includes("local")
-            ? "local"
-            : versions
-                .filter((version) => semverParts(version) !== null)
-                .sort(compareVersions)
-                .at(-1);
-          if (selected) candidates.push(path.join(base, selected));
-        }
-      }
-    }
   }
-  const valid: { plugin_root: string; entry: string; version: string }[] = [];
-  for (const candidate of [...new Set(candidates)]) {
-    try {
-      const base = fs.realpathSync(candidate);
-      const runtimeRoot =
-        harness === "codex" ? path.join(base, "runtime") : base;
-      const pkg = object(
-        fs.readFileSync(path.join(runtimeRoot, "package.json"), "utf8"),
-      );
-      if (pkg.name !== "@zht7063/mwf" || typeof pkg.version !== "string")
-        throw Error("Invalid runtime package");
-      if (harness === "codex") {
-        const manifest = object(
-          fs.readFileSync(path.join(base, "plugin.json"), "utf8"),
-        );
-        if (manifest.name !== "mwf" || manifest.version !== pkg.version)
-          throw Error("Plugin/runtime version mismatch");
-      } else if (
+  return selectRuntime(
+    candidates,
+    pluginRoot,
+    (base) => base,
+    (_base, runtimeRoot, pkg) => {
+      if (
         !pkg.pi ||
         !fs.existsSync(path.join(runtimeRoot, "dist/integrations/pi/index.js"))
       )
         throw Error("Missing Pi extension");
-      const entry = fs.realpathSync(path.join(runtimeRoot, "dist/cli.js"));
-      if (!valid.some((v) => v.entry === entry))
-        valid.push({ plugin_root: base, entry, version: pkg.version });
-    } catch (error) {
-      if (pluginRoot)
-        throw new MWFError(
-          "PLUGIN_RUNTIME_REQUIRED",
-          `Invalid plugin runtime: ${String(error)}`,
-        );
-    }
-  }
-  if (valid.length !== 1)
-    throw new MWFError(
-      "PLUGIN_RUNTIME_REQUIRED",
-      valid.length
-        ? "Multiple installed runtimes; specify --plugin-root."
-        : "Cannot locate an installed plugin runtime; specify --plugin-root.",
-    );
-  return valid[0];
+    },
+  );
 }
 function runtime(
   pluginRoot: string | undefined,
@@ -240,19 +189,12 @@ function legacy(tx: Transaction) {
     (tx.get("AGENTS.md") ?? "").includes("<!-- memory-with-files:start -->")
   );
 }
-function trackedWarning(root: string, harness: string) {
-  if (harness !== "codex") return [];
-  try {
-    execFileSync("git", ["ls-files", "--error-unmatch", ".codex/config.toml"], {
-      cwd: root,
-      stdio: "pipe",
-    });
-    return [
-      ".codex/config.toml is tracked; absolute local runtime paths will be included. Git index was not changed.",
-    ];
-  } catch {
-    return [];
-  }
+function attachWarnings(root: string, harness: string) {
+  const adapter =
+    harness === "all" ? undefined : adapterFor(harness as Harness);
+  return (
+    adapter?.attachWarnings?.(harnessContext(root, new Transaction(root))) ?? []
+  );
 }
 export function lifecycle(
   op: "attach" | "rebind" | "detach",
@@ -272,7 +214,7 @@ export function lifecycle(
       clients: {},
     };
     const clients: Harness[] =
-      a.harness === "all" ? ["pi", "codex"] : [a.harness];
+      a.harness === "all" ? [...HARNESS_IDS] : [a.harness];
     if (op === "detach") {
       for (const h of clients) {
         const c = r.clients[h];
@@ -309,39 +251,24 @@ export function lifecycle(
         previous.node_path === process.execPath;
       const generation = same ? previous.binding_generation! : randomUUID();
       const owned = previous?.owned_resources ?? [];
-      if (h === "codex") {
-        const file = ".codex/config.toml",
-          created = tx.get(file) === null,
-          old = tx.get(file) ?? "",
-          parsed = TOML.parse(old),
-          existing = block(old);
-        const resource = owned.find((v) => v.kind === "block");
-        if (
-          existing &&
-          (!resource ||
-            resource.kind !== "block" ||
-            resource.installed !== existing)
-        )
-          throw new MWFError(
-            "OWNERSHIP_CONFLICT",
-            "Codex mwf block is not owned or was modified.",
-          );
-        if (
-          !existing &&
-          parsed.mcp_servers &&
-          typeof parsed.mcp_servers === "object" &&
-          "mwf" in parsed.mcp_servers
-        )
-          throw new MWFError(
-            "OWNERSHIP_CONFLICT",
-            "Existing Codex mwf server is not owned.",
-          );
-        const text = `${start}\n[mcp_servers.mwf]\ncommand = ${JSON.stringify(process.execPath)}\nargs = ${JSON.stringify([entry, "mcp", "--root", root, "--harness", "codex", "--binding-generation", generation, "--profile", "agent"])}\n${end}`;
-        const merged = existing
-          ? old.replace(existing, text)
-          : old + (old.endsWith("\n") || !old ? "" : "\n") + text + "\n";
-        TOML.parse(merged);
-        tx.set(file, merged);
+      const adapter = adapterFor(h);
+      if (adapter) {
+        const changes = adapter.planAttach(
+          harnessContext(root, tx),
+          { pluginRoot: "", runtimePath: entry, version: RUNTIME_VERSION },
+          {
+            generation,
+            owned: owned.flatMap((v) => {
+              try {
+                return [toOwned(v)];
+              } catch {
+                return [];
+              }
+            }),
+          },
+        );
+        for (const change of changes)
+          tx.set(MANAGED_SURFACES[change.surface].path, change.after);
         r.clients[h] = {
           enabled: true,
           binding_generation: generation,
@@ -349,14 +276,18 @@ export function lifecycle(
           api_version: 2,
           runtime_path: entry,
           node_path: process.execPath,
-          owned_resources: [
-            {
-              kind: "block",
-              path: file,
-              installed: text,
-              created: resource?.kind === "block" ? resource.created : created,
-            },
-          ],
+          owned_resources: changes.flatMap((c) =>
+            c.resource
+              ? [
+                  {
+                    kind: c.resource.kind,
+                    path: MANAGED_SURFACES[c.resource.surface].path,
+                    installed: c.resource.installed,
+                    created: c.resource.created,
+                  },
+                ]
+              : [],
+          ),
           cleanup_pending: false,
         };
       } else
@@ -413,17 +344,14 @@ export function lifecycle(
           try {
             const raw = tx.get(resource.path);
             if (resource.kind === "block") {
-              if (raw === null) continue;
-              const current = block(raw);
-              if (current === null) continue;
-              if (current !== resource.installed)
-                throw new Error("owned block changed");
-              const next = raw.replace(current + "\n", "").replace(current, "");
-              TOML.parse(next);
-              tx.set(
-                resource.path,
-                resource.created && !next.trim() ? null : next,
-              );
+              const owned = toOwned(resource);
+              const adapter = adapterForSurface(owned.surface);
+              if (!adapter) throw new Error("no adapter owns this block");
+              for (const change of adapter.planDetach(
+                harnessContext(root, tx),
+                [owned],
+              ))
+                tx.set(MANAGED_SURFACES[change.surface].path, change.after);
             } else if (resource.kind === "file") {
               if (raw === null) continue;
               if (hash(raw) !== resource.installed_hash)
@@ -474,7 +402,7 @@ export function lifecycle(
         ? []
         : [
             "Reload the host and verify its real MCP connection.",
-            ...trackedWarning(root, a.harness),
+            ...attachWarnings(root, a.harness),
           ],
     );
   });
