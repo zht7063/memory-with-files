@@ -1,18 +1,19 @@
 # Core 用例
 
-状态：目录骨架；尚无功能实现。
+状态：已实现。确定性实现，不导入宿主 SDK、不调用模型或网络。
 
-记录、交接、bootstrap/recall/get 和维护操作的确定性实现。
+## 文件与导出
 
-## 实现约束
+- `index.ts`：操作输入 `schemas`（`Operation` 类型）、统一 `Result`、`execute`/`operate`、`initialize`（init）、`config`、`inbox`、`rebuild`、`duplicates`、`diagnose`、`operateWithMigration`、`isMutation`。操作包括 bootstrap、recall、get、add、propose、update、forget、compact、rebuild-index、handoff、status、doctor、init、migrate 等。
+- `handoff.ts`：按 scope 的交接 `readHandoff`/`saveHandoff`/`listHandoffs`，revision/hash 冲突保护。
+- `identity.ts`（T05）：`sessionIdentity`（session*key = hash(client, host_session_id, branch)，session_ref = `s*` + hash(root, key)）、`registerSession`、`resolveSession`。映射写在 `.mwf/local/contexts/<session_ref>.json`；损坏、伪造或属于其他 root（含其他 git worktree）的映射以 `CONTEXT_REQUIRED` 拒绝，注册不会覆盖损坏映射。
+- `diagnostics.ts`（T03）：`integrationDiagnostics`，status/doctor 的真实接入诊断，按客户端输出 `installed`（runtime 是否存在、版本是否一致）、`configured`（enabled、generation、issues：ROOT_MISMATCH、INVALID_BINDING、RUNTIME_MISMATCH、CLEANUP_PENDING、OWNERSHIP_MISSING、OWNERSHIP_CONFLICT:<path>）、`probed`（attach 写入的 probe 证据；过期或缺失报告 unknown/not_run）。数据健康与接入健康分开。installed 只与 receipt 记录的版本比较。status/doctor 的 `diagnostic_limit`（CLI `--diagnostic-limit`）为 1–100，默认 5。
 
-- 从固定 0.1.0 基线迁移；不重写已验证的存储保证。
-- 使用 contracts、storage、retrieval 和 context；不导入宿主 SDK、不读取宿主配置、不调用模型或网络。
-- 自动读取不生成正式记忆；所有交接写入复用事务，revision 比较和写入在同一锁内。
-- status/doctor 的数据健康与宿主接入健康分离；disabled 不代表数据损坏。
+## 分层
 
-## 实施与验收
+分层（`tests/architecture.test.ts` 强制）：contracts → storage / retrieval / context → core → lifecycle / integrations / 接口入口（`src/cli.ts`、`src/mcp.ts`）。测试只检查 `src/core/` 与 `src/contracts/` 的传递依赖：不得导入 `integrations/`、`lifecycle/` 或宿主 SDK（`@modelcontextprotocol/*`、`@mariozechner/*`、`@earendil-works/*`、`@openai/codex`；当前 Pi 宿主包为 `@earendil-works/pi-coding-agent` 1.3.0，旧 `@mariozechner/pi-coding-agent` 停在 0.73.1，两者均被禁止），contracts 另不得依赖 storage。有两处有意的跨层导入：`context/output.ts` 仅 `import type { Result }` 自 core，无运行时依赖；根目录 `src/core.ts` 是薄组合入口，把 `lifecycle/migrate.ts` 的 `migrateIntegration` 注入 Core 的 `execute`/`operate`，它不属于 `src/core/`，因此不受该测试约束。
 
-- 阶段：M1 核心解耦；M2 记忆行为。
-- 依据：构建规范 §4、§6–8、§14；G01–G02、S01–S05、S10–S11。
+## 依据
+
+- 构建规范 §4、§6–8、§14；G01–G02、S01–S05、S10–S11。
 - 仓库根目录下的 `docs/build-plan-0.2.0.md` 为执行计划，`docs/MWF 0.2.0 构建文档.md` 为目标规范。

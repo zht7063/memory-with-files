@@ -1,35 +1,28 @@
-# MWF skill adapters
+# MWF skill adapters (legacy, not shipped)
 
-These entrypoints ship inside the MWF npm runtime. Use the
-[recommended runtime installation](../README.md#recommended-installation),
-which runs project setup and verifies the MCP connection. With the runtime
-already installed, use its CLI:
+Status: historical. These three folders were imported with the fixed 0.1.0
+baseline (commit 12539fb) and have not been updated since. They are **not**
+included in the 0.2.0 npm package (`package.json` `files` lists only
+`assets/memory`, `assets/skills` and `assets/mwf-template/agents-block.md`)
+and are not copied into the Codex plugin by `scripts/pack-release.ts`.
 
-```sh
-mwf setup --root "/absolute/project" --harness codex --git-mode track
-```
+| Adapter                                         | Original role                                            |
+| ----------------------------------------------- | -------------------------------------------------------- |
+| [memory-with-files](memory-with-files/SKILL.md) | Recall, durable records and handoffs                     |
+| [mwf-init](mwf-init/SKILL.md)                   | Explicit memory initialization with project and Git mode |
+| [mwf-status](mwf-status/SKILL.md)               | Connection/schema status and memory health               |
 
-Here `mwf` means the CLI command printed by the installer, or a globally installed
-`mwf` executable. Choose `ignore` for local-only memory and preserve existing
-project settings. Use `--harness pi` or `--harness codex,pi` for installed Pi clients.
+Corrections relative to the earlier text of this file:
 
-| Adapter | Role |
-| --- | --- |
-| [memory-with-files](memory-with-files/SKILL.md) | Recall, durable records and handoffs |
-| [mwf-init](mwf-init/SKILL.md) | Explicit memory initialization with project and Git mode |
-| [mwf-status](mwf-status/SKILL.md) | Connection/schema status and memory health |
-
-These are runtime-managed resources, not three separate installation steps.
-Setup owns their client deployment; copying the folders does not register MCP
-or establish project bootstrap. Avoid deploying another `memory-with-files`
-variant into the same discovery scope.
-
-Upgrade the runtime and rerun setup to refresh adapters. Use `mwf detach --root
-/absolute/project` to preview disconnection and add `--apply` to perform it.
-Detach preserves project memory. See the [runtime guide](../README.md) for
-verification, conflicts and lifecycle details.
-
-The shared instruction source is the repository's
-`skills/memory-with-files/SKILL.md`; this package's variant omits only its final
-references paragraph. `npm run validate` from the source repository checks
-synchronization. The other two adapters are independently maintained here.
+- `mwf setup` still exists but is deprecated; it only wraps `init` + `attach`.
+  Use `mwf init --root /project --git-mode track|ignore`, then
+  `mwf attach --root /project --harness pi|codex [--plugin-root PATH]`
+  (preview) and repeat with `--apply`. `attach` takes one harness at a time;
+  only `detach` accepts `--harness all`.
+- The runtime-shipped skills are `assets/skills/setup/SKILL.md` (`mwf-setup`)
+  and `assets/skills/mwf/SKILL.md` (`mwf`). See [install](../docs/install.md).
+- There is no `npm run validate` script and no `skills/memory-with-files`
+  directory in this repository; the previous synchronization note does not
+  apply here.
+- `mwf detach --root /project --harness pi|codex|all` previews; add `--apply`
+  to perform it. Detach preserves project memory.

@@ -1,18 +1,17 @@
 # 包内操作说明
 
-状态：目录骨架；尚无功能实现。
+状态：已实现。随 npm 包发布，并由 `pack:release` 复制为 Codex 插件的 `skills/`。
 
-将来随包交付的 setup 工作流和精简工具使用说明。
+## 文件
 
-## 实现约束
+- `setup/SKILL.md`（`mwf-setup`）：显式 status → init（选择 track/ignore）→ 可选 `migrate --from 0.1` → 预览后 attach（Codex 传 `--plugin-root`）→ 升级后 rebind → detach 的步骤；要求使用本包 runtime，不使用未知全局 MWF。Codex manifest 的 onboardingSkill 指向它。
+- `mwf/SKILL.md`：记忆工具的使用说明。
 
-- 当前只有资源职责说明，不提供可被宿主发现的假 SKILL.md。
-- setup 从已知安装位置定位自身 runtime；显示 root、git-mode 和预计资源，不依赖普通 shell 中的 PLUGIN_ROOT。
-- 保留需要 agent 判断的规则；确定性检索、预算和事务放在代码里。
-- 不得向业务项目复制激活规则，不解析聊天日志自动生成正式记忆。
+## 约束
 
-## 实施与验收
+- 不向业务项目复制激活规则，不解析聊天日志自动生成正式记忆。
 
-- 阶段：M4/M5 按已验证宿主编写，M6 随包验收。
-- 依据：构建规范 §9.3、§10.1、§15；L02、L03、G08。
+## 依据
+
+- 构建规范 §9.3、§10.1、§15；L02、L03、G08。
 - 仓库根目录下的 `docs/build-plan-0.2.0.md` 为执行计划，`docs/MWF 0.2.0 构建文档.md` 为目标规范。
