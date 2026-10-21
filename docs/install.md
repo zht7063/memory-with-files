@@ -33,6 +33,10 @@ node /absolute/mwf-install/package/dist/cli.js attach --root "$PWD" --harness pi
 
 ## Codex 插件
 
+`packaging/codex` 是源码模板，在 T11 完成前不能直接安装使用：缺少
+`runtime/package.json`，且 `plugin.json` 的 version 必须为 `0.2.0`。
+应使用打包后的产物，并单独验证其完整性。
+
 将 zip 解压到稳定插件目录，经宿主正常插件安装入口安装并信任 hooks。使用**安装后插件缓存内** runtime 的绝对路径，而非 checkout 或全局同名命令：
 
 ```sh

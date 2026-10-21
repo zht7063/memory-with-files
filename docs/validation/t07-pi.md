@@ -1,28 +1,26 @@
 # T07 Pi lifecycle and discovery evidence
 
-Date: 2026-10-21. Local contract tests use Node 22.19.0 on Linux.
-Contract tests are simulations and do not establish actual Pi request delivery.
+Date: 2026-10-21. Overall T07 status: **partial**, not full pass.
 
-| Acceptance criterion                                                     | Local evidence                                                                                                                     | Real Pi evidence                                       |
-| ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| Normal package installation discovery                                    | Package extension entry assertion; release runner uses `pi install`, never manual import                                           | not_run                                                |
-| User/project same-name configuration, legacy adapter, reload/replacement | Both source paths reported; legacy package/extension detection; repeated startup, replacement callbacks and root switch assertions | not_run                                                |
-| Correct version after compact/tree/resume/clear                          | New marker on every event; resume/clear/reload represented as session_start reasons                                                | not_run                                                |
-| Disabled/untrusted leaves no integration state or automatic reads        | Empty uninitialized root; untrusted emits nothing and preserves receipt; release runner checks disabled discovery before init      | not_run                                                |
-| Slow/failed MCP permits direct recovery                                  | Synchronous registration failure retains direct recovery; registration completion is never awaited                                 | not_run (slow host startup also not exercised locally) |
+Real host: `@earendil-works/pi-coding-agent` 1.3.0 on the aliyun tester,
+using a synthetic model endpoint with no real API key. This establishes host
+request delivery, not billed model behavior. Local contract tests remain
+simulations and do not substitute for real host evidence.
 
-The real host target is `@earendil-works/pi-coding-agent` 1.3.0 (not yet run).
-No compatible real Pi host or candidate release tarball was available for this
-run. No actual installation, model request, compact/tree/resume/clear/reload,
-hot replacement, effective host configuration precedence, or slow MCP result is
-claimed. Those criteria remain partial overall.
+| Real Pi acceptance scenario                        | Status  | Evidence                                                                                |
+| -------------------------------------------------- | ------- | --------------------------------------------------------------------------------------- |
+| Normal package discovery                           | pass    | Installed through `pi install`; extension discovered normally                           |
+| MCP connection                                     | pass    | Eight `mcp__mwf__*` tools exposed to the host model request                             |
+| Host tool calls and subsequent recall              | pass    | Host called `mwf_add` and `mwf_handoff`; saved memory recall verified                   |
+| Disabled before init, untrusted, detached, removed | pass    | No automatic memory context or MWF tools; before-init discovery creates no memory state |
+| Reinstall and rebind                               | pass    | Reinstall alone stays disabled; rebind restores memory and handoff access               |
+| compact/tree/resume/clear/reload                   | not_run | Requires separate real-host scenarios                                                   |
+| Conflicting configuration                          | not_run | Effective host configuration precedence unverified                                      |
+| Session replacement                                | not_run | Requires a separate real-host scenario                                                  |
+| Slow or failed MCP startup                         | not_run | Requires real-host fault injection                                                      |
 
-The release runner retains normal package installation and synthetic endpoint
-request observation. Its successful result is now partial, with the remaining
-host scenarios explicit; the integration summary also preserves that partial
-status. A synthetic endpoint is never evidence of billed model behavior.
-
-Validation: typecheck and Prettier passed; all four Pi contract tests passed;
-Python release runner syntax compilation passed. Broader lifecycle regression
-checks were blocked by sandbox subprocess `EPERM` errors. The combined v2
-regression run also failed; this is not recorded as a pass.
+The release-script stdin fix sets `stdin=subprocess.DEVNULL` for Pi print
+sessions so the runner does not inherit stdin and hang waiting for input.
+The runner reports partial and lists the remaining host scenarios explicitly.
+Local lifecycle contracts cover additional simulated behavior, but those checks
+do not upgrade the unrun real-host scenarios or overall T07 status.

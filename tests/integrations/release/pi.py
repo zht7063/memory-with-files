@@ -2,6 +2,9 @@
 import json, os, sys, subprocess, tempfile, threading, shutil, time
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+if len(sys.argv) < 2:
+ print(f'Usage: {sys.argv[0]} PI_PATH', file=sys.stderr)
+ sys.exit(2)
 repo=Path(__file__).resolve().parents[3]
 base=Path(tempfile.mkdtemp(prefix='mwf-v2-pi-')).resolve()
 pi=sys.argv[1]; node=shutil.which('node'); requests=[]; writes=0
