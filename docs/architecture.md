@@ -1,6 +1,6 @@
-# MWF 0.2.0 架构与目录约束
+# MWF 0.3.0 架构与目录约束
 
-状态：设计目标；0.1.0 源码已按上游布局迁入，尚未按本设计重构。行为依据为 [构建规范](MWF%200.2.0%20构建文档.md)，落地顺序见 [构建计划](build-plan-0.2.0.md)。
+状态：0.3.0 已按本文分层重构（未发布）。行为依据为 [构建规范](MWF%200.2.0%20构建文档.md)；0.2.0 落地顺序见历史[构建计划](build-plan-0.2.0.md)。
 
 ## 1. 一个源码包，多个薄入口
 
@@ -25,25 +25,25 @@ Pi / Codex Adapter ── shared ────────── Core
 
 ## 2. 版本与数据
 
-| 版本 | 目标值 | 来源与用途 |
-| - | - | - |
-| runtime_version | 0.2.0 | M1 迁入的 package metadata，所有产物共同来源 |
-| schema_version | 1 | 现有 Markdown 数据兼容 |
-| api_version | 2 | CLI/MCP/Adapter 共用契约 |
-| receipt_version | 3 | 接入与配置所有权 |
-| handoff_version | 1 | scoped 交接文件 |
+| 版本            | 目标值 | 来源与用途                                   |
+| --------------- | ------ | -------------------------------------------- |
+| runtime_version | 0.2.0  | M1 迁入的 package metadata，所有产物共同来源 |
+| schema_version  | 1      | 现有 Markdown 数据兼容                       |
+| api_version     | 2      | CLI/MCP/Adapter 共用契约                     |
+| receipt_version | 3      | 接入与配置所有权                             |
+| handoff_version | 1      | scoped 交接文件                              |
 
 业务项目数据与本仓库源码目录不同：
 
-| 数据 | 权威来源／约束 |
-| - | - |
-| 长期记忆 | `.mwf/` 下原 schema 1 Markdown；不因接入迁移重写 |
-| 索引 | `.mwf/index.md` 可重建；不默认全量注入 |
-| 旧交接 | `.mwf/handoff.md` 只读兼容，仅显式读取 |
-| 接入状态 | `.mwf/local/integration.json`，本机唯一 enabled 来源 |
-| 会话映射与 epoch | `.mwf/local/contexts/`，持久路由及有界诊断 |
-| 新交接 | `.mwf/local/handoffs/sessions/`、`tasks/`，有 revision 的持久 JSON |
-| 事务与互斥 | 沿用基线 journal、receipt、SQLite 锁；不建立第二套记忆数据库 |
+| 数据             | 权威来源／约束                                                     |
+| ---------------- | ------------------------------------------------------------------ |
+| 长期记忆         | `.mwf/` 下原 schema 1 Markdown；不因接入迁移重写                   |
+| 索引             | `.mwf/index.md` 可重建；不默认全量注入                             |
+| 旧交接           | `.mwf/handoff.md` 只读兼容，仅显式读取                             |
+| 接入状态         | `.mwf/local/integration.json`，本机唯一 enabled 来源               |
+| 会话映射与 epoch | `.mwf/local/contexts/`，持久路由及有界诊断                         |
+| 新交接           | `.mwf/local/handoffs/sessions/`、`tasks/`，有 revision 的持久 JSON |
+| 事务与互斥       | 沿用基线 journal、receipt、SQLite 锁；不建立第二套记忆数据库       |
 
 `local` 不是可整体删除的缓存。首次 init 选择 track/ignore，local 始终不进入 Git；attach 不改 Git mode，不自动提交。
 
@@ -75,13 +75,13 @@ rebind：绑定实际变化才换 generation；root 改变先停用全部客户�
 
 ## 4. 模型可见输出
 
-| 用途 | reference_tokens | UTF-8 bytes |
-| - | -: | -: |
-| 自动 bootstrap | 1,024 | 8 KiB |
-| recall | 2,048 | 16 KiB |
-| get | 4,096 | 32 KiB |
-| 显式扩大读取的最大值 | 8,192 | 64 KiB |
-| 单 epoch 自动追加累计 | 8,192 | 累计报告 bytes |
+| 用途                  | reference_tokens |    UTF-8 bytes |
+| --------------------- | ---------------: | -------------: |
+| 自动 bootstrap        |            1,024 |          8 KiB |
+| recall                |            2,048 |         16 KiB |
+| get                   |            4,096 |         32 KiB |
+| 显式扩大读取的最大值  |            8,192 |         64 KiB |
+| 单 epoch 自动追加累计 |            8,192 | 累计报告 bytes |
 
 固定离线 `o200k_base`，宿主限制更严时取较小值。预算覆盖最终完整序列化输出，不只计算 body，不重复发送含相同正文的 JSON 和 context_text。
 
@@ -97,10 +97,22 @@ M5/M6 从同次 npm 产物生成 Codex runtime，不维护第二份实现。mani
 
 真实支持状态只看 [兼容矩阵](compatibility.md) 和包验收证据，不由本架构文档推导。
 
-## 0.2.0 当前实现落点
+## 0.3.0 当前实现落点
 
-实际代码已沿用原存储实现归位：`storage/index.ts` 管理 SQLite 辅助锁、Transaction、journal 与恢复；`contracts/records.ts` 管理 schema 1、记录解析与匹配；`core/index.ts` 是共用 execute/schema，`core/handoff.ts` 管理 scoped handoff；`context/output.ts` 统一 tokenizer、双预算和 cursor。现有 `src/core.ts`、`protocol.ts`、`storage.ts` 是薄导出，不存在第二套业务实现。
+分层自下而上为 contracts → storage → retrieval / context → core → integrations → lifecycle → cli / mcp，`tests/architecture.test.ts` 强制只能向下依赖。
 
-CLI/MCP 仍保留顶层入口，避免无意义构建路径变动；检索暂在 records/Core 中，不为目录占位拆空实现。生命周期使用 receipt v2；集成共享 binding、identity、context。Codex supervisor 为同步锁阻塞提供总截止时间，诊断 marker 独占创建、不等待项目锁，仅保存错误类别和时间，正常会话内容不会写入诊断。错误提示去重依赖本地目录可写；损坏/只读文件系统下只能尽力提示。
+- `contracts/`：schema 1 记录解析与匹配（`records.ts`）、宿主适配契约 `HarnessAdapter`（`harness.ts`）和封闭的受管文件白名单（`managed-surface.ts`）。白名单仅含 `AGENTS.md` 块、`.gitignore` 与 `.codex/config.toml` 块，冻结且无注册/扩展 API；不再包含 `.pi/*` 或 `.agents/skills/*`。
+- `storage/`：SQLite 辅助锁、Transaction、journal 与恢复，以及 receipt v3（`receipt.ts`）。只有 storage 按白名单校验 `.mwf/` 以外的写入路径。
+- `retrieval/`、`context/`：检索；`context/output.ts` 统一 tokenizer、双预算和 cursor。
+- `core/`：共用 execute/schema（`index.ts`）、scoped handoff（`handoff.ts`）、会话身份（`identity.ts`）与诊断（`diagnostics.ts`）。
+- `integrations/`：`registry.ts` 是 Pi、Codex 适配器的唯一登记处，生命周期与诊断只经 registry 访问 `HarnessAdapter`；`shared/` 提供 binding、runtime 定位和上下文。
+- `lifecycle/`：attach/rebind/detach 与已弃用的 setup，通过 registry 调用适配器。
+- `cli.ts`、`mcp.ts` 为薄入口；`src/core.ts` 仍是包根入口（`import {execute} from '@zht7063/mwf'`）。
 
-协议详情见 [API 2](protocol.md)。安装/迁移边界见 [安装](install.md)和[迁移](migration-0.2.0.md)。M0 原型不在生产入口导入链内。
+  0.2.x 的转发桩 `src/storage.ts`、`setup.ts`、`pi-adapter.ts`、`protocol.ts`、`integrations/shared/identity.ts` 已删除，0.1 迁移实现 `lifecycle/migrate.ts` 也已删除；不存在第二套业务实现。
+
+receipt v3：status/doctor 只在内存中把 v2 升级，不写盘；`--apply` 操作先以一次原子替换写入升级后的 receipt，再做其他变更。若 v2 receipt 仍拥有非块资源（0.1 的 `.pi/*`、skills 文件），所有操作返回 `LEGACY_RESOURCE_PENDING` 且不做任何改动。写成 v3 后 0.2.x 无法读取，不可降级，见 [卸载与降级](../packaging/UNINSTALL.md)。
+
+Codex supervisor 为同步锁阻塞提供总截止时间，诊断 marker 独占创建、不等待项目锁，仅保存错误类别和时间，正常会话内容不会写入诊断。错误提示去重依赖本地目录可写；损坏/只读文件系统下只能尽力提示。
+
+协议详情见 [API 2](protocol.md)。安装与升级边界见 [安装](install.md)；0.1 → 0.2 迁移为历史文档（[迁移](migration-0.2.0.md)）。M0 原型不在生产入口导入链内。

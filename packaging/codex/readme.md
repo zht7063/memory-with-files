@@ -4,7 +4,7 @@
 
 ## 内容
 
-- `plugin.json`：插件名 `mwf`，`extensions.com.openai` 声明 `hooks: ./hooks/hooks.json` 与 `onboardingSkill: ./skills/setup/SKILL.md`。`version` 为 `0.2.0`，打包时由 `scripts/pack-release.ts` 以 package.json 的版本覆盖，保证与 runtime 一致。
+- `plugin.json`：插件名 `mwf`，`extensions.com.openai` 声明 `hooks: ./hooks/hooks.json` 与 `onboardingSkill: ./skills/setup/SKILL.md`。`version` 为 `0.3.0`，打包时由 `scripts/pack-release.ts` 以 package.json 的版本覆盖，保证与 runtime 一致。
 - `hooks/hooks.json`：SessionStart（matcher `startup|resume|clear|compact`）与 UserPromptSubmit 调用 `runtime/dist/integrations/codex/runner.js`，timeout 5 秒。
 
 ## 组装
@@ -13,7 +13,7 @@
 
 ## 使用
 
-本目录不能直接作为插件安装（缺 `runtime/`、`skills/`）。运行 `npm run pack:release`，用 `shasum -a 256 -c SHA256SUMS` 校验后，把 `mwf-codex-0.2.0.zip` 解压到稳定目录，经 Codex 正常插件入口安装并信任 hooks，再按 [安装文档](../../docs/install.md#codex-插件) 用插件缓存内 runtime 执行 init 与 attach。
+本目录不能直接作为插件安装（缺 `runtime/`、`skills/`）。运行 `npm run pack:release`，用 `shasum -a 256 -c SHA256SUMS` 校验后，把 `mwf-codex-0.3.0.zip` 解压到稳定目录，经 Codex 正常插件入口安装并信任 hooks，再按 [安装文档](../../docs/install.md#codex-插件) 用插件缓存内 runtime 执行 init 与 attach。
 
 ## 约束与未验证
 
@@ -23,7 +23,7 @@
 ## 依据
 
 - 构建规范 §10.1、§15；L01–L02、G08–G10。
-- 仓库根目录下的 `docs/build-plan-0.2.0.md` 为执行计划，`docs/MWF 0.2.0 构建文档.md` 为目标规范。
+- 当前分层与目录落点见仓库根目录下的 `docs/architecture.md`；`docs/build-plan-0.2.0.md` 为 0.2.0 历史执行计划，`docs/MWF 0.2.0 构建文档.md` 为目标规范。
 
 T08 的逐场景桌面证据和操作步骤见 [桌面验收清单](../../docs/validation/desktop-checklist.md#t08-可执行矩阵与证据边界)。CLI trust bypass 不能代替 GUI 正常信任；未取得宿主证据的场景保持 not_run/partial。
 
