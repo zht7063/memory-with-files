@@ -576,21 +576,35 @@ export type Migration = (
   stopped: boolean,
   apply: boolean,
 ) => { migration_required: boolean };
+/** Host-specific conflict detectors, injected by the entry layer (core.ts)
+ * so Core never imports integrations. Keyed by client id in the receipt. */
+export type HostConflicts = Readonly<
+  Record<string, (root: string) => readonly string[]>
+>;
+export type CoreHooks = {
+  migrateIntegration: Migration;
+  hostConflicts?: HostConflicts;
+};
 export function operateWithMigration(
   tx: Transaction,
   migrateIntegration: Migration,
+  ...command: Command
+): unknown {
+  return operateWithHooks(tx, { migrateIntegration }, ...command);
+}
+export function operateWithHooks(
+  tx: Transaction,
+  hooks: CoreHooks,
   ...[op, a]: Command
 ): unknown {
+  const { migrateIntegration } = hooks;
   if (op === "init") return initialize(tx, a.git_mode, a.language);
   if (op === "doctor") {
     const data = diagnose(tx);
-    const integration = integrationDiagnostics(tx);
-    const status = operateWithMigration(
-      tx,
-      migrateIntegration,
-      "status",
-      a,
-    ) as { session_observed: unknown };
+    const integration = integrationDiagnostics(tx, hooks.hostConflicts);
+    const status = operateWithHooks(tx, hooks, "status", a) as {
+      session_observed: unknown;
+    };
     return {
       ...data,
       ok: data.ok && !integration.errors.length,
@@ -1001,6 +1015,7 @@ export function execute(
     fault?: (stage: string) => void;
     guard?: (tx: Transaction) => void;
     migrateIntegration?: Migration;
+    hostConflicts?: HostConflicts;
   } = {},
 ): Result {
   const parsed = schemas[op].safeParse(input);
@@ -1054,9 +1069,14 @@ export function execute(
       }
     }
     // safeParse above establishes the correlation between operation and arguments.
-    const data = operateWithMigration(
+    const data = operateWithHooks(
       tx,
-      options.migrateIntegration ?? missingMigration,
+      {
+        migrateIntegration: options.migrateIntegration ?? missingMigration,
+        ...(options.hostConflicts
+          ? { hostConflicts: options.hostConflicts }
+          : {}),
+      },
       ...([op, a] as Command),
     );
     const changed = tx.changes().map((c) => c.path);
