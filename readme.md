@@ -42,4 +42,4 @@ node dist/cli.js attach --root /absolute/project --harness codex --plugin-root /
 
 ## 卸载
 
-先 `detach --harness all --apply`（确认 `disabled_clean`），再 `pi remove <package dir>` / Codex 插件卸载（`codex plugin remove mwf@<marketplace>`）。`.mwf/` 记忆数据可保留。完整文件清单与命令见 [packaging/UNINSTALL.md](packaging/UNINSTALL.md)。
+先 `detach --harness all --apply`（确认 `disabled_clean`），再 `pi remove <package dir> --approve`（`--local` 安装再加 `--local`；`--approve` 需要 Pi ≥ 1.3.0） / Codex 插件卸载（`codex plugin remove mwf@<marketplace>`）。`.mwf/` 记忆数据可保留。完整文件清单与命令见 [packaging/UNINSTALL.md](packaging/UNINSTALL.md)。
