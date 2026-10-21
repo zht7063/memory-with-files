@@ -10,6 +10,16 @@ import { measure, serialize } from "../dist/context/output.js";
 const baseline = process.argv[2];
 if (!baseline) throw Error("Pass the compiled fixed 0.1.0 core path.");
 const old = await import(pathToFileURL(path.resolve(baseline)).href);
+const current = (() => {
+  try {
+    const pkg = JSON.parse(
+      fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+    );
+    return typeof pkg.version === "string" ? pkg.version : "current";
+  } catch {
+    return "current";
+  }
+})();
 const base = fs.realpathSync(
     fs.mkdtempSync(path.join(os.tmpdir(), "mwf-benchmark-")),
   ),
@@ -59,7 +69,7 @@ try {
     ]) {
       for (const [version, run] of [
         ["0.1.0", old.execute],
-        ["0.2.0", execute],
+        [current, execute],
       ] as const) {
         const start = performance.now();
         const result = run(scenario.operation, {
