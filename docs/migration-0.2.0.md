@@ -13,3 +13,16 @@ node /absolute/new-runtime/dist/cli.js doctor --root /absolute/project
 迁移复用事务/journal 并保留备份，长期 Markdown、ID、frontmatter、正文、inbox、旧 handoff 原文保留；退役字段移除，生成 disabled 新状态。随后从安装包显式 attach 指定客户端并重载，不能依赖旧 setup 激活规则文件。`setup` 只是已弃用兼容入口。
 
 失败后保留现场并运行 doctor；不要手工覆盖 journal 或清空 local。进程中断后的下一次受锁操作会恢复事务；外部修改造成冲突时停止并人工合并。恢复备份前停用所有新旧入口，使用完整备份恢复对应数据与配置。数据遗忘和接入卸载是不同操作。
+
+## 停用、卸包后恢复 0.2.0
+
+对 Pi/Codex 分别执行 detach，另一宿主可继续使用；需要全部停止时使用
+`detach --root /absolute/project --harness all --apply`。先处理 cleanup pending，
+再从宿主卸包并重载。重装本身不会启用已停用的接入；从新安装 runtime 重新 attach
+指定宿主并重载。旧连接在重新接入后仍被拒绝。
+
+完整保留 `.mwf/`（特别是 local 的 session 映射和 session/task handoff），不要
+用 init 或删除 local 来“修复”停用。相同项目路径下重装后，原 Markdown 可直接读取，
+session handoff 通过原 session_ref、task handoff 通过原 task ID 读取。移动项目需要
+另行 rebind，不能把复制来的身份映射当成本项目 session。具体 CLI/GUI 步骤和
+`not_run` 边界见 [T09 验证记录](validation/t09-host-sessions.md)。

@@ -53,3 +53,17 @@ node /absolute/runtime/dist/cli.js detach --root /absolute/project --harness cod
 ```
 
 先持久停用，再清理自有配置。出现 cleanup pending 时保留用户修改和 receipt，解决冲突后重复 detach。不要直接删除 `.mwf/local/`。最后用 `pi remove /absolute/mwf-install/package --local --approve` 或 Codex 正常插件卸载入口移除程序并重载；CLI 安装目录中可执行 `npm uninstall @zht7063/mwf`。这些操作均保留记忆数据。卸载命令的实际覆盖范围见验收记录。
+
+单宿主 detach 仅停用指定客户端；另一个客户端的 enabled、generation 和配置不变。
+停用后旧连接立即拒绝请求；Pi 在下一个扩展事件注销动态工具，Codex 需要重载才能
+让宿主工具列表移除旧项目配置。不要把尚未重载的工具列表当成可用连接。
+
+恢复顺序：detach → 正常宿主卸包 → 完全退出/重载 → 重装 → 接入前重载并确认仍停用
+→ 从新安装路径 attach → 再重载。仅重装不会重新启用 receipt 中已停用的客户端。
+重新接入会更换该客户端 generation，旧连接仍不可用。保留整个 `.mwf/`，包括
+Markdown、`.mwf/local/contexts/` 身份映射和 `.mwf/local/handoffs/` 的 session/task
+交接；重装后可用原 session_ref 或 task ID 显式读取。不要仅备份长期 Markdown。
+
+双宿主 CLI 与 GUI 的逐步验证及未运行项目见
+[T09 宿主会话验证](validation/t09-host-sessions.md)。本地自动测试只模拟宿主事件和
+安装目录移除/重建，不证明真实宿主卸包或 GUI 重载成功。

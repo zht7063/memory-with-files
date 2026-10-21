@@ -7,7 +7,7 @@ class Endpoint(BaseHTTPRequestHandler):
     def log_message(self, *_args): pass
     def do_POST(self):
         payload = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
-        requests.append({'path': self.path, 'marker': 'MWF_V2_CODEX_SEED' in json.dumps(payload), 'saved': 'MWF_V2_CODEX_SAVED' in json.dumps(payload), 'at': time.time()})
+        requests.append({'path': self.path, 'mwf_tools': [t.get('name', t.get('function', {}).get('name', '')) for t in payload.get('tools', []) if 'mwf' in t.get('name', t.get('function', {}).get('name', ''))], 'marker': 'MWF_V2_CODEX_SEED' in json.dumps(payload), 'saved': 'MWF_V2_CODEX_SAVED' in json.dumps(payload), 'at': time.time()})
         self.send_response(200); self.send_header('Content-Type', 'text/event-stream'); self.end_headers()
         message = {'id': 'msg_m0', 'type': 'message', 'role': 'assistant', 'status': 'completed', 'content': [{'type': 'output_text', 'text': 'fixture response', 'annotations': []}]}
         response = {'id': 'resp_m0', 'object': 'response', 'created_at': 0, 'status': 'completed', 'model': 'm0', 'output': [message], 'usage': {'input_tokens': 1, 'output_tokens': 1, 'total_tokens': 2}}
@@ -82,7 +82,19 @@ try:
   try:app.wait(timeout=10)
   except subprocess.TimeoutExpired:app.kill();app.wait()
  r=command([*args[:-1],'--dangerously-bypass-hook-trust',args[-1]]);assert requests[-1]['saved']
- mwf('detach','--root',str(project),'--harness','codex','--apply');r=command([*args[:-1],'--dangerously-bypass-hook-trust',args[-1]]);assert not requests[-1]['marker'] and not requests[-1]['saved']
- result={'status':'partial','scope':'bundled_cli_app_server','bundled_runtime_status':'pass','codex_desktop':'not_run','desktop_evidence':'docs/validation/codex-desktop-t08.json','runtime':subprocess.check_output([binary,'--version'],text=True).strip(),'requests':requests,'evidence_dir':str(base),'limits':['Bundled runtime only; GUI not tested','One-invocation hook trust bypass is test-only, not GUI trust evidence','Synthetic model endpoint; real billed model costs not measured']}
+ mwf('detach','--root',str(project),'--harness','codex','--apply');r=command([*args[:-1],'--dangerously-bypass-hook-trust',args[-1]]);assert not requests[-1]['marker'] and not requests[-1]['saved'] and not requests[-1]['mwf_tools']
+ # T09 actual bundled CLI package uninstall/reinstall; fresh exec is the CLI reload boundary.
+ preserved={str(p.relative_to(project)):p.read_bytes() for p in (project/'.mwf').rglob('*') if p.is_file() and (p.suffix=='.md' or '/handoffs/' in str(p) or '/contexts/' in str(p))}
+ command(['plugin','remove','mwf@mwf-v2','--json'])
+ r=command([*args[:-1],'--dangerously-bypass-hook-trust',args[-1]]);assert not requests[-1]['marker'] and not requests[-1]['saved'] and not requests[-1]['mwf_tools']
+ command(['plugin','add','mwf@mwf-v2','--json'])
+ installed=next(p.parent for p in home.rglob('plugin.json') if (p.parent/'runtime/dist/cli.js').exists())
+ cli=installed/'runtime/dist/cli.js'
+ r=command([*args[:-1],'--dangerously-bypass-hook-trust',args[-1]]);assert not requests[-1]['marker'] and not requests[-1]['saved'] and not requests[-1]['mwf_tools']
+ mwf('attach','--root',str(project),'--harness','codex','--plugin-root',str(installed),'--apply')
+ r=command([*args[:-1],'--dangerously-bypass-hook-trust',args[-1]]);assert requests[-1]['saved']
+ assert all((project/p).read_bytes()==content for p,content in preserved.items())
+ assert mwf('handoff','--root',str(project),'--action','read','--task','codex-task')['ok']
+ result={'status':'partial','t09_cli':'partial','t09_gui':'not_run','t09_manual':'docs/validation/t09-host-sessions.md','scope':'bundled_cli_app_server','bundled_runtime_status':'pass','codex_desktop':'not_run','desktop_evidence':'docs/validation/codex-desktop-t08.json','runtime':subprocess.check_output([binary,'--version'],text=True).strip(),'requests':requests,'evidence_dir':str(base),'limits':['Bundled runtime only; GUI not tested','One-invocation hook trust bypass is test-only, not GUI trust evidence','Synthetic model endpoint; real billed model costs not measured']}
  (base/'evidence.json').write_text(json.dumps(result,indent=2));print(json.dumps(result))
 finally:server.shutdown()
