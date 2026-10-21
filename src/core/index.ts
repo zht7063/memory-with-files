@@ -32,6 +32,8 @@ import {
   withProjectLock,
 } from "../storage/index.js";
 import {
+  AGENTS_END,
+  AGENTS_START,
   active,
   ALL_DIRS,
   boundaries,
@@ -570,38 +572,45 @@ type OperationArguments = { [K in Operation]: z.output<(typeof schemas)[K]> };
 type Command = {
   [K in Operation]: [op: K, args: OperationArguments[K]];
 }[Operation];
-export type Migration = (
-  tx: Transaction,
-  config: Record<string, unknown>,
-  stopped: boolean,
-  apply: boolean,
-) => { migration_required: boolean };
 export type { HostIssues };
 /** Callbacks composed by the entry layer (core.ts) so Core never imports
- * lifecycle or integrations. */
-export type CoreHooks = {
-  migrateIntegration: Migration;
-  hostIssues?: HostIssues;
-};
-export function operateWithMigration(
-  tx: Transaction,
-  migrateIntegration: Migration,
-  ...command: Command
-): unknown {
-  return operateWithHooks(tx, { migrateIntegration }, ...command);
+ * integrations. */
+export type CoreHooks = { hostIssues?: HostIssues };
+
+export const LEGACY_INSTALL_REMEDY =
+  "This project was set up by MWF 0.1, which MWF 0.3 no longer supports. With MWF 0.2.x, run `mwf migrate --root <project> --from 0.1 --legacy-stopped --apply` (keeps memory data), then use 0.3; or remove the 0.1 files by hand (see packaging/UNINSTALL.md). Nothing was changed.";
+/** True for a 0.1 layout: schema-1 data not adopted by the 0.2+ runtime, or
+ * 0.1 setup/bootstrap state still present. */
+export function legacyInstall(tx: Transaction): boolean {
+  const c = config(tx, false);
+  if (c.schema_version !== SCHEMA_VERSION) return false;
+  const agents = tx.get("AGENTS.md") ?? "";
+  return (
+    c.runtime_owner !== "mwf-typescript" ||
+    tx.get(".mwf/local/setup.json") !== null ||
+    ["bootstrap_hash", "bootstrap_version", "hooks_required"].some(
+      (k) => k in c,
+    ) ||
+    agents.includes(AGENTS_START) ||
+    agents.includes(AGENTS_END)
+  );
+}
+function withLegacy<T extends { errors: string[] }>(tx: Transaction, d: T): T {
+  if (legacyInstall(tx)) d.errors.push("UNSUPPORTED_LEGACY_INSTALL");
+  return d;
 }
 export function operateWithHooks(
   tx: Transaction,
   hooks: CoreHooks,
   ...[op, a]: Command
 ): unknown {
-  const { migrateIntegration } = hooks;
   if (op === "init") return initialize(tx, a.git_mode, a.language);
   if (op === "doctor") {
     const data = diagnose(tx);
     const integration = integrationDiagnostics(tx, hooks.hostIssues, {
       conflicts: true,
     });
+    withLegacy(tx, integration);
     const status = operateWithHooks(tx, hooks, "status", a) as {
       session_observed: unknown;
     };
@@ -645,7 +654,7 @@ export function operateWithHooks(
         schema_version: c.schema_version ?? null,
         health: diagnose(tx),
       },
-      ...integrationDiagnostics(tx, hooks.hostIssues),
+      ...withLegacy(tx, integrationDiagnostics(tx, hooks.hostIssues)),
       session_observed: observed,
       runtime_owner: c.runtime_owner ?? "legacy",
 
@@ -656,17 +665,10 @@ export function operateWithHooks(
     const c = config(tx, false);
     if (!Object.keys(c).length && !fs.existsSync(safePath(tx.root, ".mwf")))
       throw new MWFError("NOT_INITIALIZED", "Use init for a new project.");
-    if (c.schema_version === 1) {
-      const result = migrateIntegration(tx, c, a.legacy_stopped, a.apply);
-      if (result.migration_required)
-        initialize(
-          tx,
-          String(c.git_mode ?? a.git_mode ?? "track"),
-          String(c.language ?? a.language),
-          true,
-        );
-      return result;
-    }
+    // `migrate --from 0.1` was removed in 0.3 (use 0.2.x for 0.1 projects).
+    if (a.from !== undefined || (c.schema_version === 1 && legacyInstall(tx)))
+      throw new MWFError("UNSUPPORTED_LEGACY_INSTALL", LEGACY_INSTALL_REMEDY);
+    if (c.schema_version === 1) return { migration_required: false };
     if (!a.apply)
       return { migration_required: true, from: c.schema_version ?? 0, to: 1 };
     if (!a.git_mode)
@@ -688,10 +690,7 @@ export function operateWithHooks(
   }
   const runtimeConfig = current(tx);
   if (isMutation(op, a) && runtimeConfig.runtime_owner !== "mwf-typescript")
-    throw new MWFError(
-      "LEGACY_PROJECT",
-      "Run migrate --from 0.1 before writing legacy data.",
-    );
+    throw new MWFError("UNSUPPORTED_LEGACY_INSTALL", LEGACY_INSTALL_REMEDY);
   if (op === "recall")
     return {
       entries: recallRecords(tx, a),
@@ -1014,7 +1013,6 @@ export function execute(
   options: {
     fault?: (stage: string) => void;
     guard?: (tx: Transaction) => void;
-    migrateIntegration?: Migration;
     hostIssues?: HostIssues;
   } = {},
 ): Result {
@@ -1072,7 +1070,6 @@ export function execute(
     const data = operateWithHooks(
       tx,
       {
-        migrateIntegration: options.migrateIntegration ?? missingMigration,
         ...(options.hostIssues ? { hostIssues: options.hostIssues } : {}),
       },
       ...([op, a] as Command),
@@ -1150,12 +1147,6 @@ export function execute(
   return withProjectLock(root, run);
 }
 
-function missingMigration(): never {
-  throw new MWFError(
-    "INVALID_CONFIG",
-    "Integration migration callback is required.",
-  );
-}
 export function operate(tx: Transaction, ...command: Command): unknown {
-  return operateWithMigration(tx, missingMigration, ...command);
+  return operateWithHooks(tx, {}, ...command);
 }

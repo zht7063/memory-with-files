@@ -337,7 +337,7 @@ test("test 1b: project root reached through a symlink writes only inside realpat
 // ---- Test 2: tampered receipt ----
 function codexReceipt(project: string, resources: unknown[], extra = {}) {
   return {
-    receipt_version: 2,
+    receipt_version: 3,
     canonical_root: project,
     clients: {
       codex: {
@@ -409,8 +409,8 @@ const tamperedReceipts: [string, (p: string) => unknown][] = [
     },
   ],
   [
-    "receipt_version 3",
-    (p) => ({ ...(codexReceipt(p, []) as object), receipt_version: 3 }),
+    "receipt_version 4",
+    (p) => ({ ...(codexReceipt(p, []) as object), receipt_version: 4 }),
   ],
 ];
 for (const [name, make] of tamperedReceipts) {
@@ -555,11 +555,14 @@ test("test 4: storage exposes no API to extend the managed surface", async () =>
     "withProjectLock",
   ]);
   assert.deepEqual(Object.keys(receiptModule).sort(), [
+    "RECEIPT_VERSION",
     "clientSchema",
+    "parseReceipt",
     "receipt",
     "receiptFile",
     "receiptSchema",
     "resourceSchema",
+    "upgradeReceipt",
   ]);
   // Mutating exported values must not widen what recovery accepts.
   const { project } = sandbox({ after: () => {} } as unknown as TestContext);

@@ -2,7 +2,14 @@ import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { config, initialize, execute, type Result } from "../core/index.js";
+import {
+  config,
+  initialize,
+  execute,
+  legacyInstall,
+  LEGACY_INSTALL_REMEDY,
+  type Result,
+} from "../core/index.js";
 import {
   canonicalRoot,
   MWFError,
@@ -15,6 +22,8 @@ import {
   receipt,
   receiptFile,
   resourceSchema,
+  RECEIPT_VERSION,
+  upgradeReceipt,
   type Harness,
 } from "../storage/receipt.js";
 import { piConflicts } from "../integrations/pi/conflicts.js";
@@ -110,16 +119,6 @@ export function persistProbe(
     return tx.commit();
   });
 }
-function legacy(tx: Transaction) {
-  const c = config(tx);
-  return (
-    tx.get(".mwf/local/setup.json") !== null ||
-    ["bootstrap_hash", "bootstrap_version", "hooks_required"].some(
-      (k) => k in c,
-    ) ||
-    (tx.get("AGENTS.md") ?? "").includes("<!-- memory-with-files:start -->")
-  );
-}
 function attachWarnings(root: string, harness: string) {
   const adapter =
     harness === "all" ? undefined : adapterFor(harness as Harness);
@@ -140,7 +139,7 @@ export function lifecycle(
     throw new MWFError("INVALID_INPUT", "Attach one client at a time.");
   const plan = (tx: Transaction) => {
     let r = receipt(tx) ?? {
-      receipt_version: 2 as const,
+      receipt_version: RECEIPT_VERSION,
       canonical_root: root,
       clients: {},
     };
@@ -152,11 +151,8 @@ export function lifecycle(
         if (c) c.enabled = false;
       }
     } else {
-      if (legacy(tx))
-        throw new MWFError(
-          "LEGACY_INTEGRATION_PRESENT",
-          "Run migrate --from 0.1 after stopping old entrypoints.",
-        );
+      if (legacyInstall(tx))
+        throw new MWFError("UNSUPPORTED_LEGACY_INSTALL", LEGACY_INSTALL_REMEDY);
       const h = a.harness as Harness,
         entry = runtime(a.plugin_root, h, root);
       const adapter = adapterFor(h);
@@ -235,8 +231,10 @@ export function lifecycle(
   }
   return withProjectLock(root, () => {
     recover(root);
+    // v2→v3 receipt upgrade is its own atomic single-file commit; it fails
+    // closed (LEGACY_RESOURCE_PENDING) before anything is written.
+    let changed: string[] = upgradeReceipt(root) ? [receiptFile] : [];
     let tx = new Transaction(root);
-    let changed: string[] = [];
     const previousReceipt = receipt(tx);
     if (
       op !== "detach" &&
@@ -248,7 +246,7 @@ export function lifecycle(
       for (const client of Object.values(previousReceipt.clients))
         client.enabled = false;
       tx.set(receiptFile, JSON.stringify(previousReceipt, null, 2) + "\n");
-      changed = tx.commit();
+      changed.push(...tx.commit());
       tx = new Transaction(root);
     }
     const { r, clients } = plan(tx);

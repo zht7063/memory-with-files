@@ -25,7 +25,7 @@ mwf init --root /project --git-mode track|ignore
 mwf attach|rebind --root /project --harness pi|codex [--plugin-root PATH] --apply
 mwf setup --root /project [--harness pi|codex] (default: codex; deprecated)
 mwf detach --root /project --harness pi|codex|all [--apply]
-mwf migrate --root /project --from 0.1 [--legacy-stopped --apply]
+mwf migrate --root /project [--git-mode track|ignore --apply]  (schema upgrade; 0.1 projects: use MWF 0.2.x)
 mwf bootstrap|recall|get|status|doctor --root /project
 status|doctor: --diagnostic-limit 1..100 (default 5)
 mwf handoff --root /project --action list|read|save --task TASK --input-file FILE

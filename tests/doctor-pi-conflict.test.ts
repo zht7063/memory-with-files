@@ -79,7 +79,7 @@ test("issue #20: conflicting mcpServers.mwf makes doctor not ok with attach's co
   assert.equal(doctor(root).ok, true);
 });
 
-test("issue #20: an mcpServers.mwf entry owned by the receipt is not a conflict", (t) => {
+test("issue #20 (0.3): a receipt can no longer own .pi/mcp.json", (t) => {
   const root = attachedPi(t);
   const installed = { command: "node", args: ["mwf"] };
   writeMcp(root, { mcpServers: { mwf: installed } });
@@ -94,7 +94,18 @@ test("issue #20: an mcpServers.mwf entry owned by the receipt is not a conflict"
       created: true,
     },
   ];
+  // v3 receipt naming a 0.1 path: invalid receipt.
   fs.writeFileSync(file, JSON.stringify(r));
-  const result = doctor(root);
-  assert.equal(result.ok, true, JSON.stringify(result.data.errors));
+  let result = doctor(root);
+  assert.equal(result.ok, false);
+  assert.ok(result.data.errors.includes("INVALID_INTEGRATION_RECEIPT"));
+  // v2 receipt still owning it: actionable legacy pending.
+  r.receipt_version = 2;
+  fs.writeFileSync(file, JSON.stringify(r));
+  result = doctor(root);
+  assert.equal(result.ok, false);
+  assert.ok(
+    result.data.errors.includes("LEGACY_RESOURCE_PENDING"),
+    JSON.stringify(result.data.errors),
+  );
 });
