@@ -1,19 +1,21 @@
 # Codex Adapter
 
-状态：目录骨架；尚无功能实现。
+状态：已实现 command hook。
 
-command hook 输入输出、会话事件转换与插件内 runtime 定位。
+## 文件
 
-## 实现约束
+- `runner.ts`：hooks.json 调用的入口，派生 `worker.js` 子进程，4.7 秒未完成即终止（hook timeout 为 5 秒），输出超过 64 KiB 也终止；启动失败、超时或读取失败时输出简短提示，任务继续。
+- `worker.ts`：读取 hook 输入并调用 `handleHook`。
+- `hook.ts`：`handleHook`，处理 `SessionStart`（source startup/resume/clear/compact 时开新 epoch）与 `UserPromptSubmit`（有 prompt 时有界 recall），输出宿主 additionalContext；可选 `context_limits` 输入。
+- `notice.ts`：`failureNotice`，同会话同类错误只提示一次。
 
-- M0 先实测目标桌面构建的插件发现、hook、独立 MCP cwd；桌面结果不等于 CLI 支持。
-- SessionStart 直接通过 Core 恢复，不等待 MCP；UserPromptSubmit 有真实查询后有限 recall。
-- 单次读取 hook 默认总截止时间 5 秒；失败允许任务继续，同会话同类错误仅短提示一次。
-- 转换成宿主支持的 additionalContext；不把 CLI JSON 直接当 hook 输出。
-- 不静默 rebind、不读取 transcript 生成记忆、不以 AGENTS 作为兼容回退。
+打包的 `packaging/codex/hooks/hooks.json` 以 `node ${PLUGIN_ROOT}/runtime/dist/integrations/codex/runner.js` 注册两个事件，timeout 5 秒。MCP 不由插件 manifest 声明，而由 `attach --harness codex` 写入项目 `.codex/config.toml`。
 
-## 实施与验收
+## 未验证
 
-- 阶段：M0 最小实验；M5 完整实现。
-- 依据：构建规范 §10；L02、L07、L11、G05–G06、G08–G10。
+- Codex 桌面 GUI 的安装、hook 信任、GUI 下 Node 路径解析尚无证据；CLI 结果不等于桌面支持。
+
+## 依据
+
+- 构建规范 §10；L02、L07、L11、G05–G06、G08–G10。
 - 仓库根目录下的 `docs/build-plan-0.2.0.md` 为执行计划，`docs/MWF 0.2.0 构建文档.md` 为目标规范。

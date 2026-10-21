@@ -1,19 +1,13 @@
 # CLI 与 stdio MCP
 
-状态：目录骨架；尚无功能实现。
+状态：**本目录为空，仅有本说明。** CLI 与 MCP 已实现，但位于 `src/cli.ts` 与 `src/mcp.ts`，尚未移入此目录。
 
-参数／协议转换、共用 execute 分派和传输层结果输出。
+## 实际入口
 
-## 实现约束
+- `src/cli.ts`（npm bin `mwf` → `dist/cli.js`）：解析 `--flag value` 参数（`--input`/`--input-file` JSON、`--body-file`），记忆操作交 Core `execute`，attach/rebind/detach/setup 交 lifecycle。attach/rebind 必须带 `--harness pi|codex`，否则 INVALID_INPUT（退出码 2）；setup 默认 codex，`--harness pi,codex` 时依次以子进程运行每个 runtime 的 setup 并合并结果。attach/rebind/setup 先 `locateRuntime`；若定位到的已安装 runtime 不是当前进程，先运行其 `--version`，版本不符报 `RUNTIME_MISMATCH`，相符则转交该 runtime 执行（T02）。attach/rebind `--apply` 成功后做 direct（bootstrap）与 MCP 探测，并以 `persistProbe` 写入 receipt（`host_confirmed: unknown`）。stdout 只输出 JSON；失败退出码 1，异常 2。
+- `src/mcp.ts`：`serve`（stdio MCP，`--profile agent|maintenance`，可带 harness/binding_generation/session_ref 并复核绑定）与 `probe`。默认 agent profile 工具：bootstrap、recall、get、add、propose、update、handoff、status。工具参数 `project_root` 可省略（默认绑定 root）；传入时不同路径、符号链接别名或含 `../` 均返回 ROOT_MISMATCH，即使最初经该符号链接绑定。
 
-- CLI 与 MCP 调用同一套契约和用例；记忆操作进入 Core，安装／接入命令进入 lifecycle。
-- 默认 MCP profile 仅暴露规范中的 8 个工具；维护 profile 必须显式选择。
-- CLI stdout 仅机器 JSON、日志走 stderr；MCP stdout 仅协议消息。
-- 自动 MCP 必须独立核对启动 root、enabled 和 binding_generation；绑定后工具参数不能换 root。
-- 最终 npm bin 为 dist/cli.js；目前没有可执行入口，不创建返回成功的占位命令。
+## 依据
 
-## 实施与验收
-
-- 阶段：M1 迁移入口；M2 扩充工具；M3 接生命周期。
-- 依据：构建规范 §8–9；协议一致性、退出码、真实 MCP 探测及 L01、L07、S09、S11。
+- 构建规范 §8–9；L01、L07、S09、S11。
 - 仓库根目录下的 `docs/build-plan-0.2.0.md` 为执行计划，`docs/MWF 0.2.0 构建文档.md` 为目标规范。

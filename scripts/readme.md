@@ -1,16 +1,16 @@
 # 构建与验收脚本
 
-状态：已迁入 0.1.0 的 build、check-package、check-pi、pi-contract 及独立安装器。当前可运行 `npm ci`、`npm test`（包含 build/typecheck）、`npm run build`、`npm run test:package`。`test:pi` 是旧内部 loader 检查，需额外项目和 Pi 路径参数，不代表新版原生宿主验收。下面表格保留 0.2.0 目标职责；`test:integrations` 和 `pack:release` 尚未实现。
+状态：表中命令均已在 package.json 中实现（`npm test` 当前 46 项测试）。脚本：`build.ts`（tsc 后复制资源）、`check-package.ts`、`pack-release.ts`、`check-integrations.ts`、`benchmark.ts`，以及迁入的历史脚本 `check-pi.ts`、`pi-contract.ts`、`install-mwf.ts`（0.1 独立安装器，不在任何 npm script 中）。`npm run test:pi` 现在只是 `test:integrations` 的别名。所有脚本以 `node --experimental-strip-types` 运行，需要 Node ≥ 22.19.0。下表为各命令职责。
 
-| 目标命令 | 阶段 | 必须执行的工作 |
-| - | - | - |
-| `npm ci` | M1 | 按唯一 package-lock 安装，Node ≥22.19.0 |
-| `npm run typecheck` | M1 | 检查实际业务源码与入口类型 |
-| `npm test` | M1 起 | 执行确定性回归，包含迁入存储测试；不能用零测试证明完成 |
-| `npm run build` | M1 起 | 生成 dist、复制实际资源，产物不依赖 TS loader |
-| `npm run test:package` | M1 起、M6 完整验收 | 安装真实 tarball 到隔离目录，离开 checkout 验证 Core/CLI/MCP、Pi 入口及资源 |
-| `npm run test:integrations` | M0 实验、M4/M5 完整实现 | 分列无需模型的契约测试与真实宿主结果；缺少宿主标 not_run |
-| `npm run pack:release` | M5/M6 | 单版本组装 npm/Codex 产物、校验文件清单并生成 SHA256SUMS；不自动 publish |
+| 目标命令                    | 阶段                    | 必须执行的工作                                                              |
+| --------------------------- | ----------------------- | --------------------------------------------------------------------------- |
+| `npm ci`                    | M1                      | 按唯一 package-lock 安装，Node ≥22.19.0                                     |
+| `npm run typecheck`         | M1                      | 检查实际业务源码与入口类型                                                  |
+| `npm test`                  | M1 起                   | 执行确定性回归，包含迁入存储测试；不能用零测试证明完成                      |
+| `npm run build`             | M1 起                   | 生成 dist、复制实际资源，产物不依赖 TS loader                               |
+| `npm run test:package`      | M1 起、M6 完整验收      | 安装真实 tarball 到隔离目录，离开 checkout 验证 Core/CLI/MCP、Pi 入口及资源 |
+| `npm run test:integrations` | M0 实验、M4/M5 完整实现 | 分列无需模型的契约测试与真实宿主结果；缺少宿主标 not_run                    |
+| `npm run pack:release`      | M5/M6                   | 单版本组装 npm/Codex 产物、校验文件清单并生成 SHA256SUMS；不自动 publish    |
 
 ## 包验收要求
 
@@ -33,4 +33,4 @@
 - `npm run test:integrations`：默认契约测试；显式 MWF_PI_BINARY / MWF_CODEX_BINARY 才运行真实宿主脚本。需先 pack:release。桌面 GUI 永远单列。
 - `node --experimental-strip-types scripts/benchmark.ts /absolute/baseline/dist/core.js`：固定 0.1 路径、0.2 路径、无 MWF 的确定性输出比较，不替代完整性能报告。
 
-旧 check-pi.ts/pi-contract.ts 保留历史契约参考，不是当前 npm test:pi 执行路径，不能当作本版宿主证据。
+旧 check-pi.ts/pi-contract.ts/install-mwf.ts 保留为历史参考，不是当前 npm script 的执行路径，不能当作本版宿主证据。
