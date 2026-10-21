@@ -6,7 +6,7 @@
 
 - 导出 `PiAPI`/`PiContext` 接口与扩展函数；从自身模块定位 runtime，自动读取直接调用 Core，工具经会话级动态 MCP 注册／注销。
 - 使用 shared 的 binding、identity 与 context 状态机：session_start / session_compact / session_tree 开新 epoch；before_agent_start 检测到会话或项目变化时重新绑定并在当次请求注入；session_shutdown 注销 MCP。可选 `PiContext.contextLimits` 收紧预算。
-- 启用前用 lifecycle 的 `piConflicts` 检查同名 server；默认不写 `.pi/mcp.json`。
+- 启用前用 `integrations/pi/conflicts.ts` 的 `piConflicts`（lifecycle 再导出） 检查同名 server；默认不写 `.pi/mcp.json`。
 
 ## 未验证
 

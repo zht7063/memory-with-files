@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import { hash, MWFError, Transaction } from "../storage/index.js";
 import { AGENTS_START, AGENTS_END } from "../contracts/records.js";
-import { receiptFile, receipt } from "../integrations/shared/binding.js";
+import { receiptFile, receipt } from "../storage/receipt.js";
 import TOML from "@iarna/toml";
 import { validRecords } from "../storage/records.js";
 export function migrateIntegration(
