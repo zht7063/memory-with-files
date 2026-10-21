@@ -8,7 +8,7 @@ import { serialize } from "./context/output.js";
 import { z } from "zod";
 import fs from "node:fs";
 import path from "node:path";
-import { execute, Operation, schemas } from "./core.js";
+import { execute, type Operation, schemas } from "./core.js";
 import { MWFError } from "./storage.js";
 import { serve, probe } from "./mcp.js";
 import {

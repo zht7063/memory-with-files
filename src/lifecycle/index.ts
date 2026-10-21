@@ -15,12 +15,7 @@ import {
   withProjectLock,
 } from "../storage/index.js";
 import { RUNTIME_VERSION } from "../contracts/version.js";
-import {
-  receipt,
-  receiptFile,
-  type Harness,
-  type Receipt,
-} from "../storage/receipt.js";
+import { receipt, receiptFile, type Harness } from "../storage/receipt.js";
 import { piConflicts } from "../integrations/pi/conflicts.js";
 export { piConflicts };
 const cli = fileURLToPath(new URL("../cli.js", import.meta.url));
