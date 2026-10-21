@@ -6,6 +6,7 @@ if len(sys.argv) < 2:
  print(f'Usage: {sys.argv[0]} PI_PATH', file=sys.stderr)
  sys.exit(2)
 repo=Path(__file__).resolve().parents[3]
+VERSION=json.loads((repo/'package.json').read_text())['version']
 base=Path(tempfile.mkdtemp(prefix='mwf-v2-pi-')).resolve()
 pi=sys.argv[1]; node=shutil.which('node'); requests=[]; writes=0
 class Endpoint(BaseHTTPRequestHandler):
@@ -30,7 +31,7 @@ server=ThreadingHTTPServer(('127.0.0.1',0),Endpoint);threading.Thread(target=ser
 agent=base/'agent';agent.mkdir();project=base/'项目 A';project.mkdir()
 env={k:v for k,v in os.environ.items() if k in ['PATH','HOME','TMPDIR','LANG']};env.update(PI_CODING_AGENT_DIR=str(agent),PI_OFFLINE='1',PI_TELEMETRY='0')
 (agent/'models.json').write_text(json.dumps({'providers':{'fixture':{'baseUrl':f'http://127.0.0.1:{server.server_port}/v1','api':'openai-completions','apiKey':'synthetic','models':[{'id':'fixture','contextWindow':32000,'maxTokens':1000}]}}}))
-subprocess.run(['tar','-xzf',str(repo/'releases/zht7063-mwf-0.2.0.tgz'),'-C',str(base)],check=True)
+subprocess.run(['tar','-xzf',str(repo/f'releases/zht7063-mwf-{VERSION}.tgz'),'-C',str(base)],check=True)
 pkg=base/'package';cli=pkg/'dist/cli.js'
 def mwf(*args):
  r=subprocess.run([node,str(cli),*args],cwd=project,env=env,capture_output=True,text=True,timeout=30)

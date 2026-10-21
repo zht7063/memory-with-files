@@ -115,7 +115,7 @@ try {
       `
     import {Client} from ${JSON.stringify("file://" + path.join(sdk, "client/index.js"))};
     import {StdioClientTransport} from ${JSON.stringify("file://" + path.join(sdk, "client/stdio.js"))};
-    const client = new Client({name:"package-check",version:"0.2.0"});
+    const client = new Client({name:"package-check",version:"0.3.0"});
     const transport = new StdioClientTransport({command:process.execPath,args:[${JSON.stringify(cli)},"mcp","--root",${JSON.stringify(project)}],stderr:"pipe"});
     try { await client.connect(transport); const result=await client.callTool({name:"mwf_bootstrap",arguments:{project_root:${JSON.stringify(project)}}}); if(result.isError || !JSON.stringify(result).includes("crimson-moon-731")) throw Error("Packed MCP did not restore memory"); }
     finally { await client.close(); await transport.close(); }
