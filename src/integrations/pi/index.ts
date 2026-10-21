@@ -1,12 +1,8 @@
 import { execute } from "../../core/index.js";
 import { fileURLToPath } from "node:url";
 import { Transaction } from "../../storage/index.js";
-import {
-  discover,
-  receipt,
-  checkBinding,
-  type Binding,
-} from "../shared/binding.js";
+import { discover, checkBinding, type Binding } from "../shared/binding.js";
+import { receipt } from "../../storage/receipt.js";
 import { piConflicts } from "./conflicts.js";
 import {
   beginContext,

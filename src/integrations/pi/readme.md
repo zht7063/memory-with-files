@@ -1,6 +1,6 @@
 # Pi Adapter
 
-状态：已实现（`index.ts`，默认导出扩展；`src/pi-adapter.ts` 为兼容转导出）。
+状态：已实现（`index.ts`，默认导出扩展；`package.json` 的 `pi.extensions` 直接指向 `dist/integrations/pi/index.js`）。
 
 ## 行为
 

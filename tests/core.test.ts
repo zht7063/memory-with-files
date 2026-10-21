@@ -5,7 +5,7 @@ import path from "node:path";
 import os from "node:os";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { lifecycle } from "../dist/setup.js";
+import { lifecycle } from "../dist/lifecycle/index.js";
 import { execute as rawExecute } from "../dist/core.js";
 import { execute } from "./contracts.ts";
 import type { TestContext } from "node:test";

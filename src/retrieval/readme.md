@@ -5,7 +5,7 @@
 ## 文件与导出
 
 - `index.ts`：`normalize`（NFKC + 小写）、`tokens`（汉字 bigram + 英文词）、`globMatch`（path 约束）、`recallRecords`（状态资格过滤、tool/component 等结构化匹配、可解释排序）、`eligible`（默认／review／history 资格，get 同样受约束）。
-- `src/core/index.ts` 转导出 `recallRecords`、`eligible`；`src/protocol.ts` 转导出 `normalize`、`tokens`、`globMatch`。
+- `src/core/index.ts` 转导出 `recallRecords`、`eligible`。
 
 ## 约束
 
