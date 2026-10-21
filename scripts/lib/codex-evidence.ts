@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-// Local subprocess results and CLI trust bypasses cannot close a desktop criterion.
+// Local subprocess results and waivers cannot establish a desktop pass.
 export const desktopScenarios = {
   environment: ["desktop_environment"],
   discovery: ["normal_install", "normal_trust_reload", "unenabled_project"],
@@ -30,20 +30,34 @@ const observation = z.object({
 export const desktopEvidence = z
   .object({
     task: z.literal("T08"),
-    environment: z.object({
-      desktop_build: z.string().nullable(),
-      os: z.string().nullable(),
-      gui_node_path: z.string().nullable(),
-      gui_node_version: z.string().nullable(),
-      installation: z.string().nullable(),
-      trust: z.string().nullable(),
-      reload: z.string().nullable(),
-      artifact_sha256: z
-        .string()
-        .regex(/^[a-f0-9]{64}$/)
-        .nullable(),
-    }),
-    scenarios: z.record(observation),
+    environment: z
+      .object({
+        desktop_build: z.string().nullable(),
+        os: z.string().nullable(),
+        gui_node_path: z.string().nullable(),
+        gui_node_version: z.string().nullable(),
+        installation: z.string().nullable(),
+        trust: z.string().nullable(),
+        reload: z.string().nullable(),
+        artifact_sha256: z
+          .string()
+          .regex(/^[a-f0-9]{64}$/)
+          .nullable(),
+      })
+      .partial()
+      .optional(),
+    scenarios: z.record(
+      z.union([
+        observation,
+        z.object({
+          status: z.literal("waived"),
+          waived_by: z.string().trim().min(1),
+          substitute: z.string().trim().min(1),
+          reason: z.string().trim().min(1),
+          evidence: z.string().trim().min(1),
+        }),
+      ]),
+    ),
   })
   .superRefine((evidence, ctx) => {
     for (const name of Object.values(desktopScenarios).flat()) {
@@ -59,7 +73,22 @@ export const desktopEvidence = z
         reject(
           "Desktop pass needs normal host observation and artifacts; bypass/local evidence is partial only",
         );
-      if (Object.values(evidence.environment).some((value) => !value))
+      if (
+        !evidence.environment ||
+        [
+          "desktop_build",
+          "os",
+          "gui_node_path",
+          "gui_node_version",
+          "installation",
+          "trust",
+          "reload",
+          "artifact_sha256",
+        ].some(
+          (key) =>
+            !evidence.environment?.[key as keyof typeof evidence.environment],
+        )
+      )
         reject("Desktop environment and candidate SHA256 must be recorded");
       if (
         name.startsWith("request_") &&
@@ -99,6 +128,9 @@ export function summarizeDesktop(input: unknown) {
         : Object.values(criteria).every((status) => status === "not_run")
           ? "not_run"
           : "partial",
+    waived: Object.entries(evidence.scenarios).flatMap(([name, row]) =>
+      row.status === "waived" ? [{ name, ...row }] : [],
+    ),
     release_eligible: false,
   };
 }

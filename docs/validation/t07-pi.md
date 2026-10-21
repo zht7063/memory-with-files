@@ -11,8 +11,7 @@ Contract tests are simulations and do not establish actual Pi request delivery.
 | Disabled/untrusted leaves no integration state or automatic reads        | Empty uninitialized root; untrusted emits nothing and preserves receipt; release runner checks disabled discovery before init      | not_run                                                |
 | Slow/failed MCP permits direct recovery                                  | Synchronous registration failure retains direct recovery; registration completion is never awaited                                 | not_run (slow host startup also not exercised locally) |
 
-The installed Pi reports 0.73.1. Its extension type declarations contain neither
-`registerMcpServer` nor `isProjectTrusted`, the APIs required by this adapter.
+The real host target is `@earendil-works/pi-coding-agent` 1.3.0 (not yet run).
 No compatible real Pi host or candidate release tarball was available for this
 run. No actual installation, model request, compact/tree/resume/clear/reload,
 hot replacement, effective host configuration precedence, or slow MCP result is

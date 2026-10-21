@@ -39,6 +39,77 @@ for (const [criterion, names] of Object.entries(desktopScenarios)) {
     }
   });
 }
+const waiver = () => ({
+  status: "waived",
+  waived_by: "yubai",
+  substitute: "bundled_cli",
+  reason: "Desktop observation deferred; CLI evidence available",
+  evidence: "docs/validation/cli-run.json",
+});
+
+test("T08 waivers accept CLI substitutes without desktop environment fields", () => {
+  const evidence = template();
+  delete evidence.environment;
+  for (const name of Object.values(desktopScenarios).flat())
+    evidence.scenarios[name] = waiver();
+  const summary = summarizeDesktop(evidence);
+  assert.equal(summary.status, "partial");
+  assert.ok(
+    Object.values(summary.criteria).every((status) => status === "partial"),
+  );
+  assert.deepEqual(
+    summary.waived,
+    Object.values(desktopScenarios)
+      .flat()
+      .map((name) => ({ name, ...waiver() })),
+  );
+  assert.equal(summary.release_eligible, false);
+});
+
+test("T08 waivers require nonblank approval, substitute, reason and evidence", () => {
+  for (const field of ["waived_by", "substitute", "reason", "evidence"]) {
+    for (const value of [undefined, "", "   "]) {
+      const evidence = template();
+      evidence.scenarios.normal_install = { ...waiver(), [field]: value };
+      assert.throws(() => summarizeDesktop(evidence));
+    }
+  }
+});
+
+test("T08 summary separates waivers and cannot promote them to pass", () => {
+  const evidence = template();
+  for (const key of Object.keys(evidence.environment))
+    evidence.environment[key] =
+      key === "artifact_sha256" ? "a".repeat(64) : "fixture";
+  for (const name of Object.values(desktopScenarios).flat())
+    evidence.scenarios[name] = {
+      status: "pass",
+      source: "desktop",
+      artifacts: ["fixture"],
+      trust_bypass: false,
+      expected_version: "V1",
+      observed_version: "V1",
+      observation_method: "fixture",
+    };
+  assert.deepEqual(summarizeDesktop(evidence).waived, []);
+  evidence.scenarios.normal_install = waiver();
+  const summary = summarizeDesktop(evidence);
+  assert.equal(summary.criteria.discovery, "partial");
+  assert.equal(summary.status, "partial");
+  assert.deepEqual(summary.waived, [{ name: "normal_install", ...waiver() }]);
+  evidence.scenarios.normal_install = {
+    ...waiver(),
+    status: "pass",
+    source: "bundled_cli",
+    artifacts: ["fixture"],
+    trust_bypass: false,
+  };
+  assert.throws(() => summarizeDesktop(evidence), /Desktop pass needs/);
+  evidence.scenarios.normal_install.source = "desktop";
+  delete evidence.environment.desktop_build;
+  assert.throws(() => summarizeDesktop(evidence), /Desktop environment/);
+});
+
 test("T08 environment and model content versions cannot be inferred", () => {
   const evidence = template();
   evidence.scenarios.request_v1 = {
