@@ -48,6 +48,7 @@ export function resolveSession(tx: Transaction, ref: string) {
     const value = identitySchema.parse(
       JSON.parse(tx.get(`.mwf/local/contexts/${ref}.json`) ?? "null"),
     );
+    if (value.canonical_root !== tx.root) throw new Error();
     const expected = sessionIdentity(
       tx.root,
       value.client,
@@ -58,9 +59,10 @@ export function resolveSession(tx: Transaction, ref: string) {
       JSON.stringify(value) !== JSON.stringify(expected) ||
       ref !== expected.session_ref
     )
-      throw new Error();
+      throw new MWFError("CONTEXT_REQUIRED", "Session mapping conflicts");
     return value;
-  } catch {
+  } catch (error) {
+    if (error instanceof MWFError) throw error;
     throw new MWFError(
       "CONTEXT_REQUIRED",
       "Session reference is missing or belongs to another project.",

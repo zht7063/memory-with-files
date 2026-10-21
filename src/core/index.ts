@@ -100,10 +100,18 @@ export const schemas = {
     })
     .strict(),
   status: z
-    .object({ ...rootField, session_ref: z.string().optional() })
+    .object({
+      ...rootField,
+      session_ref: z.string().optional(),
+      diagnostic_limit: z.number().int().min(1).max(100).default(5),
+    })
     .strict(),
   doctor: z
-    .object({ ...rootField, session_ref: z.string().optional() })
+    .object({
+      ...rootField,
+      session_ref: z.string().optional(),
+      diagnostic_limit: z.number().int().min(1).max(100).default(5),
+    })
     .strict(),
   bootstrap: z
     .object({ ...rootField, ...recallFields, ...routingFields })
@@ -619,7 +627,7 @@ export function operateWithMigration(
           used_reference_tokens: state.used,
           output_bytes: state.bytes,
           last_event: state.diagnostics?.at(-1) ?? null,
-          diagnostics: state.diagnostics?.slice(-100) ?? [],
+          diagnostics: state.diagnostics?.slice(-a.diagnostic_limit) ?? [],
           outputs: state.outputs?.map(
             (o: { status: string; hash: string }) => ({
               status: o.status,
