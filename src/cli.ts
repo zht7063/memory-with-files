@@ -37,6 +37,8 @@ function stringArg(value: unknown, label: string): string {
     throw new MWFError("INVALID_INPUT", `${label} must be a string.`);
   return value;
 }
+const UNINSTALL_HINT =
+  "mwf: to uninstall or detach later, see https://github.com/zht7063/memory-with-files/blob/main/packaging/UNINSTALL.md";
 function parse(argv: string[]) {
   const args: Record<string, string | string[] | boolean> = {};
   const arrays = new Set([
@@ -350,6 +352,9 @@ async function main() {
   }
   console.log(serialize(result));
   if (!result.ok) process.exitCode = 1;
+  // stdout stays pure JSON for hosts; the human hint goes to stderr only.
+  else if (!a.dry_run && (op === "init" || (op === "attach" && a.apply)))
+    console.error(UNINSTALL_HINT);
 }
 main().catch((e) => {
   const args = process.argv.slice(2),
