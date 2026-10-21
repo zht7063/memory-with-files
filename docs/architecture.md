@@ -27,7 +27,7 @@ Pi / Codex Adapter ── shared ────────── Core
 
 | 版本            | 目标值 | 来源与用途                                   |
 | --------------- | ------ | -------------------------------------------- |
-| runtime_version | 0.2.0  | M1 迁入的 package metadata，所有产物共同来源 |
+| runtime_version | 0.3.0  | M1 迁入的 package metadata，所有产物共同来源 |
 | schema_version  | 1      | 现有 Markdown 数据兼容                       |
 | api_version     | 2      | CLI/MCP/Adapter 共用契约                     |
 | receipt_version | 3      | 接入与配置所有权                             |

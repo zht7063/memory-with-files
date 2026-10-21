@@ -24,7 +24,7 @@
 | 上述桌面附带 CLI/app-server（隔离实验） | 0.162.0-alpha.17.2 | macOS 26.7 arm64 | 包内二进制；临时 marketplace/新进程 | 最小实验 pass；不代表 GUI 通过 | M0 可行性证据 |
 | 桌面附带 CLI/app-server（10-16 续验） | 0.163.0-alpha.10.2 | macOS arm64 | 隔离临时 marketplace/app-server | 最小实验及真实数据复制原型 pass；GUI blocked | M0 可行性证据 |
 | Codex 桌面本地 command-hook 插件 | 待确认可用构建 | Linux | 待确认客户端可用性 | not_run | 需 M0 明确，不能假定可安装 |
-| 独立 CLI / stdio MCP | MWF 0.2.0 待构建 | macOS、Linux | tarball 待生成 | not_run | 首发目标 |
+| 独立 CLI / stdio MCP | MWF 0.3.0（未发布候选） | macOS、Linux | `zht7063-mwf-0.3.0.tgz`（`npm run pack:release` 生成） | Linux：rain-tester 回归 measured；macOS：not_run | 首发目标 |
 | Codex CLI | 本机 0.162.1 | macOS | 仅读取版本 | not_run | 单独验收，不继承桌面结论 |
 | 旧 Pi、OMP、其他客户端、Windows | 未选定 | 未验证 | 未验证 | not_run | 不默认支持 |
 | 纯网页／云端编排 | 未选定 | 未验证 | 不适用本地插件假设 | not_run | 不承诺本地 hooks |
