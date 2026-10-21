@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import TOML from "@iarna/toml";
 import { z } from "zod";
-import { config, initialize, execute, type Result } from "../core.js";
+import { config, initialize, execute, type Result } from "../core/index.js";
 import {
   canonicalRoot,
   hash,
@@ -20,7 +20,9 @@ import {
   receiptFile,
   type Harness,
   type Receipt,
-} from "../integrations/shared/binding.js";
+} from "../storage/receipt.js";
+import { piConflicts } from "../integrations/pi/conflicts.js";
+export { piConflicts };
 const cli = fileURLToPath(new URL("../cli.js", import.meta.url));
 const start = "# mwf:mcp:start",
   end = "# mwf:mcp:end";
@@ -67,35 +69,6 @@ function object(raw: string | null): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value))
     throw new MWFError("INVALID_CONFIG", "Expected JSON object.");
   return value;
-}
-export function piConflicts(root: string) {
-  const problems: string[] = [];
-  for (const base of [
-    process.env.PI_CODING_AGENT_DIR ??
-      path.join(process.env.HOME ?? "", ".pi/agent"),
-    path.join(root, ".pi"),
-  ]) {
-    for (const name of ["mcp.json", "settings.json"]) {
-      const file = path.join(base, name);
-      if (!fs.existsSync(file)) continue;
-      const v = object(fs.readFileSync(file, "utf8"));
-      if (
-        name === "mcp.json" &&
-        v.mcpServers &&
-        typeof v.mcpServers === "object" &&
-        "mwf" in v.mcpServers
-      )
-        problems.push(file + ": mcpServers.mwf");
-      if (
-        name === "settings.json" &&
-        JSON.stringify([v.packages ?? [], v.extensions ?? []]).includes(
-          "pi-mcp-adapter",
-        )
-      )
-        problems.push(file + ": pi-mcp-adapter");
-    }
-  }
-  return problems;
 }
 function semverParts(version: string) {
   return /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([\da-zA-Z-]+(?:\.[\da-zA-Z-]+)*))?(?:\+[\da-zA-Z-]+(?:\.[\da-zA-Z-]+)*)?$/.exec(

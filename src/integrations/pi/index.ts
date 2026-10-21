@@ -1,4 +1,4 @@
-import { execute } from "../../core.js";
+import { execute } from "../../core/index.js";
 import { fileURLToPath } from "node:url";
 import { Transaction } from "../../storage/index.js";
 import {
@@ -7,7 +7,7 @@ import {
   checkBinding,
   type Binding,
 } from "../shared/binding.js";
-import { piConflicts } from "../../lifecycle/index.js";
+import { piConflicts } from "./conflicts.js";
 import {
   beginContext,
   prepareContext,
