@@ -4,8 +4,9 @@
 // storage/ is the only layer that validates paths against this list.
 //
 // Entries marked legacy are 0.1 artifacts still accepted by 0.2.x; PR-08 removes
-// them. The `.agents/skills/*` entries stay until PR-07 confirms whether 0.2
-// attach still manages them.
+// them. PR-07 confirmed that 0.2 attach never installs `.agents/skills/*` (the
+// skills ship inside the Codex plugin / Pi package); those entries are 0.1
+// legacy too and stay only so 0.2 can still detach/migrate 0.1 receipts.
 export type ManagedSurfaceKind = "block" | "file" | "json";
 type Surface = { readonly path: string; readonly kind: ManagedSurfaceKind };
 
@@ -20,6 +21,7 @@ export const MANAGED_SURFACES = surfaces({
   "agents.block": { path: "AGENTS.md", kind: "block" },
   gitignore: { path: ".gitignore", kind: "file" },
   "codex.config.block": { path: ".codex/config.toml", kind: "block" },
+  /** legacy 0.1 skill copies (0.2 attach does not write them); removed in PR-08 */
   "skill.memory-with-files": {
     path: ".agents/skills/memory-with-files/SKILL.md",
     kind: "file",
@@ -63,4 +65,9 @@ export function isMwfOwned(file: string) {
     !file.includes("runtime.sqlite") &&
     file !== JOURNAL_PATH
   );
+}
+
+/** The surface whose path is exactly `file`, if any (no normalization). */
+export function surfaceOf(file: string): ManagedSurfaceId | undefined {
+  return SURFACE_IDS.find((id) => MANAGED_SURFACES[id].path === file);
 }
