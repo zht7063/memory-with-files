@@ -7,6 +7,7 @@ const contracts = spawnSync(
     "tests/mcp.test.ts",
     "tests/pi-adapter.test.ts",
     "tests/lifecycle.test.ts",
+    "tests/codex-desktop.test.ts",
   ],
   { stdio: "inherit" },
 );

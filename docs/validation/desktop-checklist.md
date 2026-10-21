@@ -27,3 +27,29 @@
 ## 完成与关闭
 
 将脱敏记录放在 `docs/validation/`，更新 acceptance-0.2.0.json 的单项证据。Linux/最低 Node 适用组合另测，不能由 macOS 推导。全部 44 项及完整三路性能报告通过后才重新评估发布资格。此清单不授权自动 npm publish。
+
+## T08 可执行矩阵与证据边界
+
+T08 的逐场景桌面记录为 [codex-desktop-t08.json](codex-desktop-t08.json)。本轮无 Codex 桌面访问能力，所有桌面场景保持 `not_run`；本地检查另见 [codex-t08-local.md](codex-t08-local.md)。不要把本地 hook 返回内容视为模型已收到内容，也不要把 disabled integration 等同于 GUI 已禁用 hooks。
+
+从仓库运行（Node ≥22.19）：
+
+```sh
+npm run typecheck
+node --experimental-strip-types --test tests/codex-desktop.test.ts
+node --experimental-strip-types scripts/check-codex-desktop.ts
+```
+
+检查器验证记录结构并汇总五个标准；有效的 `not_run` 记录退出码也是 0，必须读取输出状态。它不验证截图/日志的真实性，也不授予发布资格。无 piped subprocess 能力时，runner 矩阵明确 skip/not_run；可直接运行 `node --experimental-strip-types tests/codex-desktop.test.ts` 执行同一文件的 in-process 检查，但这不能补足 subprocess 或宿主证据。
+
+| T08 标准           | 自动断言                                                                            | 必须由真实桌面补充的场景                                                                                                                                                                                                       |
+| ------------------ | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 环境记录           | 缺构建号、OS、GUI Node 路径/版本、安装/信任/重载方式或候选 SHA256 时不得 pass       | `desktop_environment`：从桌面启动，记录 hook 实际解析的 Node，不能借开发 shell PATH 推断                                                                                                                                       |
+| 正常发现及信任     | CLI/local/bypass 证据不得升级桌面 pass；attach 的 reload 保持 pending               | `normal_install`、`normal_trust_reload`、`unenabled_project`：正常安装入口、hooks/MCP 发现日志、GUI 信任/重载、未启用项目无读取与文件副作用                                                                                    |
+| 故障降级           | 独立 MCP 延迟 10 秒/启动失败时 runner 仍返回记忆；disabled binding 不返回恢复内容   | `mcp_delayed`、`mcp_failed`、`hooks_disabled`、`hooks_untrusted`：用可撤销的临时 MCP wrapper 注入故障；分别记录本地恢复时间、MCP 就绪/错误、工具降级、模型请求时间；GUI 禁用/未信任 hooks 时不报告恢复成功，规则文件 hash 不变 |
+| 路径与失效 runtime | 安装目录和项目含中文空格、子目录启动、复制后拒绝读取 A、删除 runtime 后启动失败     | `copied_project`、`unicode_space_path`、`subdirectory`、`deleted_runtime`：A 保持 enabled，B 的 MCP 先启动；检查 root/argv 与不串读写；删除旧 runtime 后重载，确认诊断而非成功恢复                                             |
+| 后续请求版本       | 本地 hook 的 V1→V2 及 compact/resume/clear；不同版本或无观测方式的请求记录不得 pass | `request_v1`、`request_v2_compact`、`request_v2_resume`、`request_v2_clear`：按宿主支持的请求观测方式检查实际出站请求中的合成内容版本，保存操作与请求的关联                                                                    |
+
+每个桌面场景填 `status`、`source`、`artifacts`、`trust_bypass`。pass 必须是 `source: desktop`、`trust_bypass: false`、含可复核的脱敏证据路径，且环境字段齐全。请求场景还须填 `expected_version`、`observed_version`、`observation_method`，不能只保存助手自述“看到了 V2”。宿主没有支持的观测方式时保持 `partial`/`not_run`，不要用未经支持的抓取方式代替。
+
+延迟测试只证明本地恢复没有依赖 MCP，不保证整个宿主任务调度不等待 MCP。`tests/integrations/release/codex.py` 仍是 bundled CLI/app-server 验证，完整脚本即使成功也汇总为 `partial`、桌面为 `not_run`；其中 trust bypass 仅用于合成 CLI 实验。
