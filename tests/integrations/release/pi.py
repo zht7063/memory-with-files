@@ -33,7 +33,7 @@ def mwf(*args):
  r=subprocess.run([node,str(cli),*args],cwd=project,env=env,capture_output=True,text=True,timeout=30)
  assert r.returncode==0,(r.stdout,r.stderr);return json.loads(r.stdout)
 def session(trust=True):
- r=subprocess.run([pi,'--print','--offline','--approve' if trust else '--no-approve','--provider','fixture','--model','fixture','--no-skills','--no-context-files','--no-prompt-templates','--no-themes','Continue the synthetic project.'],cwd=project,env=env,capture_output=True,text=True,timeout=60)
+ r=subprocess.run([pi,'--print','--offline','--approve' if trust else '--no-approve','--provider','fixture','--model','fixture','--no-skills','--no-context-files','--no-prompt-templates','--no-themes','Continue the synthetic project.'],cwd=project,env=env,stdin=subprocess.DEVNULL,capture_output=True,text=True,timeout=60)
  (base/f'session-{time.time_ns()}.log').write_text(r.stdout+'\n'+r.stderr)
  assert r.returncode==0,(r.stdout,r.stderr)
 try:
