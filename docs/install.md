@@ -67,7 +67,7 @@ node /absolute/runtime/dist/cli.js detach --root /absolute/project --harness cod
 
 然后移除程序并重载宿主：
 
-- Pi：`pi remove /absolute/mwf-install/package`（当初用 `--local` 安装就加 `--local`），再 `rm -rf /absolute/mwf-install`。
+- Pi：`pi remove /absolute/mwf-install/package --approve`（当初用 `--local` 安装就加 `--local`；实测用的是带 `--approve` 的写法），再 `rm -rf /absolute/mwf-install`。
 - Codex：GUI 卸载，或 `codex plugin remove mwf@<marketplace>`；如果当初添加过 marketplace，再执行 `codex plugin marketplace remove <marketplace>`。解压出的 zip 目录自行删除。
 - 独立 CLI：在其安装目录执行 `npm uninstall @zht7063/mwf`。
 
