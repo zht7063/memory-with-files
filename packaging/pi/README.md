@@ -29,8 +29,9 @@ Pi finds the extension through `pi.extensions` in `package/package.json` (`./dis
 
 ```sh
 node /tmp/mwf-pi/package/dist/cli.js detach --root /abs/project --harness pi --apply
-pi remove /tmp/mwf-pi/package          # add --local if installed with --local
+pi remove /tmp/mwf-pi/package --local --approve   # if installed with --local
+pi remove /tmp/mwf-pi/package --approve           # if installed globally
 rm -rf /tmp/mwf-pi
 ```
 
-`pi install` only adds a `packages` entry to `~/.pi/agent/settings.json` (or `.pi/settings.json` with `--local`); it does not copy the package. `.mwf/` data is kept. Full inventory: [../UNINSTALL.md](../UNINSTALL.md).
+`--approve` requires Pi >= 1.3.0; on older Pi omit it. `pi install` only adds a `packages` entry to `~/.pi/agent/settings.json` (or `.pi/settings.json` with `--local`); it does not copy the package. `.mwf/` data is kept. Full inventory: [../UNINSTALL.md](../UNINSTALL.md).
