@@ -1,10 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { zipDirectory } from "./lib/zip.ts";
+import { extractTgz, tgzDirectory } from "./lib/tgz.ts";
 const root = fileURLToPath(new URL("../", import.meta.url));
 const pkg = JSON.parse(
   fs.readFileSync(path.join(root, "package.json"), "utf8"),
@@ -21,18 +22,20 @@ try {
         "--ignore-scripts",
         "--json",
         "--pack-destination",
-        out,
+        scratch,
         "--cache",
         path.join(scratch, "cache"),
       ],
       { cwd: root, encoding: "utf8" },
     ),
   );
-  const tgz = path.join(out, packed[0].filename),
-    plugin = path.join(scratch, "mwf");
+  const tgz = path.join(out, packed[0].filename);
+  const plugin = path.join(scratch, "mwf");
+  const runtime = path.join(plugin, "runtime");
+  extractTgz(fs.readFileSync(path.join(scratch, packed[0].filename)), scratch);
   fs.mkdirSync(plugin);
-  execFileSync("tar", ["-xzf", tgz, "-C", scratch]);
-  fs.renameSync(path.join(scratch, "package"), path.join(plugin, "runtime"));
+  fs.renameSync(path.join(scratch, "package"), runtime);
+  tgzDirectory(runtime, tgz);
   fs.cpSync(
     path.join(root, "packaging/codex/plugin.json"),
     path.join(plugin, "plugin.json"),
@@ -71,6 +74,7 @@ try {
     JSON.stringify(
       {
         version: pkg.version,
+        artifacts: [path.basename(tgz), path.basename(zip)],
         publishable: false,
         reason:
           "Requires complete 44-item evidence, both real hosts, performance report and desktop workflow verification.",
