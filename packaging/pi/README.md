@@ -24,3 +24,13 @@ pi install /tmp/mwf-pi/package
 ```
 
 Pi finds the extension through `pi.extensions` in `package/package.json` (`./dist/integrations/pi/index.js`).
+
+## Uninstall
+
+```sh
+node /tmp/mwf-pi/package/dist/cli.js detach --root /abs/project --harness pi --apply
+pi remove /tmp/mwf-pi/package          # add --local if installed with --local
+rm -rf /tmp/mwf-pi
+```
+
+`pi install` only adds a `packages` entry to `~/.pi/agent/settings.json` (or `.pi/settings.json` with `--local`); it does not copy the package. `.mwf/` data is kept. Full inventory: [../UNINSTALL.md](../UNINSTALL.md).

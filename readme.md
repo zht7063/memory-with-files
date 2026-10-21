@@ -39,3 +39,7 @@ node dist/cli.js attach --root /absolute/project --harness codex --plugin-root /
 源码分层为 `contracts/` → `storage/`、`retrieval/`、`context/` → `core/` → `lifecycle/`、`integrations/` 与入口 `src/cli.ts`、`src/mcp.ts`（`src/interfaces/` 目前为空）；`tests/architecture.test.ts` 禁止 `core/`、`contracts/` 依赖 lifecycle、integrations 或宿主 SDK。各目录 readme.md 说明实际文件。已合并 T01（Core 解耦）、T02（runtime 定位与 attach 探测、RUNTIME_MISMATCH）、T03（status/doctor 真实诊断）、T04（上下文状态机）、T05（会话身份与 worktree 隔离）、T06（binding 迁移）、T07/T08（Pi/Codex 验收）、T09（单宿主生命周期）、T10（端到端测试）。`src/core.ts`、`src/storage.ts`、`src/protocol.ts`、`src/setup.ts`、`src/pi-adapter.ts` 是薄导出，`dist/cli.js` 和 npm 根导入保持可用。单一 npm 包和 lockfile；`pack:release` 从同一 tarball 组装 Codex zip 与 SHA256SUMS，不发布。
 
 0.1.0 来源为 `zht7063/skills@7b8be0e59647c90227c0cb945b279d7fa7ab14ef` 的 `packages/mwf`，见[迁入记录](docs/validation/baseline-import.md)。历史文档及 M0 探针仅作来源和实验记录。
+
+## 卸载
+
+先 `detach --harness all --apply`（确认 `disabled_clean`），再 `pi remove <package dir>` / Codex 插件卸载（`codex plugin remove mwf@<marketplace>`）。`.mwf/` 记忆数据可保留。完整文件清单与命令见 [packaging/UNINSTALL.md](packaging/UNINSTALL.md)。

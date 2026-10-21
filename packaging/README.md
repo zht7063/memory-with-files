@@ -10,3 +10,5 @@
 Check both against `releases/SHA256SUMS` before installing. `RELEASE-STATUS.json` marks the build `publishable: false` until release acceptance is complete.
 
 Run `npm ci` (real `node_modules`, not a symlink) before packing so `npm pack` includes transitive deps of `bundleDependencies`.
+
+To uninstall or detach, and for the full list of files MWF and its hosts write, see [UNINSTALL.md](UNINSTALL.md).
