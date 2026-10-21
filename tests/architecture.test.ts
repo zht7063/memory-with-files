@@ -43,36 +43,6 @@ const KNOWN_VIOLATIONS: Known[] = [
     why: "imports core/identity directly once the shim is deleted",
   },
   {
-    key: "external core/diagnostics.ts -> @iarna/toml",
-    removedBy: "PR-07",
-    why: "Codex TOML diagnosis moves into the adapter's diagnose()",
-  },
-  {
-    key: 'host-literal core/diagnostics.ts :: compare client === "codex"',
-    removedBy: "PR-07",
-    why: "host knowledge moves behind managed-surface/registry/adapters",
-  },
-  {
-    key: 'host-literal lifecycle/index.ts :: compare harness === "pi"',
-    removedBy: "PR-07",
-    why: "host knowledge moves behind managed-surface/registry/adapters",
-  },
-  {
-    key: 'host-literal lifecycle/index.ts :: path ".pi"',
-    removedBy: "PR-07",
-    why: "host knowledge moves behind managed-surface/registry/adapters",
-  },
-  {
-    key: 'host-literal lifecycle/index.ts :: path ".pi/agent"',
-    removedBy: "PR-07",
-    why: "host knowledge moves behind managed-surface/registry/adapters",
-  },
-  {
-    key: 'host-literal lifecycle/index.ts :: compare h === "pi"',
-    removedBy: "PR-07",
-    why: "host knowledge moves behind managed-surface/registry/adapters",
-  },
-  {
     key: 'host-literal lifecycle/migrate.ts :: path ".codex/config.toml"',
     removedBy: "PR-08",
     why: "host knowledge moves behind managed-surface/registry/adapters",
@@ -85,16 +55,6 @@ const KNOWN_VIOLATIONS: Known[] = [
   {
     key: 'host-literal lifecycle/migrate.ts :: path ".pi/extensions/mwf.js"',
     removedBy: "PR-08",
-    why: "host knowledge moves behind managed-surface/registry/adapters",
-  },
-  {
-    key: 'host-literal mcp.ts :: compare binding?.harness === "pi"',
-    removedBy: "PR-07",
-    why: "host knowledge moves behind managed-surface/registry/adapters",
-  },
-  {
-    key: 'host-literal mcp.ts :: compare id.client !== "pi"',
-    removedBy: "PR-07",
     why: "host knowledge moves behind managed-surface/registry/adapters",
   },
 ];
@@ -264,7 +224,11 @@ test("storage holds no host literals and only storage validates managed surfaces
   const importers = edges
     .filter((e) => e.to === "contracts/managed-surface.ts" && !e.typeOnly)
     .map((e) => e.from)
-    .filter((f) => !/^(storage|contracts|lifecycle)\//.test(f));
+    .filter(
+      (f) =>
+        !/^(storage|contracts|lifecycle)\//.test(f) &&
+        f !== "integrations/registry.ts",
+    );
   assert.deepEqual(importers, [], "managed-surface value importers");
 });
 
@@ -313,4 +277,16 @@ test("adapters may not import or call fs write APIs (fixture)", () => {
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("no host-id branches outside adapters (PR-07 target: zero)", () => {
+  const { violations } = analyze(src);
+  assert.deepEqual(
+    violations
+      .filter(
+        (v) => v.rule === "host-literal" && / :: (compare|case) /.test(v.key),
+      )
+      .map((v) => v.key),
+    [],
+  );
 });

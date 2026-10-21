@@ -23,15 +23,36 @@ export interface Conflict {
 }
 export interface DiagnosticIssue {
   code: string;
+  /** reported as `CODE:<surface path>` */
+  surface?: ManagedSurfaceId;
   detail?: string;
 }
 
-export type OwnedResource = {
-  kind: "block";
-  surface: "codex.config.block";
-  installed: string;
-  created: boolean;
-};
+/** A receipt `owned_resources` entry, keyed by managed surface. */
+export type OwnedResource =
+  | {
+      kind: "block";
+      surface: "codex.config.block";
+      installed: string;
+      created: boolean;
+    }
+  | {
+      kind: "file";
+      surface:
+        | "legacy.pi.extension"
+        | "skill.memory-with-files"
+        | "skill.mwf-init"
+        | "skill.mwf-status";
+      installed_hash: string;
+      before: string | null;
+    }
+  | {
+      kind: "json";
+      surface: "legacy.pi.mcp";
+      installed: unknown;
+      before: unknown;
+      created: boolean;
+    };
 export interface PlannedChange {
   surface: ManagedSurfaceId;
   /** null = delete the file */
@@ -54,6 +75,8 @@ export interface ClientReceiptView {
   enabled: boolean;
   ownedCount: number;
   cleanupPending: boolean;
+  /** resources to verify; diagnose() checks only those on its own surfaces */
+  owned: readonly OwnedResource[];
 }
 
 export interface HarnessAdapter {
@@ -81,5 +104,7 @@ export interface HarnessAdapter {
   diagnose(ctx: HarnessContext, client: ClientReceiptView): DiagnosticIssue[];
   /** Non-fatal warnings shown after a successful attach. */
   attachWarnings?(ctx: HarnessContext): string[];
+  /** MCP-side session check for hosts that bind a session reference; throws
+   * CONTEXT_REQUIRED when the reference does not belong to this host. */
   resolveSession?(ctx: HarnessContext, sessionRef: string): string | null;
 }

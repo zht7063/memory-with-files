@@ -6,6 +6,7 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import TOML from "@iarna/toml";
 import type {
+  DiagnosticIssue,
   HarnessAdapter,
   HarnessContext,
   OwnedResource,
@@ -125,7 +126,9 @@ export const codexAdapter: HarnessAdapter = {
       old = current ?? "",
       parsed = TOML.parse(old),
       existing = block(old);
-    const resource = binding.owned.find((v) => v.kind === "block");
+    const resource = binding.owned.find(
+      (v): v is Extract<OwnedResource, { kind: "block" }> => v.kind === "block",
+    );
     if (existing && (!resource || resource.installed !== existing))
       throw new MWFError(
         "OWNERSHIP_CONFLICT",
@@ -162,6 +165,7 @@ export const codexAdapter: HarnessAdapter = {
   planDetach(ctx, owned: readonly OwnedResource[]): PlannedChange[] {
     const changes: PlannedChange[] = [];
     for (const resource of owned) {
+      if (resource.kind !== "block") throw new Error("not a Codex resource");
       const raw = ctx.read(resource.surface);
       if (raw === null) continue;
       const current = block(raw);
@@ -177,10 +181,29 @@ export const codexAdapter: HarnessAdapter = {
     }
     return changes;
   },
-  diagnose(_ctx, client) {
-    return client.enabled && !client.ownedCount
-      ? [{ code: "OWNERSHIP_MISSING" }]
-      : [];
+  diagnose(ctx, client) {
+    const issues: DiagnosticIssue[] =
+      client.enabled && !client.ownedCount
+        ? [{ code: "OWNERSHIP_MISSING" }]
+        : [];
+    for (const resource of client.owned) {
+      if (resource.kind !== "block") continue;
+      try {
+        const raw = ctx.read(resource.surface);
+        if (
+          !(
+            raw !== null &&
+            raw.split(start).length === 2 &&
+            raw.includes(resource.installed) &&
+            !!TOML.parse(raw)
+          )
+        )
+          throw new Error("block changed");
+      } catch {
+        issues.push({ code: "OWNERSHIP_CONFLICT", surface: resource.surface });
+      }
+    }
+    return issues;
   },
   attachWarnings(ctx) {
     try {

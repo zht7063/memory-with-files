@@ -40,6 +40,7 @@ test("test 4: MANAGED_SURFACES and every entry are frozen; no extension API", ()
     "SURFACE_IDS",
     "TEMP_SCAN_DIRS",
     "isMwfOwned",
+    "surfaceOf",
   ]);
 });
 
