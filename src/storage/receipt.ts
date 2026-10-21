@@ -1,31 +1,41 @@
 import { z } from "zod";
 import { Transaction, MWFError } from "./index.js";
+import { MANAGED_SURFACES } from "../contracts/managed-surface.js";
 export const receiptFile = ".mwf/local/integration.json";
+const S = MANAGED_SURFACES;
+// Each resource kind accepts only the managed surfaces of that kind; objects
+// are strict so unknown fields fail with INVALID_CONFIG.
 export const resourceSchema = z.discriminatedUnion("kind", [
-  z.object({
-    kind: z.literal("block"),
-    path: z.literal(".codex/config.toml"),
-    installed: z.string(),
-    created: z.boolean(),
-  }),
-  z.object({
-    kind: z.literal("file"),
-    path: z.enum([
-      ".pi/extensions/mwf.js",
-      ".agents/skills/memory-with-files/SKILL.md",
-      ".agents/skills/mwf-init/SKILL.md",
-      ".agents/skills/mwf-status/SKILL.md",
-    ]),
-    installed_hash: z.string(),
-    before: z.string().nullable(),
-  }),
-  z.object({
-    kind: z.literal("json"),
-    path: z.literal(".pi/mcp.json"),
-    installed: z.unknown(),
-    before: z.unknown(),
-    created: z.boolean(),
-  }),
+  z
+    .object({
+      kind: z.literal("block"),
+      path: z.literal(S["codex.config.block"].path),
+      installed: z.string(),
+      created: z.boolean(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("file"),
+      path: z.enum([
+        S["legacy.pi.extension"].path,
+        S["skill.memory-with-files"].path,
+        S["skill.mwf-init"].path,
+        S["skill.mwf-status"].path,
+      ]),
+      installed_hash: z.string(),
+      before: z.string().nullable(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("json"),
+      path: z.literal(S["legacy.pi.mcp"].path),
+      installed: z.unknown(),
+      before: z.unknown(),
+      created: z.boolean(),
+    })
+    .strict(),
 ]);
 export const clientSchema = z
   .object({

@@ -5,6 +5,12 @@ import { DatabaseSync } from "node:sqlite";
 
 import { MWFError } from "../contracts/error.js";
 export { MWFError } from "../contracts/error.js";
+import {
+  isMwfOwned,
+  JOURNAL_PATH,
+  MANAGED_PATHS,
+  TEMP_SCAN_DIRS,
+} from "../contracts/managed-surface.js";
 export const hash = (value: string | null) =>
   value === null ? null : createHash("sha256").update(value).digest("hex");
 export function canonicalRoot(input: string): string {
@@ -92,27 +98,31 @@ export function walk(root: string, relative: string): string[] {
   }
   return result.sort();
 }
+/** A project-relative path in canonical form: `/` separators only, no empty,
+ * `.` or `..` segments, not absolute. Non-canonical spellings (`./AGENTS.md`,
+ * `.codex//config.toml`, `.mwf/../x`, `a\\b`) are rejected rather than
+ * normalized, so the whitelist match below can never be bypassed by aliasing. */
+function canonicalRelative(file: string): string | null {
+  if (typeof file !== "string" || !file || file.includes("\\")) return null;
+  if (path.posix.isAbsolute(file) || path.win32.isAbsolute(file)) return null;
+  const normalized = path.posix.normalize(file);
+  if (normalized !== file) return null;
+  if (file.split("/").some((p) => p === "" || p === "." || p === ".."))
+    return null;
+  return normalized;
+}
 function allowedChange(file: string) {
+  const canonical = canonicalRelative(file);
+  if (canonical === null) return false;
   return (
-    (file.startsWith(".mwf/") &&
-      !file.includes("runtime.sqlite") &&
-      file !== ".mwf/local/transaction.json") ||
-    [
-      "AGENTS.md",
-      ".gitignore",
-      ".codex/config.toml",
-      ".pi/mcp.json",
-      ".pi/extensions/mwf.js",
-    ].includes(file) ||
-    /^\.agents\/skills\/(memory-with-files|mwf-init|mwf-status)\/SKILL\.md$/.test(
-      file,
-    )
+    isMwfOwned(canonical) ||
+    (MANAGED_PATHS as readonly string[]).includes(canonical)
   );
 }
 
 type Change = { path: string; before: string | null; after: string | null };
 type Journal = { version: 1; changes: Change[] };
-const JOURNAL = ".mwf/local/transaction.json";
+const JOURNAL = JOURNAL_PATH;
 function applyJournal(
   root: string,
   journal: Journal,
@@ -159,15 +169,7 @@ function cleanupTemporaryFiles(root: string) {
     /\.mwf-tmp-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
   for (const file of walk(root, ".mwf"))
     if (pattern.test(file)) fs.unlinkSync(safePath(root, file));
-  for (const directory of [
-    "",
-    ".codex",
-    ".pi",
-    ".pi/extensions",
-    ...["memory-with-files", "mwf-init", "mwf-status"].map(
-      (name) => `.agents/skills/${name}`,
-    ),
-  ]) {
+  for (const directory of TEMP_SCAN_DIRS) {
     const absolute = directory ? safePath(root, directory) : root;
     if (!fs.existsSync(absolute)) continue;
     for (const name of fs.readdirSync(absolute)) {

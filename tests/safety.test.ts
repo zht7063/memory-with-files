@@ -580,11 +580,9 @@ test("test 4: storage exposes no API to extend the managed surface", async () =>
   }
 });
 
-// Measured gap (not a path escape): resource objects are not .strict(), so an
-// unknown field on a resource is stripped rather than rejected. The stripped
-// field is never used, so detach still only touches the whitelisted block path.
-// PR-05/PR-08 should make resourceSchema strict and flip this to INVALID_CONFIG.
-test("test 2: unknown resource field is stripped (not rejected) and never acted on", (t) => {
+// PR-05: resource objects are strict, so an unknown field on a resource is
+// rejected with INVALID_CONFIG and detach touches nothing.
+test("test 2: unknown resource field is rejected with INVALID_CONFIG and nothing changes", (t) => {
   const { project, outside } = sandbox(t);
   fs.mkdirSync(path.join(project, ".codex"));
   fs.writeFileSync(path.join(project, ".codex/config.toml"), `${BLOCK}\n`);
@@ -602,21 +600,18 @@ test("test 2: unknown resource field is stripped (not rejected) and never acted 
       ]),
     ),
   );
-  const parsed = receiptModule.receipt(new Transaction(project))!;
-  assert.equal("also" in parsed.clients.codex!.owned_resources[0]!, false);
+  expectCode(
+    () => receiptModule.receipt(new Transaction(project)),
+    ["INVALID_CONFIG"],
+  );
   const before = snapshot(project),
     outBefore = snapshot(outside);
-  const result = lifecycle("detach", {
-    project_root: project,
-    harness: "all",
-    apply: true,
-  });
-  assert.equal(result.ok, true);
-  const changes = diff(before, snapshot(project));
-  assert.ok(changes.every(managed), changes.join(","));
-  assert.equal(
-    fs.readFileSync(path.join(project, "src.ts"), "utf8"),
-    "user code\n",
-  );
+  for (const apply of [false, true])
+    expectCode(
+      () =>
+        lifecycle("detach", { project_root: project, harness: "all", apply }),
+      ["INVALID_CONFIG"],
+    );
+  assert.deepEqual(diff(before, snapshot(project)), []);
   assert.deepEqual(diff(outBefore, snapshot(outside)), []);
 });
