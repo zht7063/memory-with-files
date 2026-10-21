@@ -29,30 +29,12 @@ export interface DiagnosticIssue {
 }
 
 /** A receipt `owned_resources` entry, keyed by managed surface. */
-export type OwnedResource =
-  | {
-      kind: "block";
-      surface: "codex.config.block";
-      installed: string;
-      created: boolean;
-    }
-  | {
-      kind: "file";
-      surface:
-        | "legacy.pi.extension"
-        | "skill.memory-with-files"
-        | "skill.mwf-init"
-        | "skill.mwf-status";
-      installed_hash: string;
-      before: string | null;
-    }
-  | {
-      kind: "json";
-      surface: "legacy.pi.mcp";
-      installed: unknown;
-      before: unknown;
-      created: boolean;
-    };
+export type OwnedResource = {
+  kind: "block";
+  surface: "codex.config.block";
+  installed: string;
+  created: boolean;
+};
 export interface PlannedChange {
   surface: ManagedSurfaceId;
   /** null = delete the file */

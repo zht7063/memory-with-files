@@ -30,7 +30,7 @@ Pi / Codex Adapter ── shared ────────── Core
 | runtime_version | 0.2.0 | M1 迁入的 package metadata，所有产物共同来源 |
 | schema_version | 1 | 现有 Markdown 数据兼容 |
 | api_version | 2 | CLI/MCP/Adapter 共用契约 |
-| receipt_version | 2 | 接入与配置所有权 |
+| receipt_version | 3 | 接入与配置所有权 |
 | handoff_version | 1 | scoped 交接文件 |
 
 业务项目数据与本仓库源码目录不同：

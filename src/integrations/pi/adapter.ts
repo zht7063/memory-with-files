@@ -2,42 +2,17 @@
 // never writes (enforced by the adapter-write architecture rule).
 import fs from "node:fs";
 import path from "node:path";
-import { z } from "zod";
-import type {
-  DiagnosticIssue,
-  HarnessAdapter,
-  OwnedResource,
-  PlannedChange,
-} from "../../contracts/harness.js";
-import { MWFError, hash, Transaction } from "../../storage/index.js";
+import type { HarnessAdapter, PlannedChange } from "../../contracts/harness.js";
+import { MWFError, Transaction } from "../../storage/index.js";
 import { resolveSession } from "../../core/identity.js";
 import { jsonObject, selectRuntime } from "../shared/runtime.js";
 import { piConflictList } from "./conflicts.js";
 
-// 0.1 artifacts this adapter can still verify and undo; 0.2 Pi attach writes
-// no project files (the extension is loaded from the installed package).
-const LEGACY = [
-  "legacy.pi.mcp",
-  "legacy.pi.extension",
-  "skill.memory-with-files",
-  "skill.mwf-init",
-  "skill.mwf-status",
-] as const;
-
-function ownsIntact(raw: string | null, resource: OwnedResource) {
-  if (resource.kind === "file") return hash(raw) === resource.installed_hash;
-  if (resource.kind === "json")
-    return (
-      raw !== null &&
-      JSON.stringify(JSON.parse(raw).mcpServers?.mwf) ===
-        JSON.stringify(resource.installed)
-    );
-  return false;
-}
-
 export const piAdapter: HarnessAdapter = {
   id: "pi",
-  managedSurfaces: Object.freeze([...LEGACY]),
+  // 0.2+ Pi attach writes no project files; the extension loads from the
+  // installed package. (0.1 legacy files are no longer managed in 0.3.)
+  managedSurfaces: Object.freeze([]),
   contextInjection: "in-process-extension",
   detect(ctx, hint) {
     const candidates: string[] = [];
@@ -90,45 +65,12 @@ export const piAdapter: HarnessAdapter = {
     // 0.2 Pi attach only updates the receipt.
     return [];
   },
-  planDetach(ctx, owned): PlannedChange[] {
-    const changes: PlannedChange[] = [];
-    for (const resource of owned) {
-      if (resource.kind === "block") throw new Error("not a Pi resource");
-      const raw = ctx.read(resource.surface);
-      if (resource.kind === "file") {
-        if (raw === null) continue;
-        if (hash(raw) !== resource.installed_hash)
-          throw new Error("owned file changed");
-        changes.push({ surface: resource.surface, after: resource.before });
-      } else {
-        const obj = jsonObject(raw),
-          servers = z.record(z.unknown()).parse(obj.mcpServers ?? {});
-        if (!("mwf" in servers)) continue;
-        if (JSON.stringify(servers.mwf) !== JSON.stringify(resource.installed))
-          throw new Error("owned key changed");
-        if (resource.before === null) delete servers.mwf;
-        else servers.mwf = resource.before;
-        obj.mcpServers = servers;
-        changes.push({
-          surface: resource.surface,
-          after: JSON.stringify(obj, null, 2) + "\n",
-        });
-      }
-    }
-    return changes;
+  planDetach(_ctx, owned): PlannedChange[] {
+    if (owned.length) throw new Error("Pi owns no project resources");
+    return [];
   },
-  diagnose(ctx, client) {
-    const issues: DiagnosticIssue[] = [];
-    for (const resource of client.owned) {
-      if (resource.kind === "block") continue;
-      try {
-        if (!ownsIntact(ctx.read(resource.surface), resource))
-          throw new Error("changed");
-      } catch {
-        issues.push({ code: "OWNERSHIP_CONFLICT", surface: resource.surface });
-      }
-    }
-    return issues;
+  diagnose() {
+    return [];
   },
   resolveSession(ctx, sessionRef) {
     const id = resolveSession(new Transaction(ctx.root), sessionRef);

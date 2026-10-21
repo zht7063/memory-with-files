@@ -6,7 +6,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { execute } from "../dist/core.js";
 import { lifecycle } from "../dist/lifecycle/index.js";
-import { migrateIntegration } from "../dist/lifecycle/migrate.js";
 import { checkBinding, discover } from "../dist/integrations/shared/binding.js";
 import { Transaction } from "../dist/storage.js";
 import { serve } from "../dist/mcp.js";
@@ -133,8 +132,8 @@ test("T06 root change durably disables all clients even if rebind fails; success
   assert.notEqual(read(copy).clients.pi.binding_generation, "old");
   assert.equal(read().clients.codex.enabled, true);
 });
-test("T06 JSON and TOML ownership cleanup preserves unrelated content and disables on changed values", (t) => {
-  for (const kind of ["json", "block"] as const)
+test("T06 TOML ownership cleanup (0.3: no JSON resources) preserves unrelated content and disables on changed values", (t) => {
+  for (const kind of ["block"] as string[])
     for (const edited of [false, true]) {
       const { root, r, write, read } = project(t);
       const file = kind === "json" ? ".pi/mcp.json" : ".codex/config.toml";
@@ -186,41 +185,4 @@ test("T06 JSON and TOML ownership cleanup preserves unrelated content and disabl
         });
       else assert.equal(after, '# keep comment\nmodel = "keep"\n');
     }
-});
-test("T06 migration independently reads legacy data before removing entrypoints", (t) => {
-  for (const broken of [false, true]) {
-    const { root } = project(t);
-    const fixture = fileURLToPath(
-      new URL("./fixtures/legacy-schema-1/project/", import.meta.url),
-    );
-    fs.cpSync(fixture, root, { recursive: true });
-    const agents = fs.readFileSync(path.join(root, "AGENTS.md"), "utf8");
-    const config = fs.readFileSync(path.join(root, ".mwf/config.json"), "utf8");
-    if (broken)
-      fs.writeFileSync(
-        path.join(root, ".mwf/knowledge/unreadable.md"),
-        "no frontmatter",
-      );
-    const tx = new Transaction(root);
-    if (broken) {
-      assert.throws(
-        () => migrateIntegration(tx, JSON.parse(config), true, true),
-        /frontmatter/,
-      );
-      assert.deepEqual(tx.changes(), []);
-      assert.equal(
-        fs.readFileSync(path.join(root, "AGENTS.md"), "utf8"),
-        agents,
-      );
-      assert.equal(
-        fs.readFileSync(path.join(root, ".mwf/config.json"), "utf8"),
-        config,
-      );
-    } else {
-      const result = migrateIntegration(tx, JSON.parse(config), true, true);
-      assert.equal(result.legacy_read?.source, "independent_markdown_read");
-      assert.ok(result.legacy_read!.record_count > 0);
-      assert.ok(tx.changes().some((c) => c.path === "AGENTS.md"));
-    }
-  }
 });

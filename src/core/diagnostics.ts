@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { Transaction } from "../storage/index.js";
+import { MWFError, Transaction } from "../storage/index.js";
 import { receipt } from "../storage/receipt.js";
 
 /** Host-specific checks (ownership of managed surfaces, host conflicts),
@@ -98,8 +98,12 @@ export function integrationDiagnostics(
       if (c.enabled)
         errors.push(...issues.map((issue) => `${client}: ${issue}`));
     }
-  } catch {
-    errors.push("INVALID_INTEGRATION_RECEIPT");
+  } catch (e) {
+    errors.push(
+      e instanceof MWFError && e.code === "LEGACY_RESOURCE_PENDING"
+        ? "LEGACY_RESOURCE_PENDING"
+        : "INVALID_INTEGRATION_RECEIPT",
+    );
   }
   return { installed, configured, probed, errors };
 }

@@ -34,6 +34,7 @@ test("test 4: MANAGED_SURFACES and every entry are frozen; no extension API", ()
   }, TypeError);
   assert.deepEqual(Object.keys(surface).sort(), [
     "JOURNAL_PATH",
+    "LEGACY_V2_RESOURCES",
     "MANAGED_PATHS",
     "MANAGED_SURFACES",
     "MWF_DIR",
@@ -44,26 +45,13 @@ test("test 4: MANAGED_SURFACES and every entry are frozen; no extension API", ()
   ]);
 });
 
-test("whitelist equals the 0.2 managed surface (0.1 Pi paths kept until PR-08)", () => {
+test("whitelist is the 0.3 managed surface: no 0.1 Pi or skills paths", () => {
   assert.deepEqual([...MANAGED_PATHS].sort(), [
-    ".agents/skills/memory-with-files/SKILL.md",
-    ".agents/skills/mwf-init/SKILL.md",
-    ".agents/skills/mwf-status/SKILL.md",
     ".codex/config.toml",
     ".gitignore",
-    ".pi/extensions/mwf.js",
-    ".pi/mcp.json",
     "AGENTS.md",
   ]);
-  assert.deepEqual([...TEMP_SCAN_DIRS].sort(), [
-    "",
-    ".agents/skills/memory-with-files",
-    ".agents/skills/mwf-init",
-    ".agents/skills/mwf-status",
-    ".codex",
-    ".pi",
-    ".pi/extensions",
-  ]);
+  assert.deepEqual([...TEMP_SCAN_DIRS].sort(), ["", ".codex"]);
   assert.equal(isMwfOwned(".mwf/memory/x.md"), true);
   assert.equal(isMwfOwned(".mwf/runtime.sqlite"), false);
   assert.equal(isMwfOwned(".mwf/local/transaction.json"), false);

@@ -42,21 +42,6 @@ const KNOWN_VIOLATIONS: Known[] = [
     removedBy: "PR-09",
     why: "imports core/identity directly once the shim is deleted",
   },
-  {
-    key: 'host-literal lifecycle/migrate.ts :: path ".codex/config.toml"',
-    removedBy: "PR-08",
-    why: "host knowledge moves behind managed-surface/registry/adapters",
-  },
-  {
-    key: 'host-literal lifecycle/migrate.ts :: path ".pi/mcp.json"',
-    removedBy: "PR-08",
-    why: "host knowledge moves behind managed-surface/registry/adapters",
-  },
-  {
-    key: 'host-literal lifecycle/migrate.ts :: path ".pi/extensions/mwf.js"',
-    removedBy: "PR-08",
-    why: "host knowledge moves behind managed-surface/registry/adapters",
-  },
 ];
 
 test("every src file is registered in the layer table", () => {

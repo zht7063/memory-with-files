@@ -11,7 +11,7 @@
 
 - 模板只描述数据格式；正常 init 不写 AGENTS/CLAUDE。
 - 本目录不是项目实际 `.mwf` 数据，不存放 receipt 或会话状态。
-- `legacy-agents-block.md` 与 `assets/mwf-template/agents-block.md` 均由 `src/lifecycle/migrate.ts` 用于证明旧 AGENTS 块归属；包内只发布 mwf-template 中的 `agents-block.md`。
+- `legacy-agents-block.md` 与 `assets/mwf-template/agents-block.md` 中前者曾由 0.2.x 的 `migrate --from 0.1` 使用（0.3 已移除，仅作历史参考）；包内只发布 mwf-template 中的 `agents-block.md`。
 
 ## 依据
 

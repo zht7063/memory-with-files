@@ -505,10 +505,10 @@ test("status and doctor inspect runtime, binding and ownership without inventing
       before: null,
     },
   ];
+  r.receipt_version = 2;
   fs.writeFileSync(file, JSON.stringify(r));
-  assert.equal(status().configured.pi.valid, false);
+  assert.ok(status().errors.includes("LEGACY_RESOURCE_PENDING"));
   assert.equal(execute("doctor", { project_root: root }).ok, false);
-  assert.equal(status().data.health.ok, true);
 });
 
 test("session diagnostics are bounded, complete and isolated", (t) => {

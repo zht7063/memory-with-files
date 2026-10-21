@@ -202,50 +202,28 @@ test("codex detect honors injected CODEX_HOME", () => {
 
 const sha = (t: string) => createHash("sha256").update(t).digest("hex");
 
-test("pi adapter: in-process, no attach changes, legacy undo only", () => {
+test("pi adapter: in-process, owns no project resources in 0.3", () => {
   assert.equal(piAdapter.contextInjection, "in-process-extension");
+  assert.deepEqual([...piAdapter.managedSurfaces], []);
   assert.deepEqual(
     piAdapter.planAttach(ctx(), runtime, { generation: "g", owned: [] }),
     [],
   );
-  const file = {
-    kind: "file" as const,
-    surface: "legacy.pi.extension" as const,
-    installed_hash: sha("ext"),
-    before: null,
+  assert.deepEqual(piAdapter.planDetach(ctx(), []), []);
+  const block = {
+    kind: "block" as const,
+    path: ".codex/config.toml" as const,
+    installed_hash: sha("x"),
   };
+  assert.throws(() => piAdapter.planDetach(ctx(), [block as never]));
   assert.deepEqual(
-    piAdapter.planDetach(ctx({ "legacy.pi.extension": "ext" }), [file]),
-    [{ surface: "legacy.pi.extension", after: null }],
-  );
-  assert.throws(() =>
-    piAdapter.planDetach(ctx({ "legacy.pi.extension": "edited" }), [file]),
-  );
-  const json = {
-    kind: "json" as const,
-    surface: "legacy.pi.mcp" as const,
-    installed: { command: "n" },
-    before: null,
-    created: true,
-  };
-  const mcp = JSON.stringify({ mcpServers: { mwf: { command: "n" }, o: 1 } });
-  assert.deepEqual(
-    piAdapter.planDetach(ctx({ "legacy.pi.mcp": mcp }), [json]),
-    [
-      {
-        surface: "legacy.pi.mcp",
-        after: JSON.stringify({ mcpServers: { o: 1 } }, null, 2) + "\n",
-      },
-    ],
-  );
-  assert.deepEqual(
-    piAdapter.diagnose(ctx({ "legacy.pi.mcp": mcp }), {
+    piAdapter.diagnose(ctx(), {
       enabled: true,
-      ownedCount: 2,
+      ownedCount: 0,
       cleanupPending: false,
-      owned: [json, file],
+      owned: [],
     }),
-    [{ code: "OWNERSHIP_CONFLICT", surface: "legacy.pi.extension" }],
+    [],
   );
 });
 
@@ -284,27 +262,17 @@ test("pi conflicts are structured {path, reason}; owned entries are filtered by 
         hostIssues("pi", root, get, client([]), { conflicts: false }),
         [],
       );
-      const owned = {
-        kind: "json",
-        path: ".pi/mcp.json",
-        installed: { command: "n" },
-        before: null,
-        created: true,
-      };
-      assert.deepEqual(
-        hostIssues("pi", root, get, client([owned]), { conflicts: true }),
-        [],
-      );
-      // Owning one file does not hide conflicts in other files.
+      // 0.3 receipts cannot own .pi/* paths, so nothing hides a conflict.
       fs.writeFileSync(
         path.join(root, ".pi/settings.json"),
         '{"packages":["pi-mcp-adapter"]}',
       );
       assert.deepEqual(
-        hostIssues("pi", root, get, client([owned]), { conflicts: true }),
+        hostIssues("pi", root, get, client([]), { conflicts: true }).sort(),
         [
+          `OWNERSHIP_CONFLICT:${path.join(root, ".pi/mcp.json")}: mcpServers.mwf`,
           `OWNERSHIP_CONFLICT:${path.join(root, ".pi/settings.json")}: pi-mcp-adapter`,
-        ],
+        ].sort(),
       );
       assert.deepEqual(
         hostIssues("codex", root, get, client([]), { conflicts: true }),
