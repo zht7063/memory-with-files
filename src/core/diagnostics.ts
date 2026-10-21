@@ -3,7 +3,6 @@ import path from "node:path";
 import TOML from "@iarna/toml";
 import { Transaction, hash } from "../storage/index.js";
 import { receipt } from "../storage/receipt.js";
-import { RUNTIME_VERSION } from "../contracts/version.js";
 
 export function integrationDiagnostics(tx: Transaction) {
   const installed: Record<string, unknown> = {};
@@ -30,10 +29,7 @@ export function integrationDiagnostics(tx: Transaction) {
         /* Missing or invalid runtime is reported below. */
       }
       const runtimeValid =
-        exists &&
-        version === c.runtime_version &&
-        version === RUNTIME_VERSION &&
-        c.api_version === 2;
+        exists && version === c.runtime_version && c.api_version === 2;
       installed[client] = {
         runtime_path: c.runtime_path ?? null,
         runtime_version: version,

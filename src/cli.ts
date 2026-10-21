@@ -21,6 +21,7 @@ mwf attach|rebind --root /project --harness pi|codex [--plugin-root PATH] --appl
 mwf detach --root /project --harness pi|codex|all [--apply]
 mwf migrate --root /project --from 0.1 [--legacy-stopped --apply]
 mwf bootstrap|recall|get|status|doctor --root /project
+status|doctor: --diagnostic-limit 1..100 (default 5)
 mwf handoff --root /project --action list|read|save --task TASK --input-file FILE
 mwf mcp --root /project [--profile agent|maintenance]
 Use --input-file for structured JSON. Reads support --max-reference-tokens and --max-output-bytes.
@@ -109,6 +110,7 @@ function parse(argv: string[]) {
   for (const key of [
     "item",
     "limit",
+    "diagnostic_limit",
     "threshold",
     "expected_revision",
     "max_reference_tokens",
@@ -177,12 +179,56 @@ async function main() {
     return;
   }
   if (["attach", "rebind", "setup"].includes(op)) {
-    const harness = typeof a.harness === "string" ? a.harness : "codex";
+    const root = stringArg(a.project_root, "project_root");
+    if (!root.trim())
+      throw new MWFError("INVALID_INPUT", "project_root must not be empty.");
+    if (op !== "setup" && a.harness !== "pi" && a.harness !== "codex")
+      throw new MWFError("INVALID_INPUT", "harness must be pi or codex.");
+    const harnesses =
+      op === "setup"
+        ? z
+            .array(z.enum(["pi", "codex"]))
+            .min(1)
+            .parse(
+              typeof a.harness === "string"
+                ? a.harness.split(",")
+                : (a.harness ?? ["codex"]),
+            )
+        : [a.harness];
+    if (harnesses.length > 1) {
+      const results = harnesses.map((harness) => {
+        const child = spawnSync(
+          process.execPath,
+          [
+            fileURLToPath(import.meta.url),
+            "setup",
+            "--input",
+            JSON.stringify({ ...a, harness }),
+          ],
+          { encoding: "utf8" },
+        );
+        if (child.error) throw child.error;
+        if (!child.stdout.trim())
+          throw new Error(child.stderr || "Setup runtime failed.");
+        return JSON.parse(child.stdout) as import("./core.js").Result;
+      });
+      const result = {
+        ...results[0],
+        ok: results.every((r) => r.ok),
+        data: { clients: results },
+        changed_files: [...new Set(results.flatMap((r) => r.changed_files))],
+        warnings: [...new Set(results.flatMap((r) => r.warnings))],
+      };
+      console.log(serialize(result));
+      if (!result.ok) process.exitCode = 1;
+      return;
+    }
+    const harness = harnesses[0];
     if (harness === "pi" || harness === "codex") {
       const target = locateRuntime(
         typeof a.plugin_root === "string" ? a.plugin_root : undefined,
         harness,
-        String(a.project_root),
+        root,
       );
       if (target.entry !== fs.realpathSync(fileURLToPath(import.meta.url))) {
         const version = spawnSync(
@@ -261,14 +307,22 @@ async function main() {
           );
         }
       }
-      result.changed_files.push(
-        ...persistProbe(
-          result.project_root,
-          harness,
-          binding.binding_generation!,
-          probes,
-        ).filter((file) => !result.changed_files.includes(file)),
-      );
+      try {
+        result.changed_files.push(
+          ...persistProbe(
+            result.project_root,
+            harness,
+            binding.binding_generation!,
+            probes,
+          ).filter((file) => !result.changed_files.includes(file)),
+        );
+      } catch (error) {
+        stages.state = "configured/degraded";
+        probes.failed = true;
+        result.warnings.push(
+          `Probe evidence could not be persisted: ${error instanceof MWFError ? `${error.code}: ${error.message}` : String(error)}; reload and verify the host.`,
+        );
+      }
     }
   } else {
     if (!Object.hasOwn(schemas, op))

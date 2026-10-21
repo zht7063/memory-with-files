@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 const source = fileURLToPath(new URL("../", import.meta.url));
 test("installed Codex runtime preserves unrelated TOML and disables before cleanup conflicts", (t) => {
@@ -179,6 +179,16 @@ test("global CLI discovers Codex cache and delegates only validated plugin runti
     fs.readFileSync(path.join(project, ".codex/config.toml"), "utf8"),
     /plugins\/cache/,
   );
+  // Each setup client delegates through its own installed runtime.
+  fs.mkdirSync(path.join(project, ".pi"));
+  fs.writeFileSync(
+    path.join(project, ".pi/settings.json"),
+    JSON.stringify({ packages: [source] }),
+  );
+  const setup = run("setup", "--root", project, "--harness", "pi,codex");
+  assert.equal(setup.ok, true);
+  assert.equal(setup.data.clients.length, 2);
+  assert.equal(setup.data.clients[1].runtime_version, "0.2.0");
   // Failure in standalone MCP leaves the committed resources recoverable.
   fs.writeFileSync(
     path.join(runtime, "dist/mcp.js"),
@@ -205,6 +215,29 @@ test("global CLI discovers Codex cache and delegates only validated plugin runti
   );
   assert.equal(receipt.clients.codex.enabled, true);
   assert.equal(receipt.clients.codex.probe.mcp.result, "fail");
+  const lifecycleFile = path.join(runtime, "dist/lifecycle/index.js");
+  fs.writeFileSync(
+    lifecycleFile,
+    fs
+      .readFileSync(lifecycleFile, "utf8")
+      .replace(
+        "export function persistProbe(root, harness, generation, evidence) {",
+        'export function persistProbe(root, harness, generation, evidence) { throw new MWFError("BINDING_STALE", "Binding changed during probing.");',
+      ),
+  );
+  const stale = run(
+    "attach",
+    "--root",
+    project,
+    "--harness",
+    "codex",
+    "--apply",
+  );
+  assert.equal(stale.ok, true);
+  assert.equal(stale.data.state, "configured/degraded");
+  assert.ok(
+    stale.warnings.some((warning: string) => warning.includes("BINDING_STALE")),
+  );
   fs.writeFileSync(
     path.join(plugin, "plugin.json"),
     JSON.stringify({ name: "mwf", version: "9.0.0" }),
@@ -250,5 +283,59 @@ test("Codex discovery rejects ambiguity and mismatched manifests", (t) => {
   } finally {
     if (old === undefined) delete process.env.CODEX_HOME;
     else process.env.CODEX_HOME = old;
+  }
+});
+
+test("Codex cache selects highest semver and prefers local with versions coexisting", (t) => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), "mwf-versions-"));
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
+  const old = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = base;
+  const install = (version: string) => {
+    const plugin = path.join(base, "plugins/cache/market/mwf", version);
+    fs.mkdirSync(path.join(plugin, "runtime/dist"), { recursive: true });
+    fs.writeFileSync(
+      path.join(plugin, "plugin.json"),
+      JSON.stringify({ name: "mwf", version: "0.2.0" }),
+    );
+    fs.writeFileSync(
+      path.join(plugin, "runtime/package.json"),
+      JSON.stringify({ name: "@zht7063/mwf", version: "0.2.0" }),
+    );
+    fs.writeFileSync(path.join(plugin, "runtime/dist/cli.js"), "");
+    return plugin;
+  };
+  try {
+    for (const version of ["0.9.0", "0.10.0-beta.2", "0.10.0-beta.10", "junk"])
+      install(version);
+    assert.equal(
+      locateRuntime(undefined, "codex", base).plugin_root,
+      path.join(base, "plugins/cache/market/mwf/0.10.0-beta.10"),
+    );
+    const newest = install("0.10.0");
+    assert.equal(locateRuntime(undefined, "codex", base).plugin_root, newest);
+    const local = install("local");
+    assert.equal(locateRuntime(undefined, "codex", base).plugin_root, local);
+  } finally {
+    if (old === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = old;
+  }
+});
+
+test("CLI validates root and harness before runtime discovery", () => {
+  for (const args of [
+    ["attach"],
+    ["attach", "--root", source],
+    ["rebind", "--harness", "codex"],
+    ["setup", "--harness", "pi,codex"],
+  ]) {
+    const child = spawnSync(
+      process.execPath,
+      [path.join(source, "dist/cli.js"), ...args],
+      { encoding: "utf8" },
+    );
+    const result = JSON.parse(child.stdout);
+    assert.equal(result.ok, false);
+    assert.equal(result.error.code, "INVALID_INPUT");
   }
 });

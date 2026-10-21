@@ -3,6 +3,7 @@ import { hash, MWFError, Transaction } from "../storage/index.js";
 import { AGENTS_START, AGENTS_END } from "../contracts/records.js";
 import { receiptFile, receipt } from "../integrations/shared/binding.js";
 import TOML from "@iarna/toml";
+import { validRecords } from "../storage/records.js";
 export function migrateIntegration(
   tx: Transaction,
   c: Record<string, unknown>,
@@ -20,6 +21,9 @@ export function migrateIntegration(
     agents.includes(AGENTS_END) ||
     c.runtime_owner !== "mwf-typescript";
   if (!needed) return { migration_required: false };
+  // Read authoritative legacy files independently, before staging any cleanup.
+  // Never let rebuilding the index hide an unreadable record during adoption.
+  const legacyRecords = validRecords(new Transaction(tx.root), true);
   const starts = agents.split(AGENTS_START).length - 1,
     ends = agents.split(AGENTS_END).length - 1;
   if (
@@ -143,5 +147,9 @@ export function migrateIntegration(
     migration_required: true,
     legacy_stopped: stopped,
     clients_enabled: false,
+    legacy_read: {
+      source: "independent_markdown_read",
+      record_count: legacyRecords.length,
+    },
   };
 }

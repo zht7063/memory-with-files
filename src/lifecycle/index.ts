@@ -95,6 +95,33 @@ export function piConflicts(root: string) {
   }
   return problems;
 }
+function semverParts(version: string) {
+  return /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([\da-zA-Z-]+(?:\.[\da-zA-Z-]+)*))?(?:\+[\da-zA-Z-]+(?:\.[\da-zA-Z-]+)*)?$/.exec(
+    version,
+  );
+}
+function compareVersions(a: string, b: string) {
+  const x = semverParts(a)!,
+    y = semverParts(b)!;
+  for (let i = 1; i <= 3; i++) {
+    const difference = Number(x[i]) - Number(y[i]);
+    if (difference) return difference;
+  }
+  if (!x[4] || !y[4]) return x[4] ? -1 : y[4] ? 1 : 0;
+  const left = x[4].split("."),
+    right = y[4].split(".");
+  for (let i = 0; i < Math.max(left.length, right.length); i++) {
+    if (left[i] === undefined) return -1;
+    if (right[i] === undefined) return 1;
+    if (left[i] === right[i]) continue;
+    const ln = /^\d+$/.test(left[i]),
+      rn = /^\d+$/.test(right[i]);
+    if (ln && rn) return Number(left[i]) - Number(right[i]);
+    if (ln !== rn) return ln ? -1 : 1;
+    return left[i] < right[i] ? -1 : 1;
+  }
+  return 0;
+}
 export function locateRuntime(
   pluginRoot: string | undefined,
   harness: Harness,
@@ -133,17 +160,26 @@ export function locateRuntime(
         process.env.CODEX_HOME ?? path.join(process.env.HOME ?? "", ".codex"),
         "plugins/cache",
       );
-      const visit = (dir: string, depth: number) => {
-        if (!fs.existsSync(dir)) return;
-        if (fs.existsSync(path.join(dir, "plugin.json"))) {
-          candidates.push(dir);
-          return;
+      const directories = (dir: string) =>
+        fs.existsSync(dir)
+          ? fs
+              .readdirSync(dir, { withFileTypes: true })
+              .filter((item) => item.isDirectory())
+              .map((item) => item.name)
+          : [];
+      for (const marketplace of directories(cache)) {
+        for (const plugin of directories(path.join(cache, marketplace))) {
+          const base = path.join(cache, marketplace, plugin);
+          const versions = directories(base);
+          const selected = versions.includes("local")
+            ? "local"
+            : versions
+                .filter((version) => semverParts(version) !== null)
+                .sort(compareVersions)
+                .at(-1);
+          if (selected) candidates.push(path.join(base, selected));
         }
-        if (depth)
-          for (const item of fs.readdirSync(dir, { withFileTypes: true }))
-            if (item.isDirectory()) visit(path.join(dir, item.name), depth - 1);
-      };
-      visit(cache, 3);
+      }
     }
   }
   const valid: { plugin_root: string; entry: string; version: string }[] = [];
@@ -379,8 +415,23 @@ export function lifecycle(
   return withProjectLock(root, () => {
     recover(root);
     let tx = new Transaction(root);
+    let changed: string[] = [];
+    const previousReceipt = receipt(tx);
+    if (
+      op !== "detach" &&
+      previousReceipt &&
+      previousReceipt.canonical_root !== root
+    ) {
+      // Revoke every copied/moved binding durably before attempting one rebind.
+      // Keep the old root until the requested client's configuration succeeds.
+      for (const client of Object.values(previousReceipt.clients))
+        client.enabled = false;
+      tx.set(receiptFile, JSON.stringify(previousReceipt, null, 2) + "\n");
+      changed = tx.commit();
+      tx = new Transaction(root);
+    }
     const { r, clients } = plan(tx);
-    let changed = tx.commit();
+    changed.push(...tx.commit());
     const conflicts: string[] = [];
     if (op === "detach") {
       tx = new Transaction(root);

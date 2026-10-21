@@ -522,7 +522,19 @@ test("session diagnostics are bounded, complete and isolated", (t) => {
   const status = data(
     execute("status", { project_root: root, session_ref: ref }),
   ) as any;
-  assert.equal(status.session_observed.diagnostics.length, 100);
+  assert.equal(status.session_observed.diagnostics.length, 5);
+  assert.equal(
+    (
+      data(
+        execute("status", {
+          project_root: root,
+          session_ref: ref,
+          diagnostic_limit: 100,
+        }),
+      ).session_observed as any
+    ).diagnostics.length,
+    100,
+  );
   const event = status.session_observed.last_event;
   assert.equal(event.client, "pi");
   assert.equal(event.session_ref, ref);
@@ -811,8 +823,41 @@ test("session registration rejects corrupt persisted mappings without replacing 
     fs.writeFileSync(file, raw);
     assert.throws(
       () => registerSession(new Transaction(root), "codex", "resume"),
-      { code: "CONTEXT_REQUIRED" },
+      {
+        code: "CONTEXT_REQUIRED",
+        message: raw.includes("session_key")
+          ? "Session mapping conflicts"
+          : "Session reference is missing or belongs to another project.",
+      },
     );
     assert.equal(fs.readFileSync(file, "utf8"), raw);
   }
+});
+
+test("status and doctor accept an installed runtime matching its receipt at a different CLI version", (t) => {
+  const root = project(t);
+  binding(root);
+  const runtime = path.join(temp(t), "runtime");
+  fs.mkdirSync(path.join(runtime, "dist"), { recursive: true });
+  fs.writeFileSync(path.join(runtime, "dist/cli.js"), "");
+  fs.writeFileSync(
+    path.join(runtime, "package.json"),
+    JSON.stringify({ name: "@zht7063/mwf", version: "0.3.0" }),
+  );
+  const file = path.join(root, ".mwf/local/integration.json");
+  const r = JSON.parse(fs.readFileSync(file, "utf8"));
+  r.clients.pi.runtime_path = path.join(runtime, "dist/cli.js");
+  r.clients.pi.runtime_version = "0.3.0";
+  fs.writeFileSync(file, JSON.stringify(r));
+  for (const op of ["status", "doctor"] as const) {
+    const result = execute(op, { project_root: root });
+    assert.equal((data(result).installed as any).pi.valid, true);
+    assert.equal(result.ok, true);
+  }
+  r.clients.pi.runtime_version = "0.4.0";
+  fs.writeFileSync(file, JSON.stringify(r));
+  assert.equal(
+    (data(execute("status", { project_root: root })).installed as any).pi.valid,
+    false,
+  );
 });
