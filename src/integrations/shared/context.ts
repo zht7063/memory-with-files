@@ -1,7 +1,7 @@
 import { RUNTIME_VERSION } from "../../contracts/version.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { execute, type Result } from "../../core/index.js";
+import { execute } from "../../core/index.js";
 import {
   Transaction,
   withProjectLock,
