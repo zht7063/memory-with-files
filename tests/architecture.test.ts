@@ -149,51 +149,6 @@ const KNOWN_VIOLATIONS: Known[] = [
     removedBy: "PR-07",
     why: "host knowledge moves behind managed-surface/registry/adapters",
   },
-  {
-    key: 'host-literal storage/index.ts :: path ".codex/config.toml"',
-    removedBy: "PR-05",
-    why: "host knowledge moves behind managed-surface/registry/adapters",
-  },
-  {
-    key: 'host-literal storage/index.ts :: path ".pi/mcp.json"',
-    removedBy: "PR-05 (PR-08 drops this 0.1 path)",
-    why: "host knowledge moves behind managed-surface/registry/adapters",
-  },
-  {
-    key: 'host-literal storage/index.ts :: path ".pi/extensions/mwf.js"',
-    removedBy: "PR-05 (PR-08 drops this 0.1 path)",
-    why: "host knowledge moves behind managed-surface/registry/adapters",
-  },
-  {
-    key: 'host-literal storage/index.ts :: path ".codex"',
-    removedBy: "PR-05",
-    why: "host knowledge moves behind managed-surface/registry/adapters",
-  },
-  {
-    key: 'host-literal storage/index.ts :: path ".pi"',
-    removedBy: "PR-05",
-    why: "host knowledge moves behind managed-surface/registry/adapters",
-  },
-  {
-    key: 'host-literal storage/index.ts :: path ".pi/extensions"',
-    removedBy: "PR-05",
-    why: "host knowledge moves behind managed-surface/registry/adapters",
-  },
-  {
-    key: 'host-literal storage/receipt.ts :: path ".codex/config.toml"',
-    removedBy: "PR-05",
-    why: "host knowledge moves behind managed-surface/registry/adapters",
-  },
-  {
-    key: 'host-literal storage/receipt.ts :: path ".pi/extensions/mwf.js"',
-    removedBy: "PR-05 (PR-08 drops this 0.1 path)",
-    why: "host knowledge moves behind managed-surface/registry/adapters",
-  },
-  {
-    key: 'host-literal storage/receipt.ts :: path ".pi/mcp.json"',
-    removedBy: "PR-05 (PR-08 drops this 0.1 path)",
-    why: "host knowledge moves behind managed-surface/registry/adapters",
-  },
 ];
 
 test("every src file is registered in the layer table", () => {
@@ -345,4 +300,20 @@ test("host-literal ratchet is per matched text, not per file count", () => {
     fs.rmSync(root, { recursive: true, force: true });
     fs.rmSync(swapped, { recursive: true, force: true });
   }
+});
+
+test("storage holds no host literals and only storage validates managed surfaces", () => {
+  const { violations, edges } = analyze(src);
+  assert.deepEqual(
+    violations.filter((v) => v.key.startsWith("host-literal storage/")),
+    [],
+  );
+  assert.ok(
+    !KNOWN_VIOLATIONS.some((k) => k.key.startsWith("host-literal storage/")),
+  );
+  const importers = edges
+    .filter((e) => e.to === "contracts/managed-surface.ts")
+    .map((e) => e.from)
+    .filter((f) => !f.startsWith("storage/"));
+  assert.deepEqual(importers, [], "only storage/ may import managed-surface");
 });
