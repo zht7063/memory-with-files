@@ -1,5 +1,6 @@
 {
   "name": "mwf",
+  "version": "0.2.0",
   "description": "Project memory stored in local files",
   "extensions": {
     "com.openai": {

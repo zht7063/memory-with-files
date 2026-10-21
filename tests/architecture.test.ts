@@ -40,7 +40,7 @@ test("core and contracts cannot depend on integrations, lifecycle, or host SDKs"
     seen.add(file);
     for (const specifier of dependencies(file)) {
       assert.ok(
-        !/^(@modelcontextprotocol\/|@mariozechner\/|@openai\/codex)/.test(
+        !/^(@modelcontextprotocol\/|@mariozechner\/|@earendil-works\/|@openai\/codex)/.test(
           specifier,
         ),
         `${file}: host SDK ${specifier}`,

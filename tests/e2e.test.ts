@@ -329,7 +329,9 @@ test(
         { query: "T10_SHARED" },
         false,
       );
-      assert.match(rejected.text, /DISABLED|REVOKED|disabled|revoked/);
+      z.object({
+        error: z.object({ code: z.literal("INTEGRATION_DISABLED") }),
+      }).parse(rejected.value);
       await verifyRecall(survivor);
       await bind(harness);
       assert.notEqual(receipt().clients[harness]!.binding_generation, previous);
