@@ -1,5 +1,7 @@
 # T04 上下文事件预期
 
+> 历史记录：本文件记录 0.3.0 之前的验证结果，其中引用的文件名与路径（如 `src/storage.ts`、`src/setup.ts`、`src/pi-adapter.ts`、`src/protocol.ts`、`src/lifecycle/migrate.ts`、receipt v2）为 0.3.0 前的布局，0.3.0 已删除或替换。当前结构见 [架构](../architecture.md)。
+
 以下是自动化状态机与适配器测试的预期，不代表真实宿主请求已验收；真实请求观测仍属于 T07/T08。
 
 | 宿主 | 事件 | 预期 |

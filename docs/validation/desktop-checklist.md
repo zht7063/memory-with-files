@@ -1,5 +1,7 @@
 # 0.2.0 桌面人工验收
 
+> 历史记录：本文件记录 0.3.0 之前的验证结果，其中引用的文件名与路径（如 `src/storage.ts`、`src/setup.ts`、`src/pi-adapter.ts`、`src/protocol.ts`、`src/lifecycle/migrate.ts`、receipt v2）为 0.3.0 前的布局，0.3.0 已删除或替换。当前结构见 [架构](../architecture.md)。
+
 状态：**not_run，阻塞发布**。当前自动化工具不能操作 Codex 桌面 GUI；以下操作须由具有该能力的操作者执行，不能以本轮 CLI/app-server 结果代替。不要在真实工作项目做破坏性故障实验。
 
 ## 准备与证据

@@ -1,5 +1,7 @@
 # 0.2.0 实施验收记录
 
+> 历史记录：本文件记录 0.3.0 之前的验证结果，其中引用的文件名与路径（如 `src/storage.ts`、`src/setup.ts`、`src/pi-adapter.ts`、`src/protocol.ts`、`src/lifecycle/migrate.ts`、receipt v2）为 0.3.0 前的布局，0.3.0 已删除或替换。当前结构见 [架构](../architecture.md)。
+
 本轮从已迁入源码实施，不重复搬迁。全部 44 项保留，正式发布门槛未降低。项目所有者已指定 MIT；LICENSE、package metadata、依赖许可清单已同步。**当前为开发候选产物，不具备正式发布资格。**
 
 ## 变更与影响
