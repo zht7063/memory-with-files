@@ -88,7 +88,9 @@ export function piConflicts(root: string) {
         problems.push(file + ": mcpServers.mwf");
       if (
         name === "settings.json" &&
-        JSON.stringify(v.packages ?? []).includes("pi-mcp-adapter")
+        JSON.stringify([v.packages ?? [], v.extensions ?? []]).includes(
+          "pi-mcp-adapter",
+        )
       )
         problems.push(file + ": pi-mcp-adapter");
     }
