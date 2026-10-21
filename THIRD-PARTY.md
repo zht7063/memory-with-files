@@ -66,7 +66,6 @@ MWF is MIT licensed. Bundled dependencies retain their own copyrights and licens
 | mime-types | 3.0.2 | MIT |
 | ms | 2.1.3 | MIT |
 | negotiator | 1.1.0 | MIT |
-| content-type | 2.1.0 | MIT |
 | object-assign | 4.1.1 | MIT |
 | object-inspect | 1.13.4 | MIT |
 | on-finished | 2.4.1 | MIT |
@@ -94,7 +93,6 @@ MWF is MIT licensed. Bundled dependencies retain their own copyrights and licens
 | statuses | 2.0.2 | MIT |
 | toidentifier | 1.0.1 | MIT |
 | type-is | 2.1.0 | MIT |
-| content-type | 2.1.0 | MIT |
 | unpipe | 1.0.0 | MIT |
 | vary | 1.1.2 | MIT |
 | which | 2.0.2 | ISC |
@@ -103,3 +101,29 @@ MWF is MIT licensed. Bundled dependencies retain their own copyrights and licens
 | zod-to-json-schema | 3.25.2 | ISC |
 
 js-tiktoken includes the offline o200k_base vocabulary. No network download is performed at runtime. The project license was selected by the repository owner for 0.2.0.
+
+## js-tiktoken license
+
+Source: https://github.com/dqbd/tiktoken/blob/main/LICENSE
+
+MIT License
+
+Copyright (c) 2022 OpenAI, Shantanu Jain
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

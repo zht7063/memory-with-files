@@ -4,6 +4,7 @@ import os from "node:os";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { zipDirectory } from "./lib/zip.ts";
 const root = fileURLToPath(new URL("../", import.meta.url));
 const pkg = JSON.parse(
   fs.readFileSync(path.join(root, "package.json"), "utf8"),
@@ -54,7 +55,7 @@ try {
   });
   const zip = path.join(out, `mwf-codex-${pkg.version}.zip`);
   fs.rmSync(zip, { force: true });
-  execFileSync("zip", ["-qr", zip, "."], { cwd: plugin });
+  zipDirectory(plugin, zip);
   const sums =
     [tgz, zip]
       .map(
