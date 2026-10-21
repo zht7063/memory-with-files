@@ -1,7 +1,7 @@
 import { Tiktoken } from "js-tiktoken/lite";
 import ranks from "js-tiktoken/ranks/o200k_base";
 import { MWFError } from "../storage/index.js";
-import type { Result } from "../core/index.js";
+import type { Result } from "../contracts/result.js";
 let encoder: Tiktoken | undefined;
 export function measure(text: string) {
   encoder ??= new Tiktoken(ranks);

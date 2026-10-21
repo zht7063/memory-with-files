@@ -4,6 +4,8 @@ export { recallRecords, eligible } from "../retrieval/index.js";
 import { resolveSession } from "./identity.js";
 import { integrationDiagnostics } from "./diagnostics.js";
 import type { BudgetInput } from "../context/output.js";
+import type { Result } from "../contracts/result.js";
+export type { Result } from "../contracts/result.js";
 import { boundResult, decodeCursor, encodeCursor } from "../context/output.js";
 import {
   currentScope,
@@ -199,19 +201,6 @@ export const schemas = {
   forget: z.object({ ...rootField, id: z.string(), ...applyField }).strict(),
 } as const;
 export type Operation = keyof typeof schemas;
-export type Result = {
-  ok: boolean;
-  operation: string;
-  project_root: string;
-  schema_version: number;
-  runtime_version: string;
-  api_version: number;
-  changed_files: string[];
-  warnings: string[];
-  data: unknown;
-  replayed?: boolean;
-  request_id?: string;
-};
 export const assetRoot = fileURLToPath(
   new URL("../../assets/memory/", import.meta.url),
 );
