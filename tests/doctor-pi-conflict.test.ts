@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execute } from "../dist/core.js";
-import { lifecycle } from "../dist/setup.js";
+import { lifecycle } from "../dist/lifecycle/index.js";
 
 function attachedPi(t: TestContext) {
   const base = fs.realpathSync(

@@ -8,19 +8,19 @@ import { fileURLToPath } from "node:url";
 import { spawnSync, spawn } from "node:child_process";
 import { z } from "zod";
 import { execute, type Result } from "../dist/core.js";
-import { Transaction, withProjectLock, hash } from "../dist/storage.js";
-import { registerSession } from "../dist/integrations/shared/identity.js";
+import { Transaction, withProjectLock, hash } from "../dist/storage/index.js";
+import { registerSession } from "../dist/core/identity.js";
 import {
   checkBinding,
-  receipt,
   type Binding,
 } from "../dist/integrations/shared/binding.js";
+import { receipt } from "../dist/storage/receipt.js";
 import {
   beginContext,
   prepareContext,
   finishContext,
 } from "../dist/integrations/shared/context.js";
-import { lifecycle } from "../dist/setup.js";
+import { lifecycle } from "../dist/lifecycle/index.js";
 import { measure, serialize } from "../dist/context/output.js";
 const cli = fileURLToPath(new URL("../dist/cli.js", import.meta.url));
 function temp(t: TestContext) {

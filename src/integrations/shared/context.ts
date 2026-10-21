@@ -10,7 +10,7 @@ import {
   MWFError,
 } from "../../storage/index.js";
 import { checkBinding, type Binding } from "./binding.js";
-import { registerSession, resolveSession } from "./identity.js";
+import { registerSession, resolveSession } from "../../core/identity.js";
 import {
   boundResult,
   measure,

@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { execute } from "../dist/core.js";
 import { lifecycle } from "../dist/lifecycle/index.js";
 import { checkBinding, discover } from "../dist/integrations/shared/binding.js";
-import { Transaction } from "../dist/storage.js";
+import { Transaction } from "../dist/storage/index.js";
 import { serve } from "../dist/mcp.js";
 const source = fileURLToPath(new URL("../", import.meta.url));
 function project(t: test.TestContext) {

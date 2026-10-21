@@ -8,7 +8,6 @@ import {
 } from "../../storage/index.js";
 import { RUNTIME_VERSION } from "../../contracts/version.js";
 import { receipt, type Harness } from "../../storage/receipt.js";
-export * from "../../storage/receipt.js";
 export function discover(cwd: string) {
   let dir = canonicalRoot(cwd);
   while (true) {

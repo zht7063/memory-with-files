@@ -396,7 +396,7 @@ test("T08 local installed runner failure/path/version matrix (not desktop eviden
 
 test("T08 in-process hook path/version/disable checks (partial local evidence)", async (t) => {
   const { execute } = await import("../dist/core.js");
-  const { lifecycle } = await import("../dist/setup.js");
+  const { lifecycle } = await import("../dist/lifecycle/index.js");
   const { handleHook } = await import("../dist/integrations/codex/hook.js");
   const base = fs.realpathSync(
     fs.mkdtempSync(path.join(os.tmpdir(), "mwf-t08-direct-")),

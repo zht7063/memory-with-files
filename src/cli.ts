@@ -10,7 +10,7 @@ import { z } from "zod";
 import fs from "node:fs";
 import path from "node:path";
 import { execute, type Operation, schemas } from "./core.js";
-import { MWFError } from "./storage.js";
+import { MWFError } from "./storage/index.js";
 import { serve, probe } from "./mcp.js";
 import {
   locateRuntime,
@@ -19,7 +19,7 @@ import {
 } from "./lifecycle/index.js";
 import { receipt } from "./storage/receipt.js";
 import { Transaction } from "./storage/index.js";
-import { lifecycle, setup } from "./setup.js";
+import { lifecycle, setup } from "./lifecycle/index.js";
 const HELP = `MWF — project-local file memory
 mwf init --root /project --git-mode track|ignore
 mwf attach|rebind --root /project --harness pi|codex [--plugin-root PATH] --apply

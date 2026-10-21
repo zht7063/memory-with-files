@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execute } from "../dist/core.js";
-import { lifecycle } from "../dist/setup.js";
+import { lifecycle } from "../dist/lifecycle/index.js";
 import { recover, Transaction } from "../dist/storage/index.js";
 import { receipt, upgradeReceipt } from "../dist/storage/receipt.js";
 

@@ -26,23 +26,7 @@ import { analyze, classify, tally } from "./arch.ts";
 const src = path.resolve(import.meta.dirname, "../src");
 
 type Known = { key: string; count?: number; removedBy: string; why: string };
-const KNOWN_VIOLATIONS: Known[] = [
-  {
-    key: "export-star integrations/shared/binding.ts -> storage/receipt.ts",
-    removedBy: "PR-09",
-    why: "binding re-exports storage/receipt for old import paths",
-  },
-  {
-    key: "export-star integrations/shared/identity.ts -> core/identity.ts",
-    removedBy: "PR-09",
-    why: "compat shim integrations/shared/identity.ts is deleted",
-  },
-  {
-    key: "reexport-barrel integrations/shared/context.ts -> integrations/shared/identity.ts",
-    removedBy: "PR-09",
-    why: "imports core/identity directly once the shim is deleted",
-  },
-];
+const KNOWN_VIOLATIONS: Known[] = [];
 
 test("every src file is registered in the layer table", () => {
   const { violations } = analyze(src);
