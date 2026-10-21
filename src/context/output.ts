@@ -87,6 +87,7 @@ export function boundResult(
     const render = (n: number) => {
       data.fragment = chars.slice(start, start + n).join("");
       data.partial = start + n < chars.length;
+      (data.omitted as { by_budget: number }).by_budget = data.partial ? 1 : 0;
       data.cursor = data.partial
         ? encodeCursor(page.identity, start + n)
         : null;

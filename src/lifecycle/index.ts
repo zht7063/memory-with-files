@@ -573,3 +573,9 @@ export function detach(
 ) {
   return lifecycle("detach", { project_root: root, apply, harness });
 }
+
+export function probePersistenceWarning(error: unknown): string {
+  if (!(error instanceof MWFError) || error.code !== "BINDING_STALE")
+    throw error;
+  return `Probe evidence could not be persisted: ${error.code}: ${error.message}; reload and verify the host.`;
+}

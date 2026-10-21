@@ -861,3 +861,98 @@ test("status and doctor accept an installed runtime matching its receipt at a di
     false,
   );
 });
+
+test("explicit recall requires relevance while bootstrap preserves and deduplicates the working set", (t) => {
+  const root = project(t),
+    b = binding(root);
+  const seed = add(root, {
+    title: "quasar routing",
+    summary: "quasar routing constraints",
+  });
+  const ref = beginContext(b, "unrelated", true);
+  for (const query of ["gardening", "  gardening  "])
+    assert.deepEqual(
+      data(execute("recall", { project_root: root, query })).entries,
+      [],
+    );
+  for (const query of ["", "   ", "quasar"])
+    assert.ok(
+      (
+        data(execute("recall", { project_root: root, query })).entries as any[]
+      ).some((entry) => entry.id === seed.id),
+    );
+  for (const query of ["", "gardening"])
+    assert.ok(
+      (
+        data(execute("bootstrap", { project_root: root, query }))
+          .entries as any[]
+      ).some((entry) => entry.id === seed.id),
+    );
+  const output = prepareContext(b, ref, "", true)!;
+  assert.match(output.text, /quasar routing/);
+  finishContext(b, ref, output.id, "submitted");
+  assert.equal(prepareContext(b, ref, ""), null);
+  assert.equal(prepareContext(b, ref, "", true), null);
+  beginContext(b, "unrelated", true);
+  assert.ok(prepareContext(b, ref, "", true));
+});
+
+test("get and handoff pages count truncation under either output budget", (t) => {
+  const root = project(t);
+  const record = add(root, { body: "long memory content ".repeat(1000) });
+  assert.equal(
+    save(root, {
+      data: {
+        goal: "long handoff content ".repeat(90),
+        completed: Array(10).fill("additional content ".repeat(40)),
+        next_action: "continue",
+      },
+    }).ok,
+    true,
+  );
+  for (const budget of [
+    { max_reference_tokens: 700 },
+    { max_output_bytes: 2200 },
+  ]) {
+    for (const [op, args] of [
+      ["get", { id: record.id }],
+      ["handoff", { action: "read", task_id: "任务/../../x" }],
+    ] as const) {
+      const first = data(
+        execute(op, { project_root: root, ...args, ...budget }),
+      );
+      assert.equal(first.partial, true);
+      assert.equal((first.omitted as any).by_budget, 1);
+      assert.equal(typeof first.cursor, "string");
+      const last = data(
+        execute(op, {
+          project_root: root,
+          ...args,
+          max_reference_tokens: 8192,
+          max_output_bytes: 65536,
+          cursor: first.cursor,
+        }),
+      );
+      assert.equal(last.partial, false);
+      assert.equal((last.omitted as any).by_budget, 0);
+    }
+  }
+});
+
+test("detached runtime status is disabled even after its runtime disappears", (t) => {
+  const root = project(t);
+  binding(root);
+  lifecycle("detach", { project_root: root, harness: "pi", apply: true });
+  const file = path.join(root, ".mwf/local/integration.json");
+  const r = JSON.parse(fs.readFileSync(file, "utf8"));
+  r.clients.pi.runtime_path = path.join(root, "removed-runtime/cli.js");
+  fs.writeFileSync(file, JSON.stringify(r));
+  const status = data(execute("status", { project_root: root })) as any;
+  assert.deepEqual(status.installed.pi, { enabled: false });
+  assert.deepEqual(status.configured.pi, {
+    enabled: false,
+    valid: true,
+    issues: [],
+  });
+  assert.equal(execute("doctor", { project_root: root }).ok, true);
+});

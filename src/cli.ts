@@ -11,13 +11,18 @@ import path from "node:path";
 import { execute, Operation, schemas } from "./core.js";
 import { MWFError } from "./storage.js";
 import { serve, probe } from "./mcp.js";
-import { locateRuntime, persistProbe } from "./lifecycle/index.js";
+import {
+  locateRuntime,
+  persistProbe,
+  probePersistenceWarning,
+} from "./lifecycle/index.js";
 import { receipt } from "./storage/receipt.js";
 import { Transaction } from "./storage/index.js";
 import { lifecycle, setup } from "./setup.js";
 const HELP = `MWF — project-local file memory
 mwf init --root /project --git-mode track|ignore
 mwf attach|rebind --root /project --harness pi|codex [--plugin-root PATH] --apply
+mwf setup --root /project [--harness pi|codex] (default: codex; deprecated)
 mwf detach --root /project --harness pi|codex|all [--apply]
 mwf migrate --root /project --from 0.1 [--legacy-stopped --apply]
 mwf bootstrap|recall|get|status|doctor --root /project
@@ -317,11 +322,10 @@ async function main() {
           ).filter((file) => !result.changed_files.includes(file)),
         );
       } catch (error) {
+        const warning = probePersistenceWarning(error);
         stages.state = "configured/degraded";
         probes.failed = true;
-        result.warnings.push(
-          `Probe evidence could not be persisted: ${error instanceof MWFError ? `${error.code}: ${error.message}` : String(error)}; reload and verify the host.`,
-        );
+        result.warnings.push(warning);
       }
     }
   } else {
