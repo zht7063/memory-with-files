@@ -26,3 +26,13 @@
 - 仓库根目录下的 `docs/build-plan-0.2.0.md` 为执行计划，`docs/MWF 0.2.0 构建文档.md` 为目标规范。
 
 T08 的逐场景桌面证据和操作步骤见 [桌面验收清单](../../docs/validation/desktop-checklist.md#t08-可执行矩阵与证据边界)。CLI trust bypass 不能代替 GUI 正常信任；未取得宿主证据的场景保持 not_run/partial。
+
+## 停用与卸载
+
+```sh
+node /absolute/installed-plugin/runtime/dist/cli.js detach --root /absolute/project --harness codex --apply
+codex plugin remove mwf@<marketplace>        # 或桌面插件卸载入口
+codex plugin marketplace remove <marketplace> # 若曾添加本地 marketplace
+```
+
+detach 删除项目 `.codex/config.toml` 中的 `# mwf:mcp:start…end` 块（文件由 MWF 创建且变空时删除文件，空 `.codex/` 目录保留）。插件卸载移除 `~/.codex/plugins/cache/<marketplace>/mwf/` 与 `~/.codex/config.toml` 中 `[plugins."mwf@<marketplace>"]`。`.mwf/` 记忆数据保留；完整清单见 [../UNINSTALL.md](../UNINSTALL.md)。
