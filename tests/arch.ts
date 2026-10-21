@@ -178,15 +178,15 @@ function parse(file: string, text: string): Parsed {
       !(node.parent && ts.isImportDeclaration(node.parent)) &&
       !(node.parent && ts.isExportDeclaration(node.parent))
     )
-      hostHits.push(`path ${JSON.stringify(node.text)} @${line(node)}`);
+      hostHits.push(`path ${JSON.stringify(node.text)}`);
     if (
       ts.isBinaryExpression(node) &&
       COMPARISON.has(node.operatorToken.kind) &&
       (isHostId(node.left) || isHostId(node.right))
     )
-      hostHits.push(`compare @${line(node)}`);
+      hostHits.push(`compare ${node.getText(tree).replace(/\s+/g, " ")}`);
     if (ts.isCaseClause(node) && isHostId(node.expression))
-      hostHits.push(`case @${line(node)}`);
+      hostHits.push(`case ${node.expression.getText(tree)}`);
     ts.forEachChild(node, visit);
   }
   visit(tree);
@@ -350,7 +350,11 @@ export function analyze(root: string) {
   for (const [file, hits] of hostHits)
     if (!hostKnowledgeAllowed(file))
       for (const hit of hits)
-        add("host-literal", file, `${file}: host literal/branch ${hit}`);
+        add(
+          "host-literal",
+          `${file} :: ${hit}`,
+          `${file}: host literal/branch ${hit}`,
+        );
 
   return { files, edges, violations };
 }

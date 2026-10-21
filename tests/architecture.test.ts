@@ -4,7 +4,18 @@
 //   - a violation appears that is not listed (new debt), or
 //   - a listed violation disappears or its count drops without the entry
 //     being removed/lowered here (stale allowlist).
-// Every entry names the refactor PR that removes it.
+// Every entry names the refactor PR that removes it. Host-literal entries are
+// keyed per file + matched text (e.g. `compare harness === "pi"`), so swapping
+// one occurrence for a different one in an allowlisted file still fails.
+//
+// Known limitations (by design):
+//   - Relative imports that do not resolve to a src file are skipped; tsc
+//     (`npm run typecheck`) already fails on them.
+//   - Dynamic import()/require() with a non-literal specifier is skipped; it
+//     cannot be resolved statically. Keep specifiers literal.
+//   - Only reexport-barrel, export-star, external and host-literal violations
+//     may be allowlisted; root-barrel, cycle, upward, same-layer, entry-import,
+//     adapter-isolation and unregistered may not.
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -37,46 +48,151 @@ const KNOWN_VIOLATIONS: Known[] = [
     why: "Codex TOML diagnosis moves into the adapter's diagnose()",
   },
   {
-    key: "host-literal core/diagnostics.ts",
-    count: 1,
-    removedBy: "PR-07",
-    why: 'client === "codex" (:52) injected via adapter',
-  },
-  {
-    key: "host-literal cli.ts",
-    count: 4,
+    key: 'host-literal cli.ts :: compare a.harness !== "pi"',
     removedBy: "PR-06",
-    why: "harness validation (:190) and pi/codex branch (:232) go through the registry",
+    why: "host knowledge moves behind managed-surface/registry/adapters",
   },
   {
-    key: "host-literal mcp.ts",
-    count: 2,
+    key: 'host-literal cli.ts :: compare a.harness !== "codex"',
+    removedBy: "PR-06",
+    why: "host knowledge moves behind managed-surface/registry/adapters",
+  },
+  {
+    key: 'host-literal cli.ts :: compare harness === "pi"',
+    removedBy: "PR-06",
+    why: "host knowledge moves behind managed-surface/registry/adapters",
+  },
+  {
+    key: 'host-literal cli.ts :: compare harness === "codex"',
+    removedBy: "PR-06",
+    why: "host knowledge moves behind managed-surface/registry/adapters",
+  },
+  {
+    key: 'host-literal core/diagnostics.ts :: compare client === "codex"',
     removedBy: "PR-07",
-    why: 'harness/client === "pi" (:149,:154) go through the registry',
+    why: "host knowledge moves behind managed-surface/registry/adapters",
   },
   {
-    key: "host-literal lifecycle/index.ts",
-    count: 12,
-    removedBy: "PR-06 (Codex branches/paths) + PR-07 (Pi branches/paths)",
-    why: "lifecycle dispatches through the registry",
+    key: 'host-literal lifecycle/index.ts :: compare harness === "pi"',
+    removedBy: "PR-07",
+    why: "host knowledge moves behind managed-surface/registry/adapters",
   },
   {
-    key: "host-literal lifecycle/migrate.ts",
-    count: 3,
+    key: 'host-literal lifecycle/index.ts :: path ".pi"',
+    removedBy: "PR-07",
+    why: "host knowledge moves behind managed-surface/registry/adapters",
+  },
+  {
+    key: 'host-literal lifecycle/index.ts :: path ".pi/agent"',
+    removedBy: "PR-07",
+    why: "host knowledge moves behind managed-surface/registry/adapters",
+  },
+  {
+    key: 'host-literal lifecycle/index.ts :: compare h === "pi"',
+    removedBy: "PR-07",
+    why: "host knowledge moves behind managed-surface/registry/adapters",
+  },
+  {
+    key: 'host-literal lifecycle/index.ts :: path ".codex"',
+    removedBy: "PR-06",
+    why: "host knowledge moves behind managed-surface/registry/adapters",
+  },
+  {
+    key: 'host-literal lifecycle/index.ts :: compare harness === "codex"',
+    count: 2,
+    removedBy: "PR-06",
+    why: "host knowledge moves behind managed-surface/registry/adapters",
+  },
+  {
+    key: 'host-literal lifecycle/index.ts :: compare harness !== "codex"',
+    removedBy: "PR-06",
+    why: "host knowledge moves behind managed-surface/registry/adapters",
+  },
+  {
+    key: 'host-literal lifecycle/index.ts :: path ".codex/config.toml"',
+    count: 2,
+    removedBy: "PR-06",
+    why: "host knowledge moves behind managed-surface/registry/adapters",
+  },
+  {
+    key: 'host-literal lifecycle/index.ts :: path ".codex/config.toml is tracked; absolute local runtime paths will be included. Git index was not changed."',
+    removedBy: "PR-06",
+    why: "host knowledge moves behind managed-surface/registry/adapters",
+  },
+  {
+    key: 'host-literal lifecycle/index.ts :: compare h === "codex"',
+    removedBy: "PR-06",
+    why: "host knowledge moves behind managed-surface/registry/adapters",
+  },
+  {
+    key: 'host-literal lifecycle/migrate.ts :: path ".codex/config.toml"',
     removedBy: "PR-08",
-    why: "migrate.ts (0.1 support) is deleted",
+    why: "host knowledge moves behind managed-surface/registry/adapters",
   },
   {
-    key: "host-literal storage/index.ts",
-    count: 6,
-    removedBy: "PR-05 (+ PR-08 drops the 0.1 .pi paths)",
-    why: "allowedChange/cleanupTemporaryFiles derive from contracts/managed-surface.ts",
+    key: 'host-literal lifecycle/migrate.ts :: path ".pi/mcp.json"',
+    removedBy: "PR-08",
+    why: "host knowledge moves behind managed-surface/registry/adapters",
   },
   {
-    key: "host-literal storage/receipt.ts",
-    count: 3,
-    removedBy: "PR-05 (+ PR-08 receipt v3 drops kind:json)",
-    why: "resourceSchema derives from contracts/managed-surface.ts",
+    key: 'host-literal lifecycle/migrate.ts :: path ".pi/extensions/mwf.js"',
+    removedBy: "PR-08",
+    why: "host knowledge moves behind managed-surface/registry/adapters",
+  },
+  {
+    key: 'host-literal mcp.ts :: compare binding?.harness === "pi"',
+    removedBy: "PR-07",
+    why: "host knowledge moves behind managed-surface/registry/adapters",
+  },
+  {
+    key: 'host-literal mcp.ts :: compare id.client !== "pi"',
+    removedBy: "PR-07",
+    why: "host knowledge moves behind managed-surface/registry/adapters",
+  },
+  {
+    key: 'host-literal storage/index.ts :: path ".codex/config.toml"',
+    removedBy: "PR-05",
+    why: "host knowledge moves behind managed-surface/registry/adapters",
+  },
+  {
+    key: 'host-literal storage/index.ts :: path ".pi/mcp.json"',
+    removedBy: "PR-05 (PR-08 drops this 0.1 path)",
+    why: "host knowledge moves behind managed-surface/registry/adapters",
+  },
+  {
+    key: 'host-literal storage/index.ts :: path ".pi/extensions/mwf.js"',
+    removedBy: "PR-05 (PR-08 drops this 0.1 path)",
+    why: "host knowledge moves behind managed-surface/registry/adapters",
+  },
+  {
+    key: 'host-literal storage/index.ts :: path ".codex"',
+    removedBy: "PR-05",
+    why: "host knowledge moves behind managed-surface/registry/adapters",
+  },
+  {
+    key: 'host-literal storage/index.ts :: path ".pi"',
+    removedBy: "PR-05",
+    why: "host knowledge moves behind managed-surface/registry/adapters",
+  },
+  {
+    key: 'host-literal storage/index.ts :: path ".pi/extensions"',
+    removedBy: "PR-05",
+    why: "host knowledge moves behind managed-surface/registry/adapters",
+  },
+  {
+    key: 'host-literal storage/receipt.ts :: path ".codex/config.toml"',
+    removedBy: "PR-05",
+    why: "host knowledge moves behind managed-surface/registry/adapters",
+  },
+  {
+    key: 'host-literal storage/receipt.ts :: path ".pi/extensions/mwf.js"',
+    removedBy: "PR-05 (PR-08 drops this 0.1 path)",
+    why: "host knowledge moves behind managed-surface/registry/adapters",
+  },
+  {
+    key: 'host-literal storage/receipt.ts :: path ".pi/mcp.json"',
+    removedBy: "PR-05 (PR-08 drops this 0.1 path)",
+    why: "host knowledge moves behind managed-surface/registry/adapters",
   },
 ];
 
@@ -173,7 +289,8 @@ test("deliberate violations in a fixture tree are all caught", () => {
       "entry-import lifecycle/index.ts -> cli.ts",
       "reexport-barrel core/uses-shim.ts -> storage/shim.ts",
       "external core/diag.ts -> @modelcontextprotocol/sdk",
-      "host-literal lifecycle/index.ts",
+      'host-literal lifecycle/index.ts :: compare process.env.H === "codex"',
+      'host-literal lifecycle/index.ts :: path ".pi/mcp.json"',
       "unregistered stray.ts",
     ])
       assert.ok(rules.has(key), `fixture violation not caught: ${key}`);
@@ -204,4 +321,28 @@ test("layer table classifies the planned new files", () => {
   );
   assert.equal(classify("lifecycle/index.ts")?.layer, 5);
   assert.equal(classify("cli.ts")?.layer, 6);
+});
+
+test("host-literal ratchet is per matched text, not per file count", () => {
+  const root = fixture({
+    "lifecycle/index.ts":
+      'export const f = (h: string) => h === "pi" || h === "pi";\n',
+  });
+  const swapped = fixture({
+    "lifecycle/index.ts":
+      'export const f = (h: string) => h === "pi" || h === "codex";\n',
+  });
+  try {
+    const pi = 'host-literal lifecycle/index.ts :: compare h === "pi"';
+    const codex = 'host-literal lifecycle/index.ts :: compare h === "codex"';
+    const before = tally(analyze(root).violations);
+    const after = tally(analyze(swapped).violations);
+    assert.equal(before.get(pi), 2);
+    assert.equal(after.get(pi), 1);
+    assert.equal(after.get(codex), 1);
+    assert.notDeepEqual([...before], [...after]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(swapped, { recursive: true, force: true });
+  }
 });
