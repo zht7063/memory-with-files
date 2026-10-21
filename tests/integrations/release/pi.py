@@ -2,6 +2,9 @@
 import json, os, sys, subprocess, tempfile, threading, shutil, time
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+if len(sys.argv) < 2:
+ print(f'Usage: {sys.argv[0]} PI_PATH', file=sys.stderr)
+ sys.exit(2)
 repo=Path(__file__).resolve().parents[3]
 base=Path(tempfile.mkdtemp(prefix='mwf-v2-pi-')).resolve()
 pi=sys.argv[1]; node=shutil.which('node'); requests=[]; writes=0
@@ -33,7 +36,7 @@ def mwf(*args):
  r=subprocess.run([node,str(cli),*args],cwd=project,env=env,capture_output=True,text=True,timeout=30)
  assert r.returncode==0,(r.stdout,r.stderr);return json.loads(r.stdout)
 def session(trust=True):
- r=subprocess.run([pi,'--print','--offline','--approve' if trust else '--no-approve','--provider','fixture','--model','fixture','--no-skills','--no-context-files','--no-prompt-templates','--no-themes','Continue the synthetic project.'],cwd=project,env=env,capture_output=True,text=True,timeout=60)
+ r=subprocess.run([pi,'--print','--offline','--approve' if trust else '--no-approve','--provider','fixture','--model','fixture','--no-skills','--no-context-files','--no-prompt-templates','--no-themes','Continue the synthetic project.'],cwd=project,env=env,stdin=subprocess.DEVNULL,capture_output=True,text=True,timeout=60)
  (base/f'session-{time.time_ns()}.log').write_text(r.stdout+'\n'+r.stderr)
  assert r.returncode==0,(r.stdout,r.stderr)
 try:
@@ -42,19 +45,22 @@ try:
  assert not (project/'.mwf').exists(), 'Disabled discovery must not create memory state'
  mwf('init','--root',str(project),'--git-mode','track');mwf('attach','--root',str(project),'--harness','pi','--apply')
  mwf('add','--root',str(project),'--type','knowledge','--title','Seed','--summary','MWF_V2_HOST_SEED','--body','Synthetic startup memory')
- session();assert requests and requests[0]['seed'],requests
- assert any(n.endswith('mwf_add') for n in requests[0]['tools']),requests
+ start=len(requests);session();assert requests[start]['seed'],requests[start:]
+ assert any(n.endswith('mwf_add') for n in requests[start]['tools']),requests[start:]
  assert 'MWF_V2_HOST_SAVED' in json.dumps(mwf('recall','--root',str(project)))
  assert mwf('handoff','--root',str(project),'--action','read','--task','host-task')['ok']
  start=len(requests);session();assert requests[start]['saved'],requests[start:]
  start=len(requests);session(False);assert not requests[start]['seed'] and not any('mwf_' in n for n in requests[start]['tools'])
  mwf('detach','--root',str(project),'--harness','pi','--apply');start=len(requests);session();assert not requests[start]['seed'] and not any('mwf_' in n for n in requests[start]['tools'])
- # Removing the installed package leaves data intact and prevents automatic tools after restart.
- mwf('attach','--root',str(project),'--harness','pi','--apply')
+ # T09: detach -> host package removal -> fresh host -> reinstall -> attach.
+ preserved={str(p.relative_to(project)):p.read_bytes() for p in (project/'.mwf').rglob('*') if p.is_file() and (p.suffix=='.md' or '/handoffs/' in str(p) or '/contexts/' in str(p))}
  subprocess.run([pi,'remove',str(pkg),'--local','--approve'],cwd=project,env=env,capture_output=True,check=True)
  start=len(requests);session();assert not requests[start]['seed'] and not any('mwf_' in n for n in requests[start]['tools'])
  subprocess.run([pi,'install',str(pkg),'--local','--approve'],cwd=project,env=env,capture_output=True,check=True)
- mwf('rebind','--root',str(project),'--harness','pi','--apply');start=len(requests);session();assert requests[start]['saved']
- result={'status':'partial','pi_version':subprocess.check_output([pi,'--version'],text=True).strip(),'requests':requests,'evidence_dir':str(base),'limits':['Synthetic model endpoint, not billed model tokens','Compact/tree/resume/clear/reload, conflicting configuration, session replacement and slow/failed MCP require separate real-host scenarios']}
+ start=len(requests);session();assert not requests[start]['seed'] and not any('mwf_' in n for n in requests[start]['tools'])
+ mwf('attach','--root',str(project),'--harness','pi','--apply');start=len(requests);session();assert requests[start]['saved']
+ assert all((project/p).read_bytes()==content for p,content in preserved.items())
+ assert mwf('handoff','--root',str(project),'--action','read','--task','host-task')['ok']
+ result={'status':'partial','t09_cli':'partial','t09_gui':'not_run','t09_manual':'docs/validation/t09-host-sessions.md','pi_version':subprocess.check_output([pi,'--version'],text=True).strip(),'requests':requests,'evidence_dir':str(base),'limits':['Synthetic model endpoint, not billed model tokens','Compact/tree/resume/clear/reload, conflicting configuration, session replacement and slow/failed MCP require separate real-host scenarios']}
  (base/'evidence.json').write_text(json.dumps(result,indent=2));print(json.dumps(result))
 finally: server.shutdown()

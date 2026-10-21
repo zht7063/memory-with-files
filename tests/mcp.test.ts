@@ -13,6 +13,7 @@ import { spawnSync } from "node:child_process";
 import { Transaction } from "../dist/storage.js";
 import { receipt } from "../dist/integrations/shared/binding.js";
 import { identitySchema } from "../dist/core/identity.js";
+import { measure } from "../dist/context/output.js";
 const cli = fileURLToPath(new URL("../dist/cli.js", import.meta.url));
 test("real stdio tool calls validate roots, perform writes and return scoped bootstrap", async (t) => {
   const root = fs.realpathSync(
@@ -42,6 +43,36 @@ test("real stdio tool calls validate roots, perform writes and return scoped boo
     tools.tools.find((t) => t.name === "mwf_recall")?.annotations?.readOnlyHint,
     true,
   );
+  for (const tool of tools.tools)
+    assert.ok(!tool.inputSchema.required?.includes("project_root"));
+  const alias = path.join(other, "root-link");
+  fs.symlinkSync(root, alias, "dir");
+  for (const project_root of [
+    other,
+    alias,
+    `${root}/../${path.basename(root)}`,
+    `${root}/../${path.basename(other)}`,
+  ]) {
+    const rejected = await client.callTool({
+      name: "mwf_status",
+      arguments: { project_root },
+    });
+    assert.equal(rejected.isError, true);
+    assert.match(JSON.stringify(rejected), /ROOT_MISMATCH/);
+  }
+  fs.unlinkSync(alias);
+  for (const args of [{}, { project_root: root }]) {
+    const status = await client.callTool({
+      name: "mwf_status",
+      arguments: args,
+    });
+    assert.equal(status.isError, false);
+    assert.equal(
+      z.object({ project_root: z.string() }).parse(status.structuredContent)
+        .project_root,
+      root,
+    );
+  }
   let reply = await client.callTool({
     name: "mwf_status",
     arguments: { project_root: other },
@@ -79,6 +110,66 @@ test("real stdio tool calls validate roots, perform writes and return scoped boo
   assert.ok(
     result.data.entries.some((m) => m.summary === "Always verify setup"),
   );
+  const seed = execute("add", {
+    project_root: root,
+    type: "knowledge",
+    title: "Budget seed",
+    summary: "MCP_VISIBLE_SEED " + "detail ".repeat(40),
+    body: "MCP_VISIBLE_BODY " + "body detail ".repeat(2000),
+  });
+  assert.equal(seed.ok, true);
+  const id = z.object({ id: z.string() }).parse(seed.data).id;
+  for (let i = 0; i < 12; i++)
+    assert.equal(
+      execute("add", {
+        project_root: root,
+        type: "knowledge",
+        title: `Budget extra ${i}`,
+        body: "Additional seeded memory.",
+        summary: "MCP_VISIBLE_SEED " + "detail ".repeat(40),
+      }).ok,
+      true,
+    );
+  for (const name of ["bootstrap", "recall", "get"]) {
+    const response = await client.callTool({
+      name: `mwf_${name}`,
+      arguments: {
+        ...(name === "get"
+          ? { id }
+          : { query: "MCP_VISIBLE_SEED", limit: 100 }),
+        max_output_bytes: 2400,
+        max_reference_tokens: 700,
+      },
+    });
+    assert.equal(response.isError, false);
+    const text = z
+      .array(z.object({ type: z.literal("text"), text: z.string() }))
+      .parse(response.content)[0].text;
+    // Codex uses structuredContent whenever it is available.
+    const visible = response.structuredContent ?? JSON.parse(text);
+    assert.deepEqual(visible, JSON.parse(text));
+    assert.match(
+      JSON.stringify(visible),
+      name === "get" ? /MCP_VISIBLE_BODY/ : /MCP_VISIBLE_SEED/,
+    );
+    const data = z
+      .object({
+        data: z.object({
+          partial: z.literal(true),
+          omitted: z.object({ by_budget: z.number().positive() }),
+          budget: z.object({
+            used_reference_tokens: z.number(),
+            output_bytes: z.number(),
+          }),
+        }),
+      })
+      .parse(visible).data;
+    const measured = measure(JSON.stringify(visible));
+    assert.ok(measured.bytes <= 2400);
+    assert.ok(measured.reference_tokens <= 700);
+    assert.equal(data.budget.output_bytes, measured.bytes);
+    assert.equal(data.budget.used_reference_tokens, measured.reference_tokens);
+  }
   assert.equal(execute("doctor", { project_root: root }).ok, true);
 });
 
