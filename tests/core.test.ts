@@ -5,6 +5,7 @@ import path from "node:path";
 import os from "node:os";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { lifecycle } from "../dist/setup.js";
 import { execute as rawExecute } from "../dist/core.js";
 import { execute } from "./contracts.ts";
 import type { TestContext } from "node:test";
@@ -447,53 +448,30 @@ test("legacy schema-1 golden files preserve scoped recall", (t) => {
   assert.deepEqual(recall(), expected);
 });
 
-test("legacy adoption is explicit and preserves records and user content", (t) => {
+test("0.1 project: UNSUPPORTED_LEGACY_INSTALL on mutation, migrate, attach and doctor; nothing changes", (t) => {
   const root = legacyProject(t);
-  const expected = JSON.parse(
-    fs.readFileSync(path.join(legacyFixture, "recall.json"), "utf8"),
-  );
-  const record = path.join(root, expected[0].path);
-  const before = fs.readFileSync(record, "utf8");
-  const configPath = path.join(root, ".mwf/config.json");
-  const configBefore = fs.readFileSync(configPath, "utf8");
+  const snap = () =>
+    Object.fromEntries(
+      (fs.readdirSync(root, { recursive: true }) as string[])
+        .filter(
+          (f) =>
+            fs.statSync(path.join(root, f)).isFile() &&
+            !f.startsWith(".mwf/local/runtime.sqlite"),
+        )
+        .map((f) => [f, fs.readFileSync(path.join(root, f), "utf8")]),
+    );
+  const before = snap();
   assert.equal(
     execute("status", { project_root: root }).data.runtime_owner,
     "legacy",
   );
-  assert.throws(() => add(root), /migrate/);
-  execute("init", { project_root: root, git_mode: "track", dry_run: true });
-  assert.equal(fs.readFileSync(configPath, "utf8"), configBefore);
-  const agents = path.join(root, "AGENTS.md");
-  fs.writeFileSync(
-    agents,
-    "# User rules\nPreserve this.\n" + fs.readFileSync(agents, "utf8"),
+  const unsupported = (e: { code?: string; message?: string }) =>
+    e.code === "UNSUPPORTED_LEGACY_INSTALL" && /0\.2\.x/.test(e.message ?? "");
+  assert.throws(() => add(root), unsupported);
+  assert.throws(
+    () => execute("migrate", { project_root: root, apply: true }),
+    unsupported,
   );
-  const inbox = path.join(root, ".mwf/inbox.md");
-  const inboxBefore = fs.readFileSync(inbox, "utf8") + "\nUser intake note.\n";
-  fs.writeFileSync(inbox, inboxBefore);
-  execute("migrate", {
-    project_root: root,
-    from: "0.1",
-    apply: true,
-    legacy_stopped: true,
-  });
-  assert.equal(
-    execute("status", { project_root: root }).data.runtime_owner,
-    "mwf-typescript",
-  );
-  assert.equal(fs.readFileSync(record, "utf8"), before);
-  assert.equal(fs.readFileSync(inbox, "utf8"), inboxBefore);
-  assert.match(fs.readFileSync(agents, "utf8"), /Preserve this/);
-  assert.deepEqual(init(root).changed_files, []);
-  assert.equal(add(root).ok, true);
-  assert.equal(execute("doctor", { project_root: root }).ok, true);
-});
-
-test("migration refuses edited or ambiguous legacy blocks, preserving bytes", (t) => {
-  const root = legacyProject(t),
-    p = path.join(root, "AGENTS.md"),
-    before = fs.readFileSync(p, "utf8") + "\n<!-- memory-with-files:start -->";
-  fs.writeFileSync(p, before);
   assert.throws(
     () =>
       execute("migrate", {
@@ -502,9 +480,27 @@ test("migration refuses edited or ambiguous legacy blocks, preserving bytes", (t
         apply: true,
         legacy_stopped: true,
       }),
-    /markers/,
+    unsupported,
   );
-  assert.equal(fs.readFileSync(p, "utf8"), before);
+  for (const harness of ["pi", "codex"])
+    assert.throws(
+      () =>
+        lifecycle("attach", {
+          project_root: root,
+          harness,
+          plugin_root: process.cwd(),
+          apply: true,
+        }),
+      unsupported,
+    );
+  const doctor = execute("doctor", { project_root: root });
+  assert.equal(doctor.ok, false);
+  assert.ok(
+    (doctor.data as { errors: string[] }).errors.includes(
+      "UNSUPPORTED_LEGACY_INSTALL",
+    ),
+  );
+  assert.deepEqual(snap(), before);
 });
 test("every multi-file commit boundary recovers to one consistent result", (t) => {
   for (const stage of [

@@ -3,11 +3,9 @@
 // and every entry are frozen, and ManagedSurfaceId is a closed literal union.
 // storage/ is the only layer that validates paths against this list.
 //
-// Entries marked legacy are 0.1 artifacts still accepted by 0.2.x; PR-08 removes
-// them. PR-07 confirmed that 0.2 attach never installs `.agents/skills/*` (the
-// skills ship inside the Codex plugin / Pi package); those entries are 0.1
-// legacy too and stay only so 0.2 can still detach/migrate 0.1 receipts.
-export type ManagedSurfaceKind = "block" | "file" | "json";
+// 0.3: the 0.1 legacy paths (`.pi/mcp.json`, `.pi/extensions/mwf.js`,
+// `.agents/skills/*`) are no longer managed. 0.2 attach never wrote them.
+export type ManagedSurfaceKind = "block" | "file";
 type Surface = { readonly path: string; readonly kind: ManagedSurfaceKind };
 
 function surfaces<const T extends Record<string, Surface>>(
@@ -21,20 +19,6 @@ export const MANAGED_SURFACES = surfaces({
   "agents.block": { path: "AGENTS.md", kind: "block" },
   gitignore: { path: ".gitignore", kind: "file" },
   "codex.config.block": { path: ".codex/config.toml", kind: "block" },
-  /** legacy 0.1 skill copies (0.2 attach does not write them); removed in PR-08 */
-  "skill.memory-with-files": {
-    path: ".agents/skills/memory-with-files/SKILL.md",
-    kind: "file",
-  },
-  "skill.mwf-init": { path: ".agents/skills/mwf-init/SKILL.md", kind: "file" },
-  "skill.mwf-status": {
-    path: ".agents/skills/mwf-status/SKILL.md",
-    kind: "file",
-  },
-  /** legacy 0.1 Pi MCP config; removed in PR-08 */
-  "legacy.pi.mcp": { path: ".pi/mcp.json", kind: "json" },
-  /** legacy 0.1 Pi extension copy; removed in PR-08 */
-  "legacy.pi.extension": { path: ".pi/extensions/mwf.js", kind: "file" },
 });
 
 export type ManagedSurfaceId = keyof typeof MANAGED_SURFACES;
@@ -71,3 +55,16 @@ export function isMwfOwned(file: string) {
 export function surfaceOf(file: string): ManagedSurfaceId | undefined {
   return SURFACE_IDS.find((id) => MANAGED_SURFACES[id].path === file);
 }
+
+/** Resources a v2 receipt (0.2.x) could own that 0.3 no longer manages. They
+ * are recognised only so a v2 receipt still holding them fails closed with
+ * LEGACY_RESOURCE_PENDING instead of INVALID_CONFIG; never writable. */
+export const LEGACY_V2_RESOURCES = Object.freeze({
+  file: Object.freeze([
+    ".pi/extensions/mwf.js",
+    ".agents/skills/memory-with-files/SKILL.md",
+    ".agents/skills/mwf-init/SKILL.md",
+    ".agents/skills/mwf-status/SKILL.md",
+  ] as const),
+  json: Object.freeze([".pi/mcp.json"] as const),
+});

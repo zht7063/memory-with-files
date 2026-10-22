@@ -1,8 +1,7 @@
-// Compatibility entrypoint: compose lifecycle callbacks outside the Core layer.
+// Package entrypoint: compose host callbacks outside the Core layer.
 export * from "./core/index.js";
 import { execute as executeCore, operateWithHooks } from "./core/index.js";
 import { hostIssues } from "./integrations/registry.js";
-import { migrateIntegration } from "./lifecycle/migrate.js";
 // Host checks for status/doctor come from the adapters via the registry;
 // doctor also reports the conflicts attach refuses on (issue #20).
 export function execute(
@@ -10,12 +9,11 @@ export function execute(
 ) {
   return executeCore(op, input, {
     ...options,
-    migrateIntegration,
     hostIssues,
   });
 }
 export function operate(
   ...[tx, ...command]: Parameters<typeof import("./core/index.js").operate>
 ) {
-  return operateWithHooks(tx, { migrateIntegration, hostIssues }, ...command);
+  return operateWithHooks(tx, { hostIssues }, ...command);
 }

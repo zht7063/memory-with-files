@@ -4,7 +4,7 @@
 
 ## 文件
 
-- `setup/SKILL.md`（`mwf-setup`）：显式 status → init（选择 track/ignore）→ 可选 `migrate --from 0.1` → 预览后 attach（Codex 传 `--plugin-root`）→ 升级后 rebind → detach 的步骤；要求使用本包 runtime，不使用未知全局 MWF。Codex manifest 的 onboardingSkill 指向它。
+- `setup/SKILL.md`（`mwf-setup`）：显式 status → init（选择 track/ignore）→（0.1 项目或遗留资源：按错误提示先用 0.2.x 处理）→ 预览后 attach（Codex 传 `--plugin-root`）→ 升级后 rebind → detach 的步骤；要求使用本包 runtime，不使用未知全局 MWF。Codex manifest 的 onboardingSkill 指向它。
 - `mwf/SKILL.md`：记忆工具的使用说明。
 
 ## 约束
