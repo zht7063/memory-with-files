@@ -24,7 +24,7 @@ let output = "",
 const timer = setTimeout(() => {
   expired = true;
   child.kill("SIGKILL");
-}, 4700);
+}, 14_500);
 process.stdin.pipe(child.stdin);
 child.stdin.on("error", () => {});
 child.stdout.on("data", (chunk) => {

@@ -4,7 +4,7 @@
 
 ## 文件
 
-- `runner.ts`：hooks.json 调用的入口，派生 `worker.js` 子进程，4.7 秒未完成即终止（hook timeout 为 5 秒），输出超过 64 KiB 也终止；启动失败、超时或读取失败时输出简短提示，任务继续。
+- `runner.ts`：hooks.json 调用的入口，派生 `worker.js` 子进程，14.5 秒未完成即终止（hook timeout 为 15 秒；慢主机上 o200k tokenizer 初始化可达约 3 秒，5 秒预算会超时），输出超过 64 KiB 也终止；启动失败、超时或读取失败时输出简短提示，任务继续。
 - `worker.ts`：读取 hook 输入并调用 `handleHook`。
 - `hook.ts`：`handleHook`，处理 `SessionStart`（source startup/resume/clear/compact 时开新 epoch）与 `UserPromptSubmit`（有 prompt 时有界 recall），输出宿主 additionalContext；可选 `context_limits` 输入。
 - `notice.ts`：`failureNotice`，同会话同类错误只提示一次。

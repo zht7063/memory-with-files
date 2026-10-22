@@ -1,5 +1,5 @@
 """Installed product plugin against the bundled Codex runtime; not desktop GUI evidence."""
-import json, os, queue, shutil, subprocess, sys, tempfile, threading, time, tomllib
+import json, os, queue, shutil, subprocess, sys, tempfile, threading, time, tomllib, zipfile
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -27,7 +27,7 @@ class Endpoint(BaseHTTPRequestHandler):
 
 server=ThreadingHTTPServer(('127.0.0.1',0),Endpoint);threading.Thread(target=server.serve_forever,daemon=True).start()
 home=base/'home';home.mkdir();market=base/'market';(market/'.agents/plugins').mkdir(parents=True);plugin=market/'mwf';plugin.mkdir();project=base/'项目 A';project.mkdir()
-subprocess.run(['unzip','-q',str(repo/f'releases/mwf-codex-{VERSION}.zip'),'-d',str(plugin)],check=True)
+zipfile.ZipFile(repo/f'releases/mwf-codex-{VERSION}.zip').extractall(plugin)  # no external unzip dependency
 (market/'.agents/plugins/marketplace.json').write_text(json.dumps({'name':'mwf-v2','plugins':[{'name':'mwf','version':VERSION,'source':{'source':'local','path':'./mwf'},'policy':{'installation':'AVAILABLE','authentication':'ON_INSTALL'},'category':'Developer Tools'}]}))
 env={k:v for k,v in os.environ.items() if k in ['PATH','HOME','TMPDIR','LANG']};env['CODEX_HOME']=str(home)
 (home/'config.toml').write_text('model = "m0"\nmodel_provider = "m0"\n[model_providers.m0]\nname = "Local fixture"\nbase_url = "http://127.0.0.1:'+str(server.server_port)+'/v1"\nwire_api = "responses"\nrequires_openai_auth = false\nrequest_max_retries = 0\nstream_max_retries = 0\n[projects.'+json.dumps(str(project))+']\ntrust_level = "trusted"\n')
