@@ -9,7 +9,7 @@
 
 ## 组装
 
-`npm run pack:release` 执行 npm pack，把 tarball 解压为插件内 `runtime/`，复制本目录的 plugin.json 与 hooks、`assets/skills/` 为 `skills/`，用纯 Node 的 `scripts/lib/zip.ts`（按名称排序、固定 1980-01-01 时间戳）生成 `releases/mwf-codex-<version>.zip`，并写出 tarball 与 zip 的 SHA256SUMS 以及 `RELEASE-STATUS.json`（`publishable: false`）。不 publish。`tests/release.test.ts` 校验 zip 往返与包内 manifest/runtime 完整性。
+`npm run pack:release` 执行 npm pack，把 tarball 解压为插件内 `runtime/`，复制本目录的 plugin.json 与 hooks、`assets/skills/` 为 `skills/`，用纯 Node 的 `scripts/lib/zip.ts`（按名称排序、固定 1980-01-01 时间戳）生成 `releases/mwf-codex-<version>.zip`，并写出 tarball 与 zip 的 SHA256SUMS 以及 `RELEASE-STATUS.json`（`publishable` 由 Linux CLI harness 证据计算，见[发布判定标准](../../docs/release-criteria.md)）。不 publish。`tests/release.test.ts` 校验 zip 往返与包内 manifest/runtime 完整性。
 
 ## 使用
 

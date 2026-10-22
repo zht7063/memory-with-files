@@ -1,7 +1,9 @@
 """Installed product plugin against the bundled Codex runtime; not desktop GUI evidence."""
-import json, os, queue, shutil, subprocess, sys, tempfile, threading, time
+import json, os, queue, shutil, subprocess, sys, tempfile, threading, time, tomllib
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import evidence
 repo=Path(__file__).resolve().parents[3];base=Path(tempfile.mkdtemp(prefix='mwf-v2-codex-')).resolve();binary=sys.argv[1];requests=[]
 VERSION=json.loads((repo/'package.json').read_text())['version']
 class Endpoint(BaseHTTPRequestHandler):
@@ -29,23 +31,34 @@ subprocess.run(['unzip','-q',str(repo/f'releases/mwf-codex-{VERSION}.zip'),'-d',
 (market/'.agents/plugins/marketplace.json').write_text(json.dumps({'name':'mwf-v2','plugins':[{'name':'mwf','version':VERSION,'source':{'source':'local','path':'./mwf'},'policy':{'installation':'AVAILABLE','authentication':'ON_INSTALL'},'category':'Developer Tools'}]}))
 env={k:v for k,v in os.environ.items() if k in ['PATH','HOME','TMPDIR','LANG']};env['CODEX_HOME']=str(home)
 (home/'config.toml').write_text('model = "m0"\nmodel_provider = "m0"\n[model_providers.m0]\nname = "Local fixture"\nbase_url = "http://127.0.0.1:'+str(server.server_port)+'/v1"\nwire_api = "responses"\nrequires_openai_auth = false\nrequest_max_retries = 0\nstream_max_retries = 0\n[projects.'+json.dumps(str(project))+']\ntrust_level = "trusted"\n')
+def turn(args,root=project):
+ # Judge only the first model request of THIS exec (its main turn). Using requests[-1]
+ # was racy: late requests from a previous process (terminated app-server, secondary
+ # model calls) could land last and make T09 `saved` checks flaky.
+ start=len(requests);r=command(args,root);new=requests[start:]
+ assert new,('no model request from exec',r.stderr)
+ return r,new[0]
 def command(args,root=project):
- r=subprocess.run([binary,*args],cwd=root,env=env,capture_output=True,text=True,timeout=60);assert r.returncode==0,(r.stdout,r.stderr);return r
+ r=subprocess.run([binary,*args],cwd=root,env=env,stdin=subprocess.DEVNULL,capture_output=True,text=True,timeout=60);assert r.returncode==0,(r.stdout,r.stderr);return r
 try:
  for args in [['plugin','marketplace','add',str(market),'--json'],['plugin','add','mwf@mwf-v2','--json']]:
   r=command(args);(base/('install-'+str(time.time_ns())+'.json')).write_text(r.stdout)
  installed=next((p.parent for p in home.rglob('plugin.json') if (p.parent/'runtime/dist/cli.js').exists()),plugin)
  cli=installed/'runtime/dist/cli.js'
  def mwf(*args):
-  r=subprocess.run([shutil.which('node'),str(cli),*args],cwd=project,env=env,capture_output=True,text=True,timeout=30);assert r.returncode==0,(r.stdout,r.stderr);return json.loads(r.stdout)
+  r=subprocess.run([shutil.which('node'),str(cli),*args],cwd=project,env=env,stdin=subprocess.DEVNULL,capture_output=True,text=True,timeout=30);assert r.returncode==0,(r.stdout,r.stderr);return json.loads(r.stdout)
  mwf('init','--root',str(project),'--git-mode','track');mwf('attach','--root',str(project),'--harness','codex','--plugin-root',str(installed),'--apply')
  mwf('add','--root',str(project),'--type','knowledge','--title','Seed','--summary','MWF_V2_CODEX_SEED','--body','Synthetic committed memory')
  args=['exec','--skip-git-repo-check','--ephemeral','--json','--sandbox','workspace-write','-C',str(project),'Synthetic fixture; respond briefly.']
- r=command(args);(base/'untrusted.log').write_text(r.stdout+r.stderr);assert requests and not requests[-1]['marker']
- r=command([*args[:-1],'--dangerously-bypass-hook-trust',args[-1]]);(base/'trusted.log').write_text(r.stdout+r.stderr);assert requests[-1]['marker'],r.stderr
+ r,q=turn(args);(base/'untrusted.log').write_text(r.stdout+r.stderr);assert not q['marker']
+ r,q=turn([*args[:-1],'--dangerously-bypass-hook-trust',args[-1]]);(base/'trusted.log').write_text(r.stdout+r.stderr);assert q['marker'],r.stderr
+ cfg=tomllib.loads((project/'.codex/config.toml').read_text())['mcp_servers']['mwf']
+ probe_tools,probe_status=evidence.mcp_probe([cfg['command'],*cfg['args']],project,env,project)
+ assert len(probe_tools)==evidence.EXPECTED_TOOLS and probe_status['ok'],(probe_tools,probe_status)
+ host_tools=sorted(set(q['mwf_tools']))
  copied=base/'项目 B';shutil.copytree(project,copied)
  with (home/'config.toml').open('a') as f:f.write('\n[projects.'+json.dumps(str(copied))+']\ntrust_level = "trusted"\n')
- copy_args=[str(copied) if a==str(project) else a for a in args];r=command([*copy_args[:-1],'--dangerously-bypass-hook-trust',copy_args[-1]],copied);assert not requests[-1]['marker']
+ copy_args=[str(copied) if a==str(project) else a for a in args];r,q=turn([*copy_args[:-1],'--dangerously-bypass-hook-trust',copy_args[-1]],copied);assert not q['marker']
  # Exercise product tools through the real app-server, including a still-live revoked connection.
  app=subprocess.Popen([binary,'app-server','--stdio'],cwd=project,env=env,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=open(base/'app-server.log','w'),text=True)
  inbox=queue.Queue()
@@ -82,20 +95,20 @@ try:
   app.terminate()
   try:app.wait(timeout=10)
   except subprocess.TimeoutExpired:app.kill();app.wait()
- r=command([*args[:-1],'--dangerously-bypass-hook-trust',args[-1]]);assert requests[-1]['saved']
- mwf('detach','--root',str(project),'--harness','codex','--apply');r=command([*args[:-1],'--dangerously-bypass-hook-trust',args[-1]]);assert not requests[-1]['marker'] and not requests[-1]['saved'] and not requests[-1]['mwf_tools']
+ r,q=turn([*args[:-1],'--dangerously-bypass-hook-trust',args[-1]]);assert q['saved']
+ mwf('detach','--root',str(project),'--harness','codex','--apply');r,q=turn([*args[:-1],'--dangerously-bypass-hook-trust',args[-1]]);assert not q['marker'] and not q['saved'] and not q['mwf_tools']
  # T09 actual bundled CLI package uninstall/reinstall; fresh exec is the CLI reload boundary.
  preserved={str(p.relative_to(project)):p.read_bytes() for p in (project/'.mwf').rglob('*') if p.is_file() and (p.suffix=='.md' or '/handoffs/' in str(p) or '/contexts/' in str(p))}
  command(['plugin','remove','mwf@mwf-v2','--json'])
- r=command([*args[:-1],'--dangerously-bypass-hook-trust',args[-1]]);assert not requests[-1]['marker'] and not requests[-1]['saved'] and not requests[-1]['mwf_tools']
+ r,q=turn([*args[:-1],'--dangerously-bypass-hook-trust',args[-1]]);assert not q['marker'] and not q['saved'] and not q['mwf_tools']
  command(['plugin','add','mwf@mwf-v2','--json'])
  installed=next(p.parent for p in home.rglob('plugin.json') if (p.parent/'runtime/dist/cli.js').exists())
  cli=installed/'runtime/dist/cli.js'
- r=command([*args[:-1],'--dangerously-bypass-hook-trust',args[-1]]);assert not requests[-1]['marker'] and not requests[-1]['saved'] and not requests[-1]['mwf_tools']
+ r,q=turn([*args[:-1],'--dangerously-bypass-hook-trust',args[-1]]);assert not q['marker'] and not q['saved'] and not q['mwf_tools']
  mwf('attach','--root',str(project),'--harness','codex','--plugin-root',str(installed),'--apply')
- r=command([*args[:-1],'--dangerously-bypass-hook-trust',args[-1]]);assert requests[-1]['saved']
+ r,q=turn([*args[:-1],'--dangerously-bypass-hook-trust',args[-1]]);assert q['saved']
  assert all((project/p).read_bytes()==content for p,content in preserved.items())
  assert mwf('handoff','--root',str(project),'--action','read','--task','codex-task')['ok']
- result={'status':'partial','t09_cli':'partial','t09_gui':'not_run','t09_manual':'docs/validation/t09-host-sessions.md','scope':'bundled_cli_app_server','bundled_runtime_status':'pass','codex_desktop':'not_run','desktop_evidence':'docs/validation/codex-desktop-t08.json','runtime':subprocess.check_output([binary,'--version'],text=True).strip(),'requests':requests,'evidence_dir':str(base),'limits':['Bundled runtime only; GUI not tested','One-invocation hook trust bypass is test-only, not GUI trust evidence','Synthetic model endpoint; real billed model costs not measured']}
- (base/'evidence.json').write_text(json.dumps(result,indent=2));print(json.dumps(result))
+ calls=[{'tool':'mwf_status','via':'stdio tools/call','ok':bool(probe_status['ok'])},{'tool':'mwf_status','via':'codex app-server mcpServer/tool/call','ok':evidence.tool_ok(called)},{'tool':'mwf_add','via':'codex app-server mcpServer/tool/call','ok':evidence.tool_ok(saved)},{'tool':'mwf_handoff','via':'codex app-server mcpServer/tool/call','ok':evidence.tool_ok(handoff)}]
+ evidence.write('codex_cli',{'status':'pass' if all(c['ok'] for c in calls) else 'fail','label':'measured','host':'codex-cli','host_version':subprocess.check_output([binary,'--version'],stdin=subprocess.DEVNULL,text=True).strip(),'tool_count':len(probe_tools),'tools':probe_tools,'host_tools':host_tools,'tool_calls':calls,'checks':['plugin install','trusted/untrusted hook gating','copied project isolation','app-server product tool calls','detach revokes live connection','plugin remove/reinstall preserves memory'],'evidence_dir':str(base),'limits':['Linux CLI only: Codex desktop GUI not run','Synthetic model endpoint; no billed model tokens','Hook trust bypass is test-only']})
 finally:server.shutdown()

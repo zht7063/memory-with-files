@@ -2,6 +2,8 @@
 import json, os, sys, subprocess, tempfile, threading, shutil, time
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import evidence
 if len(sys.argv) < 2:
  print(f'Usage: {sys.argv[0]} PI_PATH', file=sys.stderr)
  sys.exit(2)
@@ -34,34 +36,38 @@ env={k:v for k,v in os.environ.items() if k in ['PATH','HOME','TMPDIR','LANG']};
 subprocess.run(['tar','-xzf',str(repo/f'releases/zht7063-mwf-{VERSION}.tgz'),'-C',str(base)],check=True)
 pkg=base/'package';cli=pkg/'dist/cli.js'
 def mwf(*args):
- r=subprocess.run([node,str(cli),*args],cwd=project,env=env,capture_output=True,text=True,timeout=30)
+ r=subprocess.run([node,str(cli),*args],cwd=project,env=env,stdin=subprocess.DEVNULL,capture_output=True,text=True,timeout=30)
  assert r.returncode==0,(r.stdout,r.stderr);return json.loads(r.stdout)
 def session(trust=True):
  r=subprocess.run([pi,'--print','--offline','--approve' if trust else '--no-approve','--provider','fixture','--model','fixture','--no-skills','--no-context-files','--no-prompt-templates','--no-themes','Continue the synthetic project.'],cwd=project,env=env,stdin=subprocess.DEVNULL,capture_output=True,text=True,timeout=60)
  (base/f'session-{time.time_ns()}.log').write_text(r.stdout+'\n'+r.stderr)
  assert r.returncode==0,(r.stdout,r.stderr)
 try:
- subprocess.run([pi,'install',str(pkg),'--local','--approve'],cwd=project,env=env,capture_output=True,check=True)
+ subprocess.run([pi,'install',str(pkg),'--local','--approve'],cwd=project,env=env,stdin=subprocess.DEVNULL,capture_output=True,check=True)
  start=len(requests);session();assert not requests[start]['seed'] and not any('mwf_' in n for n in requests[start]['tools'])
  assert not (project/'.mwf').exists(), 'Disabled discovery must not create memory state'
  mwf('init','--root',str(project),'--git-mode','track');mwf('attach','--root',str(project),'--harness','pi','--apply')
  mwf('add','--root',str(project),'--type','knowledge','--title','Seed','--summary','MWF_V2_HOST_SEED','--body','Synthetic startup memory')
  start=len(requests);session();assert requests[start]['seed'],requests[start:]
  assert any(n.endswith('mwf_add') for n in requests[start]['tools']),requests[start:]
- assert 'MWF_V2_HOST_SAVED' in json.dumps(mwf('recall','--root',str(project)))
- assert mwf('handoff','--root',str(project),'--action','read','--task','host-task')['ok']
+ host_tools=sorted(n for n in requests[start]['tools'] if 'mwf_' in n)
+ probe_tools,probe_status=evidence.mcp_probe([node,str(cli),'mcp','--root',str(project),'--harness','pi','--binding-generation',evidence.binding_generation(project,'pi'),'--profile','agent'],project,env,project)
+ assert len(probe_tools)==evidence.EXPECTED_TOOLS and probe_status['ok'],(probe_tools,probe_status)
+ add_ok='MWF_V2_HOST_SAVED' in json.dumps(mwf('recall','--root',str(project)))
+ handoff_ok=bool(mwf('handoff','--root',str(project),'--action','read','--task','host-task')['ok'])
+ assert add_ok and handoff_ok
  start=len(requests);session();assert requests[start]['saved'],requests[start:]
  start=len(requests);session(False);assert not requests[start]['seed'] and not any('mwf_' in n for n in requests[start]['tools'])
  mwf('detach','--root',str(project),'--harness','pi','--apply');start=len(requests);session();assert not requests[start]['seed'] and not any('mwf_' in n for n in requests[start]['tools'])
  # T09: detach -> host package removal -> fresh host -> reinstall -> attach.
  preserved={str(p.relative_to(project)):p.read_bytes() for p in (project/'.mwf').rglob('*') if p.is_file() and (p.suffix=='.md' or '/handoffs/' in str(p) or '/contexts/' in str(p))}
- subprocess.run([pi,'remove',str(pkg),'--local','--approve'],cwd=project,env=env,capture_output=True,check=True)
+ subprocess.run([pi,'remove',str(pkg),'--local','--approve'],cwd=project,env=env,stdin=subprocess.DEVNULL,capture_output=True,check=True)
  start=len(requests);session();assert not requests[start]['seed'] and not any('mwf_' in n for n in requests[start]['tools'])
- subprocess.run([pi,'install',str(pkg),'--local','--approve'],cwd=project,env=env,capture_output=True,check=True)
+ subprocess.run([pi,'install',str(pkg),'--local','--approve'],cwd=project,env=env,stdin=subprocess.DEVNULL,capture_output=True,check=True)
  start=len(requests);session();assert not requests[start]['seed'] and not any('mwf_' in n for n in requests[start]['tools'])
  mwf('attach','--root',str(project),'--harness','pi','--apply');start=len(requests);session();assert requests[start]['saved']
  assert all((project/p).read_bytes()==content for p,content in preserved.items())
  assert mwf('handoff','--root',str(project),'--action','read','--task','host-task')['ok']
- result={'status':'partial','t09_cli':'partial','t09_gui':'not_run','t09_manual':'docs/validation/t09-host-sessions.md','pi_version':subprocess.check_output([pi,'--version'],text=True).strip(),'requests':requests,'evidence_dir':str(base),'limits':['Synthetic model endpoint, not billed model tokens','Compact/tree/resume/clear/reload, conflicting configuration, session replacement and slow/failed MCP require separate real-host scenarios']}
- (base/'evidence.json').write_text(json.dumps(result,indent=2));print(json.dumps(result))
+ calls=[{'tool':'mwf_status','via':'stdio tools/call','ok':bool(probe_status['ok'])},{'tool':'mwf_add','via':'pi --print model tool_call (fixture-driven), verified by recall','ok':add_ok},{'tool':'mwf_handoff','via':'pi --print model tool_call (fixture-driven), verified by handoff read','ok':handoff_ok}]
+ evidence.write('pi_cli',{'status':'pass' if all(c['ok'] for c in calls) and writes==2 else 'fail','label':'measured','host':'pi','host_version':subprocess.check_output([pi,'--version'],stdin=subprocess.DEVNULL,text=True).strip(),'tool_count':len(probe_tools),'tools':probe_tools,'host_tools':host_tools,'tool_calls':calls,'checks':['pi install --local','disabled discovery creates no state','attach injects memory and mwf tools','--no-approve hides tools','detach/remove/reinstall/attach preserves memory'],'evidence_dir':str(base),'limits':['Linux CLI only (pi --print)','Synthetic model endpoint; no billed model tokens','compact/tree/resume/reload scenarios not covered']})
 finally: server.shutdown()

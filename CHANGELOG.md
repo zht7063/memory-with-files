@@ -12,7 +12,12 @@
 ### 重构
 
 - 分层为 contracts → storage → retrieval/context → core → integrations → lifecycle → cli/mcp；`HarnessAdapter` 契约（`contracts/harness.ts`）与 `integrations/registry.ts` 统一适配器访问；封闭受管白名单 `contracts/managed-surface.ts`，仅 storage 校验写入。见 [架构](docs/architecture.md)。
-- 发行产物：`zht7063-mwf-0.3.0.tgz`、`mwf-codex-0.3.0.zip`、`SHA256SUMS`、`RELEASE-STATUS.json`（`publishable: false`）；产物名由 package.json 版本派生。
+- 发行产物：`zht7063-mwf-0.3.0.tgz`、`mwf-codex-0.3.0.zip`、`SHA256SUMS`、`RELEASE-STATUS.json`；产物名由 package.json 版本派生。
+
+### 发布标准变更
+
+- **发布判定标准已变更**为 [linux-cli-harness/1](docs/release-criteria.md)：移除真实环境验收要求（44 项证据、两个真实宿主、桌面、macOS、性能报告）；Linux 命令行中 Codex CLI 与 Pi harness 对同一 commit 全部通过即可发布。`pack:release` 依据 `releases/evidence/*.json` 计算 `publishable`，证据缺失或任一失败即为 `false`。
+- 未验证项：Codex 桌面 GUI、macOS、性能报告、真实（计费）模型宿主。本版本不声称已完全验证。
 
 ### 修复
 
@@ -20,7 +25,7 @@
 
 相关 PR：[#17](https://github.com/zht7063/memory-with-files/pull/17)、[#21](https://github.com/zht7063/memory-with-files/pull/21), [#22](https://github.com/zht7063/memory-with-files/pull/22), [#23](https://github.com/zht7063/memory-with-files/pull/23), [#24](https://github.com/zht7063/memory-with-files/pull/24), [#25](https://github.com/zht7063/memory-with-files/pull/25), [#26](https://github.com/zht7063/memory-with-files/pull/26), [#27](https://github.com/zht7063/memory-with-files/pull/27), [#28](https://github.com/zht7063/memory-with-files/pull/28)。
 
-发布仍受真实宿主验收约束；Codex CLI 与桌面为 not_run，本条不表示已满足发布资格。
+发布资格以 `RELEASE-STATUS.json` 计算结果为准（见 [发布判定标准](docs/release-criteria.md)）；桌面、macOS、性能与真实宿主仍未验证。
 
 ## 0.2.0 — 未发布
 
