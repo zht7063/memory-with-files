@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { zipDirectory } from "./lib/zip.ts";
 import { extractTgz, tgzDirectory } from "./lib/tgz.ts";
+import { decide } from "./lib/release-decision.ts";
 const root = fileURLToPath(new URL("../", import.meta.url));
 const pkg = JSON.parse(
   fs.readFileSync(path.join(root, "package.json"), "utf8"),
@@ -69,22 +70,37 @@ try {
       )
       .join("\n") + "\n";
   fs.writeFileSync(path.join(out, "SHA256SUMS"), sums);
+  const commit = execFileSync("git", ["rev-parse", "HEAD"], {
+    cwd: root,
+    encoding: "utf8",
+  }).trim();
+  const porcelain = execFileSync(
+    "git",
+    ["status", "--porcelain", "--untracked-files=all"],
+    { cwd: root, encoding: "utf8" },
+  )
+    .split("\n")
+    .filter((line) => line.trim() !== "");
+  const decision = decide(root, commit, porcelain);
   fs.writeFileSync(
     path.join(out, "RELEASE-STATUS.json"),
     JSON.stringify(
       {
         version: pkg.version,
         artifacts: [path.basename(tgz), path.basename(zip)],
-        publishable: false,
-        reason:
-          "Requires complete 44-item evidence, both real hosts, performance report and desktop workflow verification.",
+        ...decision,
+        reason: decision.publishable
+          ? "All Linux CLI harnesses passed for this commit (criteria linux-cli-harness/1)."
+          : (decision.working_tree.reason ??
+            "Linux CLI harness evidence missing, stale or failing; see items."),
       },
       null,
       2,
     ) + "\n",
   );
   console.log(
-    sums + "Artifacts assembled; release approval gates are not implied.",
+    sums +
+      `publishable: ${decision.publishable} (${decision.items.map((i) => `${i.item}=${i.status}`).join(", ")})`,
   );
 } finally {
   fs.rmSync(scratch, { recursive: true, force: true });

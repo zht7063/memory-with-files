@@ -5,11 +5,11 @@
 ## 内容
 
 - `plugin.json`：插件名 `mwf`，`extensions.com.openai` 声明 `hooks: ./hooks/hooks.json` 与 `onboardingSkill: ./skills/setup/SKILL.md`。`version` 为 `0.3.0`，打包时由 `scripts/pack-release.ts` 以 package.json 的版本覆盖，保证与 runtime 一致。
-- `hooks/hooks.json`：SessionStart（matcher `startup|resume|clear|compact`）与 UserPromptSubmit 调用 `runtime/dist/integrations/codex/runner.js`，timeout 5 秒。
+- `hooks/hooks.json`：SessionStart（matcher `startup|resume|clear|compact`）与 UserPromptSubmit 调用 `runtime/dist/integrations/codex/runner.js`，timeout 15 秒（0.3.0 起由 5 秒上调；runner 在 14.5 秒终止读取）。每条消息都会触发 UserPromptSubmit，因此在慢机器上每条消息最多可能等待约 15 秒；快机器不受影响。
 
 ## 组装
 
-`npm run pack:release` 执行 npm pack，把 tarball 解压为插件内 `runtime/`，复制本目录的 plugin.json 与 hooks、`assets/skills/` 为 `skills/`，用纯 Node 的 `scripts/lib/zip.ts`（按名称排序、固定 1980-01-01 时间戳）生成 `releases/mwf-codex-<version>.zip`，并写出 tarball 与 zip 的 SHA256SUMS 以及 `RELEASE-STATUS.json`（`publishable: false`）。不 publish。`tests/release.test.ts` 校验 zip 往返与包内 manifest/runtime 完整性。
+`npm run pack:release` 执行 npm pack，把 tarball 解压为插件内 `runtime/`，复制本目录的 plugin.json 与 hooks、`assets/skills/` 为 `skills/`，用纯 Node 的 `scripts/lib/zip.ts`（按名称排序、固定 1980-01-01 时间戳）生成 `releases/mwf-codex-<version>.zip`，并写出 tarball 与 zip 的 SHA256SUMS 以及 `RELEASE-STATUS.json`（`publishable` 由 Linux CLI harness 证据计算，见[发布判定标准](../../docs/release-criteria.md)）。不 publish。`tests/release.test.ts` 校验 zip 往返与包内 manifest/runtime 完整性。
 
 ## 使用
 

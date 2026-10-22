@@ -35,7 +35,7 @@ node /absolute/mwf-install/package/dist/cli.js attach --root "$PWD" --harness pi
 
 ## Codex 插件
 
-使用 `npm run pack:release` 生成的 `releases/mwf-codex-0.3.0.zip`。包内包含版本一致的 `plugin.json`、`runtime/package.json`、编译后的 `runtime/dist`、捆绑依赖、hooks 和 skills，可直接解压安装。zip 由纯 Node 写出（条目按名称排序、时间戳固定为 1980-01-01），不依赖系统 `zip`；同目录的 `RELEASE-STATUS.json` 标记 `publishable: false`。仓库内 `packaging/codex/` 只是组装来源，安装请用 zip。
+使用 `npm run pack:release` 生成的 `releases/mwf-codex-0.3.0.zip`。包内包含版本一致的 `plugin.json`、`runtime/package.json`、编译后的 `runtime/dist`、捆绑依赖、hooks 和 skills，可直接解压安装。zip 由纯 Node 写出（条目按名称排序、时间戳固定为 1980-01-01），不依赖系统 `zip`；同目录的 `RELEASE-STATUS.json` 按 [发布判定标准](release-criteria.md) 由 Linux CLI harness 证据计算 `publishable`。仓库内 `packaging/codex/` 只是组装来源，安装请用 zip。
 
 将 zip 解压到稳定插件目录，经宿主正常插件安装入口安装并信任 hooks。使用**安装后插件缓存内** runtime 的绝对路径，而非 checkout 或全局同名命令：
 

@@ -196,6 +196,14 @@ test(
       fs.readFileSync("releases/RELEASE-STATUS.json", "utf8"),
     );
     assert.ok(status.artifacts.includes(filename));
+    assert.equal(status.criteria, "linux-cli-harness/1");
+    assert.equal(typeof status.publishable, "boolean");
+    assert.equal(
+      status.publishable,
+      status.working_tree.clean &&
+        status.items.every((i: { status: string }) => i.status === "pass"),
+    );
+    assert.ok(status.unverified.length >= 4);
     const files = unzip(
       fs.readFileSync(`releases/mwf-codex-${pkg.version}.zip`),
     );

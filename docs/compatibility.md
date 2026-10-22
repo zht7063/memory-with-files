@@ -10,7 +10,8 @@
 | receipt | v3 | 读取 v2 时内存升级；首个 `--apply` 写入 v3 后 0.2.x 无法读取，不可降级 |
 | 0.1 安装 | 不支持 | `UNSUPPORTED_LEGACY_INSTALL`，不写文件；先用 0.2.x 迁移 |
 | 0.1 遗留资源（`.pi/*`、`.agents/skills/*`） | 不再受管 | v2 receipt 仍拥有时报 `LEGACY_RESOURCE_PENDING`；先用 0.2.x detach |
-| 真实宿主（Pi、Codex CLI、Codex 桌面） | 沿用下方 0.2.0 结论 | 0.3.0 产物尚未重新做真实宿主验收；Codex CLI 与桌面为 not_run |
+| 发布判定 | [linux-cli-harness/1](release-criteria.md) | 标准已变更：Linux 命令行 Codex CLI 与 Pi harness 通过即可发布；不再要求真实宿主、桌面、macOS、性能报告 |
+| Codex 桌面、macOS、性能、真实计费宿主 | 未验证 | 不属于发布门槛，亦不声称支持已验证 |
 
 以下各节为历史记录，不随 0.3.0 改写。
 
@@ -67,7 +68,7 @@ Node.js ≥22.19.0 是目标运行要求；本次仅使用 Node 26.8.2，最低�
 - `fail`：已运行但不满足通过条件，必须保留反例。
 - `not_run`：未运行，包括环境不具备；不得当作测试通过。
 - 阶段被环境或能力阻塞时标 `blocked`，不采用规则文件注入回退。
-- 发布前，必需验收项不得停留在 not_run；可选宿主维持“未验证／不声明支持”。
+- 0.3.0 起发布前，[发布判定标准](release-criteria.md) 中的 Linux CLI harness 项不得为 not_run 或 fail；其他宿主维持“未验证／不声明支持”。
 
 ## 2026-10-16 0.2.0 实施验证（不覆盖历史报告）
 

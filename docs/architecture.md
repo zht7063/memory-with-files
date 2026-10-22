@@ -95,7 +95,7 @@ M1 沿用基线工具链，未来 npm bin 指向 `dist/cli.js`，Pi 声明指向
 
 M5/M6 从同次 npm 产物生成 Codex runtime，不维护第二份实现。manifest、runtime 和 Pi 资产版本一致；运行依赖与 tokenizer 词表离线可用。宿主 Pi 不随 MWF 打包，Node 可执行文件仍是外部前置条件。
 
-真实支持状态只看 [兼容矩阵](compatibility.md) 和包验收证据，不由本架构文档推导。
+真实支持状态只看 [兼容矩阵](compatibility.md) 和包验收证据，不由本架构文档推导。发布资格由 `scripts/lib/release-decision.ts` 按 [发布判定标准](release-criteria.md) 计算。
 
 ## 0.3.0 当前实现落点
 

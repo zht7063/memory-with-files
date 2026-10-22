@@ -16,3 +16,6 @@ node_modules/
 
 # Machine-local MWF state (not shared memory records)
 /.mwf/local/
+
+# Python bytecode from release harnesses
+__pycache__/

@@ -37,10 +37,11 @@
 
 以下文档保留原文，仅加历史说明；其中文件名与流程早于 0.3.0。
 
-- [0.2.0 构建计划书](build-plan-0.2.0.md)：M0–M6 工作包、阶段门槛、全部 44 项验收编号追踪和证据格式。
+- [0.2.0 构建计划书](build-plan-0.2.0.md)：M0–M6 工作包、阶段门槛、全部 44 项验收编号追踪和证据格式（历史；0.3.0 起发布标准见 [发布判定标准](release-criteria.md)）。
 - [0.1 → 0.2 迁移说明](migration-0.2.0.md)：需用 0.2.x 执行；0.3.0 不支持 0.1 迁移。
 - 以下验证记录均为 0.3.0 前结果。
-- [实施验收记录](validation/implementation-0.2.0.md)：当前结果、44 项逐条追踪、剩余发布阻塞。
+- [发布判定标准](release-criteria.md)：0.3.0 起的 linux-cli-harness/1 规则、证据文件与未验证项。
+- [实施验收记录](validation/implementation-0.2.0.md)：0.2.0 历史结果与 44 项逐条追踪（0.3.0 起不再作为发布门槛）。
 - [T04 上下文事件预期](validation/context-events.md)：Pi/Codex 事件与 epoch 行为的自动化测试预期，非真实宿主证据。
 - [桌面人工验收](validation/desktop-checklist.md)：可复现操作与需要记录的证据。
 - [T07 Pi 验证](validation/t07-pi.md)：真实宿主 `@earendil-works/pi-coding-agent` 1.3.0 的结果。

@@ -160,7 +160,7 @@
 **前置：** M4 verified，M0 的 Codex 桌面构建能力已确认。
 
 - [ ] M5.1 生成单源 root manifest、hooks 和包内 setup skill；从同次 npm 产物组装完整 runtime，不要求全局 MWF。
-- [ ] M5.2 SessionStart 直接恢复，UserPromptSubmit 有界 recall；实现 5 秒读取截止时间、简短可见错误和会话级提示去重。
+- [ ] M5.2 SessionStart 直接恢复，UserPromptSubmit 有界 recall；实现 5 秒读取截止时间、简短可见错误和会话级提示去重。（0.3.0 变更：截止时间上调为 hook 15 秒 / runner 14.5 秒，见 [CHANGELOG](../CHANGELOG.md)。）
 - [ ] M5.3 attach 写自有 `.codex/config.toml` MCP 条目，不固定 cwd/session ID；启动时先用独立宿主 cwd 验证 root，再读记忆。
 - [ ] M5.4 覆盖 MCP 未 ready、hooks 未信任、复制／移动项目、插件路径变化及升级 rebind；hook 只诊断，不暗改配置。
 - [ ] M5.5 从本次插件包正常安装，验证包内 setup、自动读、工具写、resume/clear/compact、停用重载及重装恢复；记录 G09 模型输入证据。
