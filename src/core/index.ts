@@ -1,4 +1,4 @@
-import { records, validRecords } from "../storage/records.js";
+import { validRecords } from "../storage/records.js";
 import { recallRecords, eligible, tokens } from "../retrieval/index.js";
 export { recallRecords, eligible } from "../retrieval/index.js";
 import { resolveSession } from "./identity.js";
@@ -26,7 +26,6 @@ import {
   canonicalRoot,
   hash,
   MWFError,
-  read,
   recover,
   safePath,
   Transaction,
@@ -37,9 +36,8 @@ import {
   ALL_DIRS,
   boundaries,
   date,
-  emptyScope,
   managed,
-  MemoryRecord,
+  type MemoryRecord,
   parseRecord,
   RECORD_DIRS,
   render,

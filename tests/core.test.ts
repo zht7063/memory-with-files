@@ -10,7 +10,6 @@ import { execute } from "./contracts.ts";
 import type { TestContext } from "node:test";
 import { z } from "zod";
 
-import { Transaction, withProjectLock } from "../dist/storage.js";
 const cli = fileURLToPath(new URL("../dist/cli.js", import.meta.url));
 const core = fileURLToPath(new URL("../dist/core.js", import.meta.url));
 const legacyFixture = fileURLToPath(
