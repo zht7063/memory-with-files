@@ -6,6 +6,9 @@ import os from "node:os";
 import path from "node:path";
 import { adapters, adapterFor } from "../dist/integrations/registry.js";
 import { codexAdapter, block } from "../dist/integrations/codex/adapter.js";
+import { piAdapter } from "../dist/integrations/pi/adapter.js";
+import { hostIssues } from "../dist/integrations/registry.js";
+import { createHash } from "node:crypto";
 import { HARNESS_IDS, isHarnessId } from "../dist/contracts/harness.js";
 import {
   MANAGED_SURFACES,
@@ -41,6 +44,11 @@ test("registry: ids match, adapters frozen, surfaces are a subset of the whiteli
       assert.ok(SURFACE_IDS.includes(s), `${id}: ${s}`);
   }
   assert.equal(adapterFor("codex"), codexAdapter);
+  assert.equal(adapterFor("pi"), piAdapter);
+  assert.deepEqual(Object.keys(adapters).sort(), [...HARNESS_IDS].sort());
+  // Surfaces are owned by at most one adapter.
+  const all = Object.values(adapters).flatMap((a) => [...a!.managedSurfaces]);
+  assert.equal(new Set(all).size, all.length);
   assert.deepEqual(codexAdapter.managedSurfaces, ["codex.config.block"]);
   assert.equal(codexAdapter.contextInjection, "hook-process");
 });
@@ -83,7 +91,7 @@ test("codex planAttach plans the managed block without touching disk", () => {
     { generation: "g1", owned: [] },
   )[0]!;
   assert.equal(merged.after, `model = "x"\n${text}\n`);
-  assert.equal(merged.resource!.created, false);
+  assert.equal((merged.resource as { created: boolean }).created, false);
 });
 
 test("codex planAttach refuses unowned or modified mwf entries", () => {
@@ -116,9 +124,12 @@ test("codex planAttach refuses unowned or modified mwf entries", () => {
     runtime,
     { generation: "g2", owned: [first.resource!] },
   )[0]!;
-  assert.equal(again.resource!.created, true);
+  assert.equal((again.resource as { created: boolean }).created, true);
   assert.match(again.after!, /"g2"/);
-  assert.equal(block(again.after!), again.resource!.installed);
+  assert.equal(
+    block(again.after!),
+    (again.resource as { installed: string }).installed,
+  );
 });
 
 test("codex planDetach removes only an unmodified owned block", () => {
@@ -160,6 +171,7 @@ test("codex diagnose and conflicts", () => {
       enabled: true,
       ownedCount: 0,
       cleanupPending: false,
+      owned: [],
     }),
     [{ code: "OWNERSHIP_MISSING" }],
   );
@@ -168,6 +180,7 @@ test("codex diagnose and conflicts", () => {
       enabled: true,
       ownedCount: 1,
       cleanupPending: false,
+      owned: [],
     }),
     [],
   );
@@ -184,5 +197,124 @@ test("codex detect honors injected CODEX_HOME", () => {
     );
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+const sha = (t: string) => createHash("sha256").update(t).digest("hex");
+
+test("pi adapter: in-process, no attach changes, legacy undo only", () => {
+  assert.equal(piAdapter.contextInjection, "in-process-extension");
+  assert.deepEqual(
+    piAdapter.planAttach(ctx(), runtime, { generation: "g", owned: [] }),
+    [],
+  );
+  const file = {
+    kind: "file" as const,
+    surface: "legacy.pi.extension" as const,
+    installed_hash: sha("ext"),
+    before: null,
+  };
+  assert.deepEqual(
+    piAdapter.planDetach(ctx({ "legacy.pi.extension": "ext" }), [file]),
+    [{ surface: "legacy.pi.extension", after: null }],
+  );
+  assert.throws(() =>
+    piAdapter.planDetach(ctx({ "legacy.pi.extension": "edited" }), [file]),
+  );
+  const json = {
+    kind: "json" as const,
+    surface: "legacy.pi.mcp" as const,
+    installed: { command: "n" },
+    before: null,
+    created: true,
+  };
+  const mcp = JSON.stringify({ mcpServers: { mwf: { command: "n" }, o: 1 } });
+  assert.deepEqual(
+    piAdapter.planDetach(ctx({ "legacy.pi.mcp": mcp }), [json]),
+    [
+      {
+        surface: "legacy.pi.mcp",
+        after: JSON.stringify({ mcpServers: { o: 1 } }, null, 2) + "\n",
+      },
+    ],
+  );
+  assert.deepEqual(
+    piAdapter.diagnose(ctx({ "legacy.pi.mcp": mcp }), {
+      enabled: true,
+      ownedCount: 2,
+      cleanupPending: false,
+      owned: [json, file],
+    }),
+    [{ code: "OWNERSHIP_CONFLICT", surface: "legacy.pi.extension" }],
+  );
+});
+
+test("pi conflicts are structured {path, reason}; owned entries are filtered by path", () => {
+  const base = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), "mwf-pc-")),
+  );
+  try {
+    const root = path.join(base, "p");
+    fs.mkdirSync(path.join(root, ".pi"), { recursive: true });
+    const mcp = JSON.stringify({ mcpServers: { mwf: { command: "n" } } });
+    fs.writeFileSync(path.join(root, ".pi/mcp.json"), mcp);
+    const env = { PI_CODING_AGENT_DIR: path.join(base, "agent") };
+    assert.deepEqual(piAdapter.conflicts({ ...ctx(), root, env }), [
+      { path: path.join(root, ".pi/mcp.json"), reason: "mcpServers.mwf" },
+    ]);
+    const old = process.env.PI_CODING_AGENT_DIR;
+    process.env.PI_CODING_AGENT_DIR = env.PI_CODING_AGENT_DIR;
+    try {
+      const get = (f: string) =>
+        fs.existsSync(path.join(root, f))
+          ? fs.readFileSync(path.join(root, f), "utf8")
+          : null;
+      const client = (owned: unknown[]) => ({
+        enabled: true,
+        cleanup_pending: false,
+        owned_resources: owned as never[],
+      });
+      assert.deepEqual(
+        hostIssues("pi", root, get, client([]), { conflicts: true }),
+        [
+          `OWNERSHIP_CONFLICT:${path.join(root, ".pi/mcp.json")}: mcpServers.mwf`,
+        ],
+      );
+      assert.deepEqual(
+        hostIssues("pi", root, get, client([]), { conflicts: false }),
+        [],
+      );
+      const owned = {
+        kind: "json",
+        path: ".pi/mcp.json",
+        installed: { command: "n" },
+        before: null,
+        created: true,
+      };
+      assert.deepEqual(
+        hostIssues("pi", root, get, client([owned]), { conflicts: true }),
+        [],
+      );
+      // Owning one file does not hide conflicts in other files.
+      fs.writeFileSync(
+        path.join(root, ".pi/settings.json"),
+        '{"packages":["pi-mcp-adapter"]}',
+      );
+      assert.deepEqual(
+        hostIssues("pi", root, get, client([owned]), { conflicts: true }),
+        [
+          `OWNERSHIP_CONFLICT:${path.join(root, ".pi/settings.json")}: pi-mcp-adapter`,
+        ],
+      );
+      assert.deepEqual(
+        hostIssues("codex", root, get, client([]), { conflicts: true }),
+        ["OWNERSHIP_MISSING"],
+      );
+    } finally {
+      if (old === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = old;
+    }
+  } finally {
+    fs.rmSync(base, { recursive: true, force: true });
   }
 });

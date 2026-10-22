@@ -1,14 +1,26 @@
 import fs from "node:fs";
 import path from "node:path";
-import TOML from "@iarna/toml";
-import { Transaction, hash } from "../storage/index.js";
+import { Transaction } from "../storage/index.js";
 import { receipt } from "../storage/receipt.js";
 
+/** Host-specific checks (ownership of managed surfaces, host conflicts),
+ * injected by the entry layer from the integrations registry so Core never
+ * imports integrations. Without it, only host-neutral checks run. */
+export type HostIssues = (
+  client: string,
+  root: string,
+  get: (file: string) => string | null,
+  receiptClient: {
+    enabled: boolean;
+    cleanup_pending: boolean;
+    owned_resources: readonly { kind: string; path: string }[];
+  },
+  options: { conflicts: boolean },
+) => string[];
 export function integrationDiagnostics(
   tx: Transaction,
-  hostConflicts: Readonly<
-    Record<string, (root: string) => readonly string[]>
-  > = {},
+  hostIssues?: HostIssues,
+  options: { conflicts: boolean } = { conflicts: false },
 ) {
   const installed: Record<string, unknown> = {};
   const configured: Record<string, unknown> = {};
@@ -54,46 +66,10 @@ export function integrationDiagnostics(
         issues.push("INVALID_BINDING");
       if (!runtimeValid) issues.push("RUNTIME_MISMATCH");
       if (c.cleanup_pending) issues.push("CLEANUP_PENDING");
-      if (client === "codex" && c.enabled && !c.owned_resources.length)
-        issues.push("OWNERSHIP_MISSING");
-      for (const resource of c.owned_resources) {
-        try {
-          const raw = tx.get(resource.path);
-          const matches =
-            resource.kind === "file"
-              ? hash(raw) === resource.installed_hash
-              : resource.kind === "block"
-                ? raw !== null &&
-                  raw.split("# mwf:mcp:start").length === 2 &&
-                  raw.includes(resource.installed) &&
-                  !!TOML.parse(raw)
-                : raw !== null &&
-                  JSON.stringify(JSON.parse(raw).mcpServers?.mwf) ===
-                    JSON.stringify(resource.installed);
-          if (!matches) issues.push(`OWNERSHIP_CONFLICT:${resource.path}`);
-        } catch {
-          issues.push(`OWNERSHIP_CONFLICT:${resource.path}`);
-        }
-      }
-      // Same detector attach uses (OWNERSHIP_CONFLICT), injected per client.
-      const detect = Object.hasOwn(hostConflicts, client)
-        ? hostConflicts[client]
-        : undefined;
-      if (detect)
-        try {
-          // An entry this receipt owns is MWF's own (checked above), not a conflict.
-          for (const problem of detect(tx.root))
-            if (
-              !c.owned_resources.some((r) =>
-                problem.startsWith(`${path.join(tx.root, r.path)}:`),
-              )
-            )
-              issues.push(`OWNERSHIP_CONFLICT:${problem}`);
-        } catch (e) {
-          issues.push(
-            `OWNERSHIP_CONFLICT:${e instanceof Error ? e.message : String(e)}`,
-          );
-        }
+      if (hostIssues)
+        issues.push(
+          ...hostIssues(client, tx.root, (f) => tx.get(f), c, options),
+        );
       configured[client] = {
         enabled: c.enabled,
         canonical_root: r!.canonical_root,

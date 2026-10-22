@@ -5,7 +5,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { execute, schemas, type Operation } from "./core.js";
 import { canonicalRoot, MWFError, Transaction } from "./storage.js";
 import { checkBinding, type Binding } from "./integrations/shared/binding.js";
-import { resolveSession } from "./integrations/shared/identity.js";
+import { adapterFor, harnessContext } from "./integrations/registry.js";
 import { failure } from "./contracts/result.js";
 import { RUNTIME_VERSION } from "./contracts/version.js";
 import { serialize } from "./context/output.js";
@@ -146,13 +146,13 @@ export async function serve(
             string,
             unknown
           >;
-          if (binding?.harness === "pi" && binding.session_ref) {
-            const id = resolveSession(
-              new Transaction(root),
+          const host = binding ? adapterFor(binding.harness) : undefined;
+          if (binding?.session_ref && host?.resolveSession) {
+            // Hosts that bind a session reference (Pi) pin MCP calls to it.
+            host.resolveSession(
+              harnessContext(root, (file) => new Transaction(root).get(file)),
               binding.session_ref,
             );
-            if (id.client !== "pi")
-              throw new MWFError("CONTEXT_REQUIRED", "Pi reference required.");
             if (input.session_ref && input.session_ref !== binding.session_ref)
               throw new MWFError(
                 "CONTEXT_REQUIRED",

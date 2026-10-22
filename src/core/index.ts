@@ -2,7 +2,7 @@ import { validRecords } from "../storage/records.js";
 import { recallRecords, eligible, tokens } from "../retrieval/index.js";
 export { recallRecords, eligible } from "../retrieval/index.js";
 import { resolveSession } from "./identity.js";
-import { integrationDiagnostics } from "./diagnostics.js";
+import { integrationDiagnostics, type HostIssues } from "./diagnostics.js";
 import type { BudgetInput } from "../context/output.js";
 import type { Result } from "../contracts/result.js";
 export type { Result } from "../contracts/result.js";
@@ -576,14 +576,12 @@ export type Migration = (
   stopped: boolean,
   apply: boolean,
 ) => { migration_required: boolean };
-/** Host-specific conflict detectors, injected by the entry layer (core.ts)
- * so Core never imports integrations. Keyed by client id in the receipt. */
-export type HostConflicts = Readonly<
-  Record<string, (root: string) => readonly string[]>
->;
+export type { HostIssues };
+/** Callbacks composed by the entry layer (core.ts) so Core never imports
+ * lifecycle or integrations. */
 export type CoreHooks = {
   migrateIntegration: Migration;
-  hostConflicts?: HostConflicts;
+  hostIssues?: HostIssues;
 };
 export function operateWithMigration(
   tx: Transaction,
@@ -601,7 +599,9 @@ export function operateWithHooks(
   if (op === "init") return initialize(tx, a.git_mode, a.language);
   if (op === "doctor") {
     const data = diagnose(tx);
-    const integration = integrationDiagnostics(tx, hooks.hostConflicts);
+    const integration = integrationDiagnostics(tx, hooks.hostIssues, {
+      conflicts: true,
+    });
     const status = operateWithHooks(tx, hooks, "status", a) as {
       session_observed: unknown;
     };
@@ -645,7 +645,7 @@ export function operateWithHooks(
         schema_version: c.schema_version ?? null,
         health: diagnose(tx),
       },
-      ...integrationDiagnostics(tx),
+      ...integrationDiagnostics(tx, hooks.hostIssues),
       session_observed: observed,
       runtime_owner: c.runtime_owner ?? "legacy",
 
@@ -1015,7 +1015,7 @@ export function execute(
     fault?: (stage: string) => void;
     guard?: (tx: Transaction) => void;
     migrateIntegration?: Migration;
-    hostConflicts?: HostConflicts;
+    hostIssues?: HostIssues;
   } = {},
 ): Result {
   const parsed = schemas[op].safeParse(input);
@@ -1073,9 +1073,7 @@ export function execute(
       tx,
       {
         migrateIntegration: options.migrateIntegration ?? missingMigration,
-        ...(options.hostConflicts
-          ? { hostConflicts: options.hostConflicts }
-          : {}),
+        ...(options.hostIssues ? { hostIssues: options.hostIssues } : {}),
       },
       ...([op, a] as Command),
     );

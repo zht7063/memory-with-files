@@ -1,31 +1,31 @@
 import fs from "node:fs";
-import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { config, initialize, execute, type Result } from "../core/index.js";
 import {
   canonicalRoot,
-  hash,
   MWFError,
   recover,
   Transaction,
   withProjectLock,
 } from "../storage/index.js";
 import { RUNTIME_VERSION } from "../contracts/version.js";
-import { receipt, receiptFile, type Harness } from "../storage/receipt.js";
+import {
+  receipt,
+  receiptFile,
+  resourceSchema,
+  type Harness,
+} from "../storage/receipt.js";
 import { piConflicts } from "../integrations/pi/conflicts.js";
-import { adapterFor, adapterForSurface } from "../integrations/registry.js";
-import { jsonObject, selectRuntime } from "../integrations/shared/runtime.js";
 import {
-  HARNESS_IDS,
-  type HarnessContext,
-  type OwnedResource,
-} from "../contracts/harness.js";
-import {
-  MANAGED_SURFACES,
-  type ManagedSurfaceId,
-} from "../contracts/managed-surface.js";
+  adapterFor,
+  adapterForSurface,
+  harnessContext as context,
+  toOwned,
+} from "../integrations/registry.js";
+import { HARNESS_IDS } from "../contracts/harness.js";
+import { MANAGED_SURFACES } from "../contracts/managed-surface.js";
 export { piConflicts };
 const cli = fileURLToPath(new URL("../cli.js", import.meta.url));
 const inputSchema = z
@@ -57,91 +57,22 @@ function output(
     data,
   };
 }
-const object = jsonObject;
-/** Adapter view of the project, reading staged content through the transaction. */
-function harnessContext(root: string, tx: Transaction): HarnessContext {
-  return {
-    root,
-    env: process.env,
-    nodePath: process.execPath,
-    read: (surface) => tx.get(MANAGED_SURFACES[surface].path),
-  };
-}
-function surfaceOf(file: string): ManagedSurfaceId | undefined {
-  return (Object.keys(MANAGED_SURFACES) as ManagedSurfaceId[]).find(
-    (id) => MANAGED_SURFACES[id].path === file,
-  );
-}
-function toOwned(resource: {
-  kind: string;
-  path: string;
-  installed?: unknown;
-  created?: boolean;
-}): OwnedResource {
-  const surface = surfaceOf(resource.path);
-  if (resource.kind !== "block" || surface !== "codex.config.block")
-    throw new Error("not a block resource");
-  return {
-    kind: "block",
-    surface,
-    installed: String(resource.installed),
-    created: !!resource.created,
-  };
-}
+const harnessContext = (root: string, tx: Transaction) =>
+  context(root, (file) => tx.get(file));
 export function locateRuntime(
   pluginRoot: string | undefined,
   harness: Harness,
   root: string,
 ) {
-  const adapter = adapterFor(harness);
-  if (adapter) {
-    const found = adapter.detect(
-      harnessContext(root, new Transaction(root)),
-      pluginRoot ? { pluginRoot } : {},
-    );
-    return {
-      plugin_root: found.pluginRoot,
-      entry: found.runtimePath,
-      version: found.version,
-    };
-  }
-  // Pi runtime discovery moves into the Pi adapter in PR-07.
-  const candidates: string[] = [];
-  if (pluginRoot) candidates.push(path.resolve(pluginRoot));
-  else if (harness === "pi") {
-    for (const dir of [
-      path.join(root, ".pi"),
-      process.env.PI_CODING_AGENT_DIR ??
-        path.join(process.env.HOME ?? "", ".pi/agent"),
-    ]) {
-      const file = path.join(dir, "settings.json");
-      if (!fs.existsSync(file)) continue;
-      const settings = object(fs.readFileSync(file, "utf8"));
-      for (const value of Array.isArray(settings.packages)
-        ? settings.packages
-        : []) {
-        const source = typeof value === "string" ? value : value?.source;
-        if (typeof source === "string")
-          candidates.push(
-            source.startsWith("npm:@zht7063/mwf")
-              ? path.join(dir, "npm/node_modules/@zht7063/mwf")
-              : path.resolve(dir, source),
-          );
-      }
-    }
-  }
-  return selectRuntime(
-    candidates,
-    pluginRoot,
-    (base) => base,
-    (_base, runtimeRoot, pkg) => {
-      if (
-        !pkg.pi ||
-        !fs.existsSync(path.join(runtimeRoot, "dist/integrations/pi/index.js"))
-      )
-        throw Error("Missing Pi extension");
-    },
+  const found = adapterFor(harness).detect(
+    harnessContext(root, new Transaction(root)),
+    pluginRoot ? { pluginRoot } : {},
   );
+  return {
+    plugin_root: found.pluginRoot,
+    entry: found.runtimePath,
+    version: found.version,
+  };
 }
 function runtime(
   pluginRoot: string | undefined,
@@ -228,11 +159,13 @@ export function lifecycle(
         );
       const h = a.harness as Harness,
         entry = runtime(a.plugin_root, h, root);
-      if (h === "pi") {
-        const conflicts = piConflicts(root);
-        if (conflicts.length)
-          throw new MWFError("OWNERSHIP_CONFLICT", conflicts.join("; "));
-      }
+      const adapter = adapterFor(h);
+      const conflicts = adapter.conflicts(harnessContext(root, tx));
+      if (conflicts.length)
+        throw new MWFError(
+          "OWNERSHIP_CONFLICT",
+          conflicts.map((c) => `${c.path}: ${c.reason}`).join("; "),
+        );
       if (r.canonical_root !== root) {
         for (const c of Object.values(r.clients)) c.enabled = false;
         r.canonical_root = root;
@@ -251,8 +184,7 @@ export function lifecycle(
         previous.node_path === process.execPath;
       const generation = same ? previous.binding_generation! : randomUUID();
       const owned = previous?.owned_resources ?? [];
-      const adapter = adapterFor(h);
-      if (adapter) {
+      {
         const changes = adapter.planAttach(
           harnessContext(root, tx),
           { pluginRoot: "", runtimePath: entry, version: RUNTIME_VERSION },
@@ -276,31 +208,19 @@ export function lifecycle(
           api_version: 2,
           runtime_path: entry,
           node_path: process.execPath,
-          owned_resources: changes.flatMap((c) =>
-            c.resource
-              ? [
-                  {
-                    kind: c.resource.kind,
-                    path: MANAGED_SURFACES[c.resource.surface].path,
-                    installed: c.resource.installed,
-                    created: c.resource.created,
-                  },
-                ]
-              : [],
-          ),
+          owned_resources: changes.flatMap((c) => {
+            if (!c.resource) return [];
+            const { surface, ...rest } = c.resource;
+            return [
+              {
+                ...rest,
+                path: MANAGED_SURFACES[surface].path,
+              } as z.infer<typeof resourceSchema>,
+            ];
+          }),
           cleanup_pending: false,
         };
-      } else
-        r.clients[h] = {
-          enabled: true,
-          binding_generation: generation,
-          runtime_version: RUNTIME_VERSION,
-          api_version: 2,
-          runtime_path: entry,
-          node_path: process.execPath,
-          owned_resources: [],
-          cleanup_pending: false,
-        };
+      }
     }
     tx.set(receiptFile, JSON.stringify(r, null, 2) + "\n");
     return { r, clients };
@@ -342,35 +262,13 @@ export function lifecycle(
         const remaining: typeof c.owned_resources = [];
         for (const resource of c.owned_resources) {
           try {
-            const raw = tx.get(resource.path);
-            if (resource.kind === "block") {
-              const owned = toOwned(resource);
-              const adapter = adapterForSurface(owned.surface);
-              if (!adapter) throw new Error("no adapter owns this block");
-              for (const change of adapter.planDetach(
-                harnessContext(root, tx),
-                [owned],
-              ))
-                tx.set(MANAGED_SURFACES[change.surface].path, change.after);
-            } else if (resource.kind === "file") {
-              if (raw === null) continue;
-              if (hash(raw) !== resource.installed_hash)
-                throw new Error("owned file changed");
-              tx.set(resource.path, resource.before);
-            } else {
-              const obj = object(raw),
-                servers = z.record(z.unknown()).parse(obj.mcpServers ?? {});
-              if (!("mwf" in servers)) continue;
-              if (
-                JSON.stringify(servers.mwf) !==
-                JSON.stringify(resource.installed)
-              )
-                throw new Error("owned key changed");
-              if (resource.before === null) delete servers.mwf;
-              else servers.mwf = resource.before;
-              obj.mcpServers = servers;
-              tx.set(resource.path, JSON.stringify(obj, null, 2) + "\n");
-            }
+            const owned = toOwned(resource);
+            const adapter = adapterForSurface(owned.surface);
+            if (!adapter) throw new Error("no adapter owns this resource");
+            for (const change of adapter.planDetach(harnessContext(root, tx), [
+              owned,
+            ]))
+              tx.set(MANAGED_SURFACES[change.surface].path, change.after);
           } catch {
             remaining.push(resource);
             conflicts.push(resource.path);
