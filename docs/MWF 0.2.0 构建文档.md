@@ -548,7 +548,7 @@ UserPromptSubmit 取得真实请求后执行有限 recall；它可以每轮计�
 
 启动恢复不能等待 MCP 就绪。官方 hook 契约明确，MCP tool hook 只使用已有连接，SessionStart 可能早于 MCP ready；会话 ID 来自 hook 输入，原始 transcript 格式不稳定。参见[Hooks](https://learn.chatgpt.com/docs/hooks#execution-and-lifecycle)。
 
-默认单个读取 hook 总截止时间为 5 秒；超时终止本次读取并给出简短可见诊断，允许宿主继续。每个会话同类错误只提示一次，status 保留最近状态。超时不触发下载依赖、重建数据或修改规则文件。
+默认单个读取 hook 总截止时间为 5 秒；超时终止本次读取并给出简短可见诊断，允许宿主继续。每个会话同类错误只提示一次，status 保留最近状态。（**0.3.0 变更：** Codex hook 截止时间已上调为 15 秒（hooks.json timeout），runner 在 14.5 秒终止读取；原因是慢主机上 o200k tokenizer 初始化约 2.8 秒、hook 实测 3.9–5.1 秒。见 [CHANGELOG](../CHANGELOG.md)。）超时不触发下载依赖、重建数据或修改规则文件。
 
 ### 10.3 MCP 固定业务 root
 

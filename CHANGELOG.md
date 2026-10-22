@@ -21,6 +21,8 @@
 
 ### 修复
 
+- Codex hook 截止时间由 5 秒上调为 15 秒（`packaging/codex/hooks/hooks.json`），runner 由 4.7 秒上调为 14.5 秒。原因：慢主机（rain，2 核）上 js-tiktoken o200k_base 初始化约 2.8 秒，hook 实测 3.9–5.1 秒，超过旧截止，记忆未注入。每条消息都会触发 UserPromptSubmit，因此在慢机器上每条消息最多可能等待约 15 秒；快机器不受影响。 14.5 秒约为实测最慢值的 3 倍，不是已证明的上界；后续将懒加载/缓存 tokenizer 并下调截止（[#30](https://github.com/zht7063/memory-with-files/issues/30)）。
+
 - doctor 在启用 Pi 且 `.pi/mcp.json` 存在冲突的 `mcpServers.mwf` 时报告 `OWNERSHIP_CONFLICT`（`ok: false`）（issue #20）；status 不报告此项。
 
 相关 PR：[#17](https://github.com/zht7063/memory-with-files/pull/17)、[#21](https://github.com/zht7063/memory-with-files/pull/21), [#22](https://github.com/zht7063/memory-with-files/pull/22), [#23](https://github.com/zht7063/memory-with-files/pull/23), [#24](https://github.com/zht7063/memory-with-files/pull/24), [#25](https://github.com/zht7063/memory-with-files/pull/25), [#26](https://github.com/zht7063/memory-with-files/pull/26), [#27](https://github.com/zht7063/memory-with-files/pull/27), [#28](https://github.com/zht7063/memory-with-files/pull/28)。
