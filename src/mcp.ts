@@ -3,7 +3,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { execute, schemas, type Operation } from "./core.js";
-import { canonicalRoot, MWFError, Transaction } from "./storage.js";
+import { canonicalRoot, MWFError, Transaction } from "./storage/index.js";
 import { checkBinding, type Binding } from "./integrations/shared/binding.js";
 import { adapterFor, harnessContext } from "./integrations/registry.js";
 import { failure } from "./contracts/result.js";

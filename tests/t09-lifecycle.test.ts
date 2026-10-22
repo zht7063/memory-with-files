@@ -7,11 +7,11 @@ import { execute } from "../dist/core.js";
 import { lifecycle } from "../dist/lifecycle/index.js";
 import { Transaction } from "../dist/storage/index.js";
 import {
-  receipt,
   checkBinding,
   type Binding,
 } from "../dist/integrations/shared/binding.js";
-import { registerSession } from "../dist/integrations/shared/identity.js";
+import { receipt } from "../dist/storage/receipt.js";
+import { registerSession } from "../dist/core/identity.js";
 import extension, { type PiContext } from "../dist/integrations/pi/index.js";
 import { handleHook } from "../dist/integrations/codex/hook.js";
 

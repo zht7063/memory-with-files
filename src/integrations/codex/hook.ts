@@ -1,11 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
-import {
-  discover,
-  receipt,
-  checkBinding,
-  type Binding,
-} from "../shared/binding.js";
+import { discover, checkBinding, type Binding } from "../shared/binding.js";
+import { receipt } from "../../storage/receipt.js";
 import { Transaction } from "../../storage/index.js";
 import {
   beginContext,

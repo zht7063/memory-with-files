@@ -27,15 +27,7 @@ export const LAYERS = [
 ] as const;
 
 /** Entry files (L6). Only these may import each other or the root barrel. */
-export const ENTRY = [
-  "cli.ts",
-  "mcp.ts",
-  "core.ts",
-  "storage.ts",
-  "setup.ts",
-  "pi-adapter.ts",
-  "protocol.ts",
-];
+export const ENTRY = ["cli.ts", "mcp.ts", "core.ts"];
 /** Only these entry files may import the root barrel src/core.ts. */
 export const ROOT_BARREL_IMPORTERS = ["cli.ts", "mcp.ts"];
 /** Files allowed to mention host paths or branch on "pi"/"codex" (rule 7). */

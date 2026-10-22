@@ -6,7 +6,7 @@ import path from "node:path";
 import extension from "../dist/integrations/pi/index.js";
 import type { PiContext } from "../dist/integrations/pi/index.js";
 import { execute } from "../dist/core.js";
-import { lifecycle } from "../dist/setup.js";
+import { lifecycle } from "../dist/lifecycle/index.js";
 test("native Pi adapter respects enablement, trust, epochs and detach", (t) => {
   const root = fs.realpathSync(
     fs.mkdtempSync(path.join(os.tmpdir(), "mwf-pi-")),

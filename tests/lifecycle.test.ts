@@ -359,7 +359,7 @@ test("probe persistence degrades only stale bindings and rethrows other errors",
   const { probePersistenceWarning } = await import(
     "../dist/lifecycle/index.js"
   );
-  const { MWFError } = await import("../dist/storage.js");
+  const { MWFError } = await import("../dist/storage/index.js");
   assert.match(
     probePersistenceWarning(new MWFError("BINDING_STALE", "changed")),
     /BINDING_STALE/,
