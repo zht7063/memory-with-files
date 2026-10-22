@@ -10,6 +10,19 @@ REPO = Path(__file__).resolve().parents[3]
 EXPECTED_TOOLS = 8
 
 
+def harness_tmp(prefix):
+    """Scratch root for an isolated host home OUTSIDE the system temp dir.
+
+    Codex refuses to create its PATH helper binaries when CODEX_HOME is under a
+    temporary directory ("Refusing to create helper binaries under temporary dir
+    /tmp"), so CODEX_HOME must not live in /tmp. Override with MWF_HARNESS_TMP.
+    """
+    import tempfile
+    root = Path(os.environ.get('MWF_HARNESS_TMP') or Path.home() / '.cache' / 'mwf-harness')
+    root.mkdir(parents=True, exist_ok=True)
+    return Path(tempfile.mkdtemp(prefix=prefix, dir=root)).resolve()
+
+
 def commit_info():
     head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=REPO, text=True).strip()
     dirty = bool(subprocess.check_output(['git', 'status', '--porcelain'], cwd=REPO, text=True).strip())

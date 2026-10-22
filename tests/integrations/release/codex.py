@@ -4,7 +4,7 @@ from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import evidence
-repo=Path(__file__).resolve().parents[3];base=Path(tempfile.mkdtemp(prefix='mwf-v2-codex-')).resolve();binary=sys.argv[1];requests=[]
+repo=Path(__file__).resolve().parents[3];base=evidence.harness_tmp('mwf-v2-codex-');binary=sys.argv[1];requests=[];turns=[]
 VERSION=json.loads((repo/'package.json').read_text())['version']
 class Endpoint(BaseHTTPRequestHandler):
     def log_message(self, *_args): pass
@@ -35,7 +35,9 @@ def turn(args,root=project):
  # Judge only the first model request of THIS exec (its main turn). Using requests[-1]
  # was racy: late requests from a previous process (terminated app-server, secondary
  # model calls) could land last and make T09 `saved` checks flaky.
- start=len(requests);r=command(args,root);new=requests[start:]
+ start=len(requests);t0=time.time();r=command(args,root);new=requests[start:]
+ turns.append({'args':[a for a in args if a.startswith('--')],'root':root.name,'seconds':round(time.time()-t0,2),'requests':[{k:v for k,v in q.items() if k!='at'} for q in new]})
+ (base/'turns.json').write_text(json.dumps(turns,indent=1,ensure_ascii=False))
  assert new,('no model request from exec',r.stderr)
  return r,new[0]
 def command(args,root=project):
