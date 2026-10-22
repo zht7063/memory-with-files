@@ -4,7 +4,12 @@ import TOML from "@iarna/toml";
 import { Transaction, hash } from "../storage/index.js";
 import { receipt } from "../storage/receipt.js";
 
-export function integrationDiagnostics(tx: Transaction) {
+export function integrationDiagnostics(
+  tx: Transaction,
+  hostConflicts: Readonly<
+    Record<string, (root: string) => readonly string[]>
+  > = {},
+) {
   const installed: Record<string, unknown> = {};
   const configured: Record<string, unknown> = {};
   const probed: Record<string, unknown> = {};
@@ -70,6 +75,25 @@ export function integrationDiagnostics(tx: Transaction) {
           issues.push(`OWNERSHIP_CONFLICT:${resource.path}`);
         }
       }
+      // Same detector attach uses (OWNERSHIP_CONFLICT), injected per client.
+      const detect = Object.hasOwn(hostConflicts, client)
+        ? hostConflicts[client]
+        : undefined;
+      if (detect)
+        try {
+          // An entry this receipt owns is MWF's own (checked above), not a conflict.
+          for (const problem of detect(tx.root))
+            if (
+              !c.owned_resources.some((r) =>
+                problem.startsWith(`${path.join(tx.root, r.path)}:`),
+              )
+            )
+              issues.push(`OWNERSHIP_CONFLICT:${problem}`);
+        } catch (e) {
+          issues.push(
+            `OWNERSHIP_CONFLICT:${e instanceof Error ? e.message : String(e)}`,
+          );
+        }
       configured[client] = {
         enabled: c.enabled,
         canonical_root: r!.canonical_root,
