@@ -48,26 +48,6 @@ const KNOWN_VIOLATIONS: Known[] = [
     why: "Codex TOML diagnosis moves into the adapter's diagnose()",
   },
   {
-    key: 'host-literal cli.ts :: compare a.harness !== "pi"',
-    removedBy: "PR-06",
-    why: "host knowledge moves behind managed-surface/registry/adapters",
-  },
-  {
-    key: 'host-literal cli.ts :: compare a.harness !== "codex"',
-    removedBy: "PR-06",
-    why: "host knowledge moves behind managed-surface/registry/adapters",
-  },
-  {
-    key: 'host-literal cli.ts :: compare harness === "pi"',
-    removedBy: "PR-06",
-    why: "host knowledge moves behind managed-surface/registry/adapters",
-  },
-  {
-    key: 'host-literal cli.ts :: compare harness === "codex"',
-    removedBy: "PR-06",
-    why: "host knowledge moves behind managed-surface/registry/adapters",
-  },
-  {
     key: 'host-literal core/diagnostics.ts :: compare client === "codex"',
     removedBy: "PR-07",
     why: "host knowledge moves behind managed-surface/registry/adapters",
@@ -90,38 +70,6 @@ const KNOWN_VIOLATIONS: Known[] = [
   {
     key: 'host-literal lifecycle/index.ts :: compare h === "pi"',
     removedBy: "PR-07",
-    why: "host knowledge moves behind managed-surface/registry/adapters",
-  },
-  {
-    key: 'host-literal lifecycle/index.ts :: path ".codex"',
-    removedBy: "PR-06",
-    why: "host knowledge moves behind managed-surface/registry/adapters",
-  },
-  {
-    key: 'host-literal lifecycle/index.ts :: compare harness === "codex"',
-    count: 2,
-    removedBy: "PR-06",
-    why: "host knowledge moves behind managed-surface/registry/adapters",
-  },
-  {
-    key: 'host-literal lifecycle/index.ts :: compare harness !== "codex"',
-    removedBy: "PR-06",
-    why: "host knowledge moves behind managed-surface/registry/adapters",
-  },
-  {
-    key: 'host-literal lifecycle/index.ts :: path ".codex/config.toml"',
-    count: 2,
-    removedBy: "PR-06",
-    why: "host knowledge moves behind managed-surface/registry/adapters",
-  },
-  {
-    key: 'host-literal lifecycle/index.ts :: path ".codex/config.toml is tracked; absolute local runtime paths will be included. Git index was not changed."',
-    removedBy: "PR-06",
-    why: "host knowledge moves behind managed-surface/registry/adapters",
-  },
-  {
-    key: 'host-literal lifecycle/index.ts :: compare h === "codex"',
-    removedBy: "PR-06",
     why: "host knowledge moves behind managed-surface/registry/adapters",
   },
   {
@@ -183,7 +131,7 @@ test("full import graph (type-only included) matches the shrinking allowlist", (
 test("allowlist never covers cycles, upward, entry or root-barrel imports", () => {
   for (const k of KNOWN_VIOLATIONS)
     assert.ok(
-      !/^(cycle|upward|same-layer|entry-import|root-barrel|adapter-isolation|unregistered) /.test(
+      !/^(cycle|upward|same-layer|entry-import|root-barrel|adapter-isolation|adapter-write|unregistered) /.test(
         k.key,
       ),
       `${k.key} must be fixed, not allowlisted`,
@@ -311,9 +259,58 @@ test("storage holds no host literals and only storage validates managed surfaces
   assert.ok(
     !KNOWN_VIOLATIONS.some((k) => k.key.startsWith("host-literal storage/")),
   );
+  // Value imports: storage validates; lifecycle maps PlannedChange surfaces to
+  // paths for its Transaction. Everyone else may only import the types.
   const importers = edges
-    .filter((e) => e.to === "contracts/managed-surface.ts")
+    .filter((e) => e.to === "contracts/managed-surface.ts" && !e.typeOnly)
     .map((e) => e.from)
-    .filter((f) => !f.startsWith("storage/"));
-  assert.deepEqual(importers, [], "only storage/ may import managed-surface");
+    .filter((f) => !/^(storage|contracts|lifecycle)\//.test(f));
+  assert.deepEqual(importers, [], "managed-surface value importers");
+});
+
+test("adapters may not import or call fs write APIs (fixture)", () => {
+  const root = fixture({
+    "integrations/codex/adapter.ts": [
+      'import fs from "node:fs";',
+      'import * as nfs from "fs";',
+      'import { writeFileSync, readFileSync } from "node:fs";',
+      'import { readFile } from "node:fs/promises";',
+      'import type { Stats } from "node:fs";',
+      "const { mkdirSync } = fs;",
+      'fs.existsSync("x"); readFileSync("x"); void readFile;',
+      'fs.writeFileSync("x", ""); nfs.rmSync("x"); fs.promises.unlink("x");',
+      'fs.createWriteStream("x"); fs["renameSync"]("a", "b"); fs.openSync("x", "w");',
+      "export const s: Stats | undefined = undefined;",
+      "export const w = [writeFileSync, mkdirSync];",
+      "",
+    ].join("\n"),
+    "integrations/pi/helper.ts":
+      'import fs from "node:fs";\nfs.writeFileSync("x", "");\nexport {};\n',
+  });
+  try {
+    const keys = analyze(root)
+      .violations.filter((v) => v.rule === "adapter-write")
+      .map((v) => v.key);
+    for (const k of [
+      "integrations/codex/adapter.ts: import { writeFileSync }",
+      "integrations/codex/adapter.ts: import node:fs/promises",
+      "integrations/codex/adapter.ts: { mkdirSync } = fs",
+      "integrations/codex/adapter.ts: fs.writeFileSync",
+      "integrations/codex/adapter.ts: nfs.rmSync",
+      "integrations/codex/adapter.ts: fs.promises",
+      "integrations/codex/adapter.ts: fs.createWriteStream",
+      'integrations/codex/adapter.ts: fs["renameSync"]',
+      "integrations/codex/adapter.ts: fs.openSync",
+    ])
+      assert.ok(
+        keys.includes(`adapter-write ${k}`),
+        `${k} not caught: ${keys}`,
+      );
+    // Reads are fine, and only adapter.ts files are restricted.
+    assert.ok(
+      !keys.some((k) => /existsSync|readFileSync|Stats|helper/.test(k)),
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });

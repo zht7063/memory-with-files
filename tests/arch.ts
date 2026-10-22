@@ -95,8 +95,19 @@ type Parsed = {
   }[];
   pureReexport: boolean;
   hostHits: string[];
+  fsWrites: string[];
 };
 
+// Rule 5b: adapters plan only. Any fs API that can write, create or open
+// files is forbidden in integrations/*/adapter.ts (value imports; types ok).
+const FS_MODULES = new Set([
+  "fs",
+  "node:fs",
+  "fs/promises",
+  "node:fs/promises",
+]);
+export const FS_WRITE =
+  /^(writeFile|appendFile|mkdir|mkdtemp|rm|rmdir|rename|copyFile|cp|symlink|link|truncate|ftruncate|open|opendir|unlink|chmod|lchmod|fchmod|chown|lchown|fchown|utimes|lutimes|futimes|write|writev|createWriteStream|promises)(Sync)?$/;
 const HOST_PATH = /(^|[/\\])\.(pi|codex)([/\\]|$)/;
 const HOST_ID = new Set(["pi", "codex"]);
 const COMPARISON = new Set([
@@ -110,12 +121,60 @@ function parse(file: string, text: string): Parsed {
   const tree = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
   const specifiers: Parsed["specifiers"] = [];
   const hostHits: string[] = [];
+  const fsWrites: string[] = [];
+  const fsLocals = new Set<string>();
   const line = (n: ts.Node) =>
     tree.getLineAndCharacterOfPosition(n.getStart(tree)).line + 1;
   const isHostId = (n: ts.Node) =>
     (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) &&
     HOST_ID.has(n.text);
   function visit(node: ts.Node) {
+    if (
+      ts.isImportDeclaration(node) &&
+      ts.isStringLiteral(node.moduleSpecifier) &&
+      FS_MODULES.has(node.moduleSpecifier.text) &&
+      !node.importClause?.isTypeOnly
+    ) {
+      const clause = node.importClause;
+      const promisesModule = node.moduleSpecifier.text.endsWith("promises");
+      if (promisesModule && clause)
+        fsWrites.push(`import ${node.moduleSpecifier.text} @${line(node)}`);
+      if (clause?.name) fsLocals.add(clause.name.text);
+      const bindings = clause?.namedBindings;
+      if (bindings && ts.isNamespaceImport(bindings))
+        fsLocals.add(bindings.name.text);
+      if (bindings && ts.isNamedImports(bindings))
+        for (const el of bindings.elements)
+          if (
+            !el.isTypeOnly &&
+            FS_WRITE.test((el.propertyName ?? el.name).text)
+          )
+            fsWrites.push(
+              `import { ${(el.propertyName ?? el.name).text} } @${line(el)}`,
+            );
+    }
+    if (
+      (ts.isPropertyAccessExpression(node) &&
+        ts.isIdentifier(node.expression) &&
+        fsLocals.has(node.expression.text) &&
+        FS_WRITE.test(node.name.text)) ||
+      (ts.isElementAccessExpression(node) &&
+        ts.isIdentifier(node.expression) &&
+        fsLocals.has(node.expression.text))
+    )
+      fsWrites.push(`${node.getText(tree)} @${line(node)}`);
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isObjectBindingPattern(node.name) &&
+      node.initializer &&
+      ts.isIdentifier(node.initializer) &&
+      fsLocals.has(node.initializer.text)
+    )
+      for (const el of node.name.elements) {
+        const name = (el.propertyName ?? el.name).getText(tree);
+        if (FS_WRITE.test(name))
+          fsWrites.push(`{ ${name} } = ${node.initializer.text} @${line(el)}`);
+      }
     if (
       (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
       node.moduleSpecifier &&
@@ -198,7 +257,8 @@ function parse(file: string, text: string): Parsed {
         s.moduleSpecifier !== undefined &&
         ts.isStringLiteral(s.moduleSpecifier),
     );
-  return { specifiers, pureReexport, hostHits };
+  // Destructuring `const { writeFileSync } = fs` is caught too.
+  return { specifiers, pureReexport, hostHits, fsWrites };
 }
 
 function resolve(root: string, from: string, spec: string, files: Set<string>) {
@@ -222,11 +282,14 @@ export function analyze(root: string) {
   const edges: Edge[] = [];
   const external: { from: string; pkg: string; line: number }[] = [];
   const pureReexport = new Set<string>();
+  const adapterWrites: string[] = [];
   const hostHits = new Map<string, string[]>();
   for (const file of files) {
     const parsed = parse(file, fs.readFileSync(path.join(root, file), "utf8"));
     if (parsed.pureReexport) pureReexport.add(file);
     if (parsed.hostHits.length) hostHits.set(file, parsed.hostHits);
+    if (/^integrations\/[^/]+\/adapter\.ts$/.test(file))
+      for (const w of parsed.fsWrites) adapterWrites.push(`${file}: ${w}`);
     for (const s of parsed.specifiers) {
       if (s.text.startsWith("node:")) continue;
       if (!s.text.startsWith(".")) {
@@ -345,6 +408,13 @@ export function analyze(root: string) {
     if (HOST_SDK.test(x.pkg) && layer >= 0 && layer <= 3)
       add("external", key, `${where}: host SDK ${x.pkg} in ${LAYERS[layer]}`);
   }
+
+  for (const w of adapterWrites)
+    add(
+      "adapter-write",
+      w.replace(/ @\d+$/, ""),
+      `${w}: adapters must not write`,
+    );
 
   // Rule 7: host knowledge.
   for (const [file, hits] of hostHits)

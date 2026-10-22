@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { RUNTIME_VERSION } from "./contracts/version.js";
+import { HARNESS_IDS, isHarnessId } from "./contracts/harness.js";
 import { failure } from "./contracts/result.js";
 import { serialize } from "./context/output.js";
 import { z } from "zod";
@@ -187,12 +188,12 @@ async function main() {
     const root = stringArg(a.project_root, "project_root");
     if (!root.trim())
       throw new MWFError("INVALID_INPUT", "project_root must not be empty.");
-    if (op !== "setup" && a.harness !== "pi" && a.harness !== "codex")
+    if (op !== "setup" && !isHarnessId(a.harness))
       throw new MWFError("INVALID_INPUT", "harness must be pi or codex.");
     const harnesses =
       op === "setup"
         ? z
-            .array(z.enum(["pi", "codex"]))
+            .array(z.enum(HARNESS_IDS))
             .min(1)
             .parse(
               typeof a.harness === "string"
@@ -229,7 +230,7 @@ async function main() {
       return;
     }
     const harness = harnesses[0];
-    if (harness === "pi" || harness === "codex") {
+    if (isHarnessId(harness)) {
       const target = locateRuntime(
         typeof a.plugin_root === "string" ? a.plugin_root : undefined,
         harness,
