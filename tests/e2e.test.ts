@@ -76,7 +76,7 @@ test(
     fs.mkdirSync(plugin);
     fs.writeFileSync(
       path.join(plugin, "plugin.json"),
-      JSON.stringify({ name: "mwf", version: "0.3.0" }),
+      JSON.stringify({ name: "mwf", version: "0.3.1" }),
     );
     fs.symlinkSync(source, path.join(plugin, "runtime"), "dir");
     const piPackage = path.join(base, "Pi 包");

@@ -10,7 +10,7 @@ npm run build
 npm run pack:release
 ```
 
-This writes `releases/zht7063-mwf-0.3.0.tgz` (deterministic: fixed tar metadata, gzip OS byte 255) and lists it in `releases/SHA256SUMS` and `releases/RELEASE-STATUS.json`.
+This writes `releases/zht7063-mwf-0.3.1.tgz` (deterministic: fixed tar metadata, gzip OS byte 255) and lists it in `releases/SHA256SUMS` and `releases/RELEASE-STATUS.json`.
 
 ## Verify and install
 
@@ -19,7 +19,7 @@ Pi 1.3.0 loads extensions from a directory, not from a `.tgz` path. Extract firs
 ```sh
 cd releases
 sha256sum -c SHA256SUMS --ignore-missing
-mkdir -p /tmp/mwf-pi && tar -xzf zht7063-mwf-0.3.0.tgz -C /tmp/mwf-pi
+mkdir -p /tmp/mwf-pi && tar -xzf zht7063-mwf-0.3.1.tgz -C /tmp/mwf-pi
 pi install /tmp/mwf-pi/package
 ```
 
