@@ -4,7 +4,7 @@
 
 ## 内容
 
-- `plugin.json`：插件名 `mwf`，`extensions.com.openai` 声明 `hooks: ./hooks/hooks.json` 与 `onboardingSkill: ./skills/setup/SKILL.md`。`version` 为 `0.3.0`，打包时由 `scripts/pack-release.ts` 以 package.json 的版本覆盖，保证与 runtime 一致。
+- `plugin.json`：插件名 `mwf`，`extensions.com.openai` 声明 `hooks: ./hooks/hooks.json` 与 `onboardingSkill: ./skills/setup/SKILL.md`。`version` 为 `0.3.1`，打包时由 `scripts/pack-release.ts` 以 package.json 的版本覆盖，保证与 runtime 一致。
 - `hooks/hooks.json`：SessionStart（matcher `startup|resume|clear|compact`）与 UserPromptSubmit 调用 `runtime/dist/integrations/codex/runner.js`，timeout 15 秒（0.3.0 起由 5 秒上调；runner 在 14.5 秒终止读取）。每条消息都会触发 UserPromptSubmit，因此在慢机器上每条消息最多可能等待约 15 秒；快机器不受影响。
 
 ## 组装
@@ -13,7 +13,7 @@
 
 ## 使用
 
-本目录不能直接作为插件安装（缺 `runtime/`、`skills/`）。运行 `npm run pack:release`，用 `shasum -a 256 -c SHA256SUMS` 校验后，把 `mwf-codex-0.3.0.zip` 解压到稳定目录，经 Codex 正常插件入口安装并信任 hooks，再按 [安装文档](../../docs/install.md#codex-插件) 用插件缓存内 runtime 执行 init 与 attach。
+本目录不能直接作为插件安装（缺 `runtime/`、`skills/`）。运行 `npm run pack:release`，用 `shasum -a 256 -c SHA256SUMS` 校验后，把 `mwf-codex-0.3.1.zip` 解压到稳定目录，经 Codex 正常插件入口安装并信任 hooks，再按 [安装文档](../../docs/install.md#codex-插件) 用插件缓存内 runtime 执行 init 与 attach。
 
 ## 约束与未验证
 
