@@ -1,6 +1,6 @@
 {
   "name": "@zht7063/mwf",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Project-local file memory with a CLI and stdio MCP server",
   "type": "module",
   "bin": {

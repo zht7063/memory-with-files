@@ -479,7 +479,7 @@ test("status and doctor inspect runtime, binding and ownership without inventing
     time: new Date().toISOString(),
     root,
     runtime_path: b.runtime,
-    runtime_version: "0.2.0",
+    runtime_version: "0.3.0",
     api_version: 2,
     binding_generation: b.generation,
     direct: "pass",
@@ -539,7 +539,7 @@ test("session diagnostics are bounded, complete and isolated", (t) => {
   assert.equal(event.client, "pi");
   assert.equal(event.session_ref, ref);
   assert.equal(event.epoch, output.epoch);
-  assert.equal(event.runtime_version, "0.2.0");
+  assert.equal(event.runtime_version, "0.3.0");
   assert.equal(event.api_version, 2);
   assert.equal(event.result_code, "submitted");
   assert.equal(event.entry_count, 1);
@@ -842,12 +842,12 @@ test("status and doctor accept an installed runtime matching its receipt at a di
   fs.writeFileSync(path.join(runtime, "dist/cli.js"), "");
   fs.writeFileSync(
     path.join(runtime, "package.json"),
-    JSON.stringify({ name: "@zht7063/mwf", version: "0.3.0" }),
+    JSON.stringify({ name: "@zht7063/mwf", version: "0.9.0" }),
   );
   const file = path.join(root, ".mwf/local/integration.json");
   const r = JSON.parse(fs.readFileSync(file, "utf8"));
   r.clients.pi.runtime_path = path.join(runtime, "dist/cli.js");
-  r.clients.pi.runtime_version = "0.3.0";
+  r.clients.pi.runtime_version = "0.9.0";
   fs.writeFileSync(file, JSON.stringify(r));
   for (const op of ["status", "doctor"] as const) {
     const result = execute(op, { project_root: root });

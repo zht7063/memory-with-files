@@ -1,5 +1,7 @@
 # T07 Pi lifecycle and discovery evidence
 
+> 历史记录：本文件记录 0.3.0 之前的验证结果，其中引用的文件名与路径（如 `src/storage.ts`、`src/setup.ts`、`src/pi-adapter.ts`、`src/protocol.ts`、`src/lifecycle/migrate.ts`、receipt v2）为 0.3.0 前的布局，0.3.0 已删除或替换。当前结构见 [架构](../architecture.md)。
+
 Date: 2026-10-21. Overall T07 status: **partial**, not full pass.
 
 Real host: `@earendil-works/pi-coding-agent` 1.3.0 on the aliyun tester,

@@ -28,7 +28,7 @@ for (const disabled of ["pi", "codex"] as const) {
     fs.mkdirSync(plugin);
     fs.writeFileSync(
       path.join(plugin, "plugin.json"),
-      JSON.stringify({ name: "mwf", version: "0.2.0" }),
+      JSON.stringify({ name: "mwf", version: "0.3.0" }),
     );
     const piPackage = path.join(base, "pi-package");
     fs.symlinkSync(process.cwd(), piPackage, "dir");

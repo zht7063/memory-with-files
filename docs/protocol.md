@@ -1,6 +1,6 @@
 # MWF API 2
 
-版本从 package metadata 读取：runtime 0.2.0，API 2，Markdown/schema 1，receipt 2，handoff 1。CLI/MCP 使用同一输入 schema、execute、错误外层和 JSON 渲染。根导入 `import {execute} from '@zht7063/mwf'` 保持可用；Core 抛出的错误由接口统一包装。
+版本从 package metadata 读取：runtime 0.3.0，API 2，Markdown/schema 1，receipt 3，handoff 1。CLI/MCP 使用同一输入 schema、execute、错误外层和 JSON 渲染。根导入 `import {execute} from '@zht7063/mwf'` 保持可用；Core 抛出的错误由接口统一包装。
 
 默认 MCP 仅 `mwf_bootstrap`、`mwf_recall`、`mwf_get`、`mwf_add`、`mwf_propose`、`mwf_update`、`mwf_handoff`、`mwf_status`。维护命令须显式 `--profile maintenance`。结果含 `ok`、`operation`、`project_root`、`runtime_version`、`api_version`、`schema_version`、`changed_files`、`warnings`、`data`；失败含错误码与可用冲突详情。stdout 供协议，stderr 供诊断。
 
@@ -19,12 +19,19 @@
 MCP agent 写入必须带稳定 `request_id`，自动 update 必须带最近读取的 `expected_content_hash`。先查幂等结果，再比较版本；冲突后重新读取并判断，不能盲目重试覆盖。CLI 为未提供 ID 的独立写操作生成 ID；需要重试时自行固定。
 
 ```json
-{"project_root":"/absolute/project","action":"save","task_id":"feature-a","expected_revision":0,"request_id":"feature-a-save-1","data":{"goal":"实现功能 A","next_action":"验证行为"}}
+{
+  "project_root": "/absolute/project",
+  "action": "save",
+  "task_id": "feature-a",
+  "expected_revision": 0,
+  "request_id": "feature-a-save-1",
+  "data": { "goal": "实现功能 A", "next_action": "验证行为" }
+}
 ```
 
 `handoff` 支持 action list/read/save。新 scope 的 expected_revision 为 0；保存后递增。session 使用宿主提供且持久校验的 `session_ref`；跨会话用显式 task_id。无可靠身份可读取项目，不可猜测 session 写入。list 得到的 `target_scope` 可显式 read；旧 handoff 仅 legacy 显式读，不自动继承。交接超预算拒绝保存，不截断。
 
-session_key 为 SHA256(JSON([client, host_session_id, stable_branch_id]))；session_ref 为 `s_` 加 SHA256(JSON([canonical_root, session_key]))。映射持久保存在本项目，随机/跨项目引用失败。
+session*key 为 SHA256(JSON([client, host_session_id, stable_branch_id]))；session_ref 为 `s*` 加 SHA256(JSON([canonical_root, session_key]))。映射持久保存在本项目，随机/跨项目引用失败。
 
 ## 自动接入与输出
 

@@ -1,5 +1,7 @@
 # T08 本地验证记录
 
+> 历史记录：本文件记录 0.3.0 之前的验证结果，其中引用的文件名与路径（如 `src/storage.ts`、`src/setup.ts`、`src/pi-adapter.ts`、`src/protocol.ts`、`src/lifecycle/migrate.ts`、receipt v2）为 0.3.0 前的布局，0.3.0 已删除或替换。当前结构见 [架构](../architecture.md)。
+
 日期：2026-10-21。范围：当前 T08 checkout；不是候选正式包或 Codex 桌面验收。
 
 环境：Linux x64，Node 22.19.0（`/tmp/node-v22.19.0-linux-x64/bin/node`）。默认 `/usr/bin/node` 不支持 `--experimental-strip-types`，验证命令使用上述 Node 的 PATH。无实际 Codex 桌面、GUI Node、正常信任/重载或真实模型请求观测；桌面环境字段保留 null，不用本地系统或 Node 值代填。

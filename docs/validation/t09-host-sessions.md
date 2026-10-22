@@ -1,5 +1,7 @@
 # T09 host session validation
 
+> 历史记录：本文件记录 0.3.0 之前的验证结果，其中引用的文件名与路径（如 `src/storage.ts`、`src/setup.ts`、`src/pi-adapter.ts`、`src/protocol.ts`、`src/lifecycle/migrate.ts`、receipt v2）为 0.3.0 前的布局，0.3.0 已删除或替换。当前结构见 [架构](../architecture.md)。
+
 2026-10-21: local simulation only. Real host results below are `not_run`.
 No release/GUI pass is inferred from adapter mocks, filesystem installation fixtures,
 standalone probes, or Python syntax checks. L08/G10 remain partial until these runs.

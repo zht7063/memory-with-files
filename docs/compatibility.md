@@ -1,6 +1,18 @@
-# 0.2.0 兼容矩阵与 M0 验证清单
+# 兼容矩阵与 M0 验证清单（当前 0.3.0）
 
-状态：**已有部分 M0 运行时实验，完整支持组合均未验收**。2026-10-13 与 10-16 证据见 [M0 报告](validation/M0-validation.md)。下表区分实验结果与支持承诺。依据见 [构建规范 §2、§10–11、§16–17](MWF%200.2.0%20构建文档.md)，阶段任务见 [构建计划](build-plan-0.2.0.md)。
+状态：**已有部分 M0 运行时实验，完整支持组合均未验收**。2026-10-13 与 10-16 证据见 [M0 报告](validation/M0-validation.md)。下表区分实验结果与支持承诺。依据见 [构建规范 §2、§10–11、§16–17](MWF%200.2.0%20构建文档.md)，0.2.0 阶段任务见历史[构建计划](build-plan-0.2.0.md)。
+
+## 0.3.0 变更（未发布）
+
+| 项目 | 0.3.0 | 说明 |
+| - | - | - |
+| Node.js | ≥22.19.0 | 与 0.2.0 相同 |
+| receipt | v3 | 读取 v2 时内存升级；首个 `--apply` 写入 v3 后 0.2.x 无法读取，不可降级 |
+| 0.1 安装 | 不支持 | `UNSUPPORTED_LEGACY_INSTALL`，不写文件；先用 0.2.x 迁移 |
+| 0.1 遗留资源（`.pi/*`、`.agents/skills/*`） | 不再受管 | v2 receipt 仍拥有时报 `LEGACY_RESOURCE_PENDING`；先用 0.2.x detach |
+| 真实宿主（Pi、Codex CLI、Codex 桌面） | 沿用下方 0.2.0 结论 | 0.3.0 产物尚未重新做真实宿主验收；Codex CLI 与桌面为 not_run |
+
+以下各节为历史记录，不随 0.3.0 改写。
 
 ## 1. 目标矩阵
 
@@ -12,7 +24,7 @@
 | 上述桌面附带 CLI/app-server（隔离实验） | 0.162.0-alpha.17.2 | macOS 26.7 arm64 | 包内二进制；临时 marketplace/新进程 | 最小实验 pass；不代表 GUI 通过 | M0 可行性证据 |
 | 桌面附带 CLI/app-server（10-16 续验） | 0.163.0-alpha.10.2 | macOS arm64 | 隔离临时 marketplace/app-server | 最小实验及真实数据复制原型 pass；GUI blocked | M0 可行性证据 |
 | Codex 桌面本地 command-hook 插件 | 待确认可用构建 | Linux | 待确认客户端可用性 | not_run | 需 M0 明确，不能假定可安装 |
-| 独立 CLI / stdio MCP | MWF 0.2.0 待构建 | macOS、Linux | tarball 待生成 | not_run | 首发目标 |
+| 独立 CLI / stdio MCP | MWF 0.3.0（未发布候选） | macOS、Linux | `zht7063-mwf-0.3.0.tgz`（`npm run pack:release` 生成） | Linux：rain-tester 回归 measured；macOS：not_run | 首发目标 |
 | Codex CLI | 本机 0.162.1 | macOS | 仅读取版本 | not_run | 单独验收，不继承桌面结论 |
 | 旧 Pi、OMP、其他客户端、Windows | 未选定 | 未验证 | 未验证 | not_run | 不默认支持 |
 | 纯网页／云端编排 | 未选定 | 未验证 | 不适用本地插件假设 | not_run | 不承诺本地 hooks |
