@@ -71,15 +71,30 @@ export function readEvidence(root: string, file: string): unknown {
   }
 }
 
-export function decide(root: string, commit: string) {
+/**
+ * `packDirty` is `git status --porcelain` at pack time (gitignored paths such as
+ * releases/ are already excluded by git). Evidence for HEAD says nothing about
+ * uncommitted edits, so any entry makes the release not publishable.
+ */
+export function decide(root: string, commit: string, packDirty: string[]) {
   const items: ItemResult[] = RULE_ITEMS.map(({ item, file }) => ({
     evidence: file,
     ...checkEvidence(item, readEvidence(root, file), commit),
   }));
+  const tree = {
+    clean: packDirty.length === 0,
+    changes: packDirty,
+    reason:
+      packDirty.length === 0
+        ? null
+        : `working tree has ${packDirty.length} uncommitted change(s) at pack time; evidence for ${commit} does not cover them`,
+  };
   return {
     criteria: CRITERIA,
     commit,
-    publishable: items.length > 0 && items.every((i) => i.status === "pass"),
+    publishable:
+      tree.clean && items.length > 0 && items.every((i) => i.status === "pass"),
+    working_tree: tree,
     items,
     unverified: [...UNVERIFIED],
   };

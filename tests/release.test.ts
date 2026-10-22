@@ -200,7 +200,8 @@ test(
     assert.equal(typeof status.publishable, "boolean");
     assert.equal(
       status.publishable,
-      status.items.every((i: { status: string }) => i.status === "pass"),
+      status.working_tree.clean &&
+        status.items.every((i: { status: string }) => i.status === "pass"),
     );
     assert.ok(status.unverified.length >= 4);
     const files = unzip(

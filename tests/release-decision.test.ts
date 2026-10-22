@@ -50,7 +50,7 @@ test("all Linux CLI harnesses pass for this commit => publishable true", (t) => 
     pi_cli: passing("pi_cli"),
   });
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const d = decide(root, COMMIT);
+  const d = decide(root, COMMIT, []);
   assert.equal(d.publishable, true);
   assert.deepEqual(
     d.items.map((i) => [i.item, i.status, i.evidence]),
@@ -67,7 +67,7 @@ test("missing evidence for any harness => not_run and publishable false", (t) =>
   ]) {
     const root = repo(present);
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-    const d = decide(root, COMMIT);
+    const d = decide(root, COMMIT, []);
     assert.equal(d.publishable, false);
     assert.ok(d.items.some((i) => i.status === "not_run"));
   }
@@ -91,7 +91,7 @@ test("any failing, stale, dirty, wrong-platform or wrong-tool-count evidence => 
       pi_cli: passing("pi_cli"),
     });
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-    const d = decide(root, COMMIT);
+    const d = decide(root, COMMIT, []);
     assert.equal(d.publishable, false, JSON.stringify(patch));
     assert.equal(d.items[0].status, "fail", JSON.stringify(patch));
     assert.ok(d.items[0].reasons.length > 0);
@@ -101,6 +101,29 @@ test("any failing, stale, dirty, wrong-platform or wrong-tool-count evidence => 
 test("unreadable evidence fails closed", (t) => {
   const root = repo({ codex_cli: "{not json", pi_cli: passing("pi_cli") });
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  assert.equal(decide(root, COMMIT).publishable, false);
+  assert.equal(decide(root, COMMIT, []).publishable, false);
   assert.equal(checkEvidence("pi_cli", undefined, COMMIT).status, "not_run");
+});
+
+test("uncommitted changes at pack time => false with an explicit reason, even with passing evidence", (t) => {
+  const root = repo({
+    codex_cli: passing("codex_cli"),
+    pi_cli: passing("pi_cli"),
+  });
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  for (const dirty of [
+    [" M src/core.ts"],
+    ["?? notes.txt"],
+    ["M  a.ts", " D b.ts"],
+  ]) {
+    const d = decide(root, COMMIT, dirty);
+    assert.equal(d.publishable, false);
+    assert.equal(d.working_tree.clean, false);
+    assert.deepEqual(d.working_tree.changes, dirty);
+    assert.match(d.working_tree.reason!, /uncommitted change/);
+    assert.ok(d.items.every((i) => i.status === "pass"));
+  }
+  const clean = decide(root, COMMIT, []);
+  assert.equal(clean.publishable, true);
+  assert.equal(clean.working_tree.reason, null);
 });

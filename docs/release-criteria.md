@@ -18,6 +18,7 @@
 某项判为 `pass` 须同时满足：文件存在且可解析；`harness` 与规则项一致；`status: "pass"`；
 `platform: "linux"`；`commit` 等于打包时的 `git rev-parse HEAD`；`dirty: false`；
 `tool_count` 为 8（来自对已安装 runtime 的 MCP `tools/list`）；`tool_calls` 非空且每次真实工具调用 `ok: true`。
+此外，打包时 `git status --porcelain` 必须为空（仅 .gitignore 已忽略的路径如 `releases/` 除外）；否则 `publishable: false`，`working_tree.reason` 说明原因。
 任一项缺失（`not_run`）、过期、失败或不满足上述条件，`publishable` 即为 `false`。
 `npm run test:integrations` 每次运行前删除旧证据，失败时不保留证据文件。
 

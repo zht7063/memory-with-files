@@ -74,7 +74,14 @@ try {
     cwd: root,
     encoding: "utf8",
   }).trim();
-  const decision = decide(root, commit);
+  const porcelain = execFileSync(
+    "git",
+    ["status", "--porcelain", "--untracked-files=all"],
+    { cwd: root, encoding: "utf8" },
+  )
+    .split("\n")
+    .filter((line) => line.trim() !== "");
+  const decision = decide(root, commit, porcelain);
   fs.writeFileSync(
     path.join(out, "RELEASE-STATUS.json"),
     JSON.stringify(
@@ -84,7 +91,8 @@ try {
         ...decision,
         reason: decision.publishable
           ? "All Linux CLI harnesses passed for this commit (criteria linux-cli-harness/1)."
-          : "Linux CLI harness evidence missing, stale or failing; see items.",
+          : (decision.working_tree.reason ??
+            "Linux CLI harness evidence missing, stale or failing; see items."),
       },
       null,
       2,
