@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### 修复
+
+- Codex hook 延迟（[#30](https://github.com/zht7063/memory-with-files/issues/30)）：o200k tokenizer 改为首次精确计量时才加载（长驻 MCP/Pi 进程加载一次后复用）；hook 路径（SessionStart / UserPromptSubmit）不再加载 tokenizer，改用字符数估算 token（`estimateTokens`，偏保守，预算的 `tokenizer_id` 为 `approx_chars_v1`）；MCP `mwf_recall` 对 30 秒内完全相同的请求（含文件指纹校验）复用结果。`hooks.json` timeout 由 15 秒降为 5 秒，runner 截止由 14.5 秒降为 4.5 秒（0.3.0 的临时上调撤销）。新增 `scripts/measure-hook.ts` 用于测量冷启动 hook 延迟。
+
 ## 0.3.1
 
 ### 文档

@@ -1,4 +1,5 @@
 <!-- memory-with-files:protocol:start -->
+
 # Project memory protocol
 
 This project uses `.mwf` for durable, project-local memory.
@@ -28,4 +29,5 @@ For every recalled incident, read the full record and preserve: the failed appro
 Users add manual input to `inbox.md`. Agents classify it into managed records and preserve processing provenance.
 
 Use the `memory-with-files` skill when available for candidate creation, the complete schema, validation, maintenance, migration, compaction, and conflict procedures.
+
 <!-- memory-with-files:protocol:end -->

@@ -18,7 +18,9 @@ scope:
 # Embedded DOCX conversion
 
 ## Applicability
+
 Pandoc remains valid for text only.
 
 ## Invalid when
+
 Converter changes.

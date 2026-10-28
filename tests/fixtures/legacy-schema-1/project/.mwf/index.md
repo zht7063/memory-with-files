@@ -11,9 +11,9 @@ No records yet.
 
 ## Routed active memory
 
-| ID | Type | Status | Summary | Scope | Path |
-|---|---|---|---|---|---|
-| INC-20260909-001 | incident | resolved | Use LibreOffice for embedded objects | paths=reports/**; file_types=.docx; tools=pandoc; operations=conversion; keywords=embedded objects | `incidents/inc-20260909-001-embedded-docx-conversion.md` |
+| ID               | Type     | Status   | Summary                              | Scope                                                                                                | Path                                                     |
+| ---------------- | -------- | -------- | ------------------------------------ | ---------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| INC-20260909-001 | incident | resolved | Use LibreOffice for embedded objects | paths=reports/\*\*; file_types=.docx; tools=pandoc; operations=conversion; keywords=embedded objects | `incidents/inc-20260909-001-embedded-docx-conversion.md` |
 
 ## Pending candidates
 

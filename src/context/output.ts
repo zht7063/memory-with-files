@@ -1,12 +1,62 @@
-import { Tiktoken } from "js-tiktoken/lite";
-import ranks from "js-tiktoken/ranks/o200k_base";
+import { createRequire } from "node:module";
 import { MWFError } from "../storage/index.js";
 import type { Result } from "../contracts/result.js";
-let encoder: Tiktoken | undefined;
-export function measure(text: string) {
-  encoder ??= new Tiktoken(ranks);
+type Encoder = { encode(text: string, allowed: [], disallowed: []): number[] };
+let encoder: Encoder | undefined;
+// The o200k_base rank table costs ~3 s to build on slow hosts (issue #30), so it
+// is neither imported nor built until the first exact measurement. A long-lived
+// process (MCP server, Pi) pays that once and reuses the encoder; short-lived
+// hook processes never reach it because they measure with estimateTokens().
+function loadEncoder(): Encoder {
+  if (encoder) return encoder;
+  const require = createRequire(import.meta.url);
+  const { Tiktoken } = require("js-tiktoken/lite") as {
+    Tiktoken: new (ranks: unknown) => Encoder;
+  };
+  encoder = new Tiktoken(require("js-tiktoken/ranks/o200k_base"));
+  return encoder;
+}
+export const tokenizerLoaded = () => encoder !== undefined;
+export const ESTIMATE_TOKENIZER_ID = "approx_chars_v1";
+// Tokenizer-free upper-leaning approximation of the o200k_base count, used on
+// the hook path. Counts per lexical run instead of per byte: letter runs 1 token
+// per 4 chars, digit runs per 3 (o200k splits digits in threes), a lone space is
+// free (it prefixes the next word), other whitespace runs and each punctuation
+// char cost 1, CJK/kana/fullwidth 0.8, other BMP non-ASCII 1, astral 2; a 10%
+// margin is added. Measured against o200k_base it stays within 1.0-1.6x on
+// prose, code, JSON and hex hashes (tests/tokenizer.test.ts). Random base64 is
+// the known exception and is not expected in memory output.
+const RUN =
+  /[A-Za-z]+|[0-9]+|[ \t\r\n]+|[\u3000-\u30ff\u3400-\u9fff\uff00-\uffef]|[^\u0000-\u007f\u{10000}-\u{10ffff}]|[\u{10000}-\u{10ffff}]|[\s\S]/gu;
+export function estimateTokens(text: string) {
+  let tenths = 0;
+  for (const m of text.matchAll(RUN)) {
+    const run = m[0],
+      c = run.codePointAt(0)!;
+    if (c >= 65 && c <= 122 && /^[A-Za-z]/.test(run))
+      tenths += Math.ceil(run.length / 4) * 10;
+    else if (c >= 48 && c <= 57) tenths += Math.ceil(run.length / 3) * 10;
+    else if (c === 32 || c === 9 || c === 10 || c === 13)
+      tenths += run === " " ? 0 : 10;
+    else if (c < 128) tenths += 10;
+    else if (c > 0xffff) tenths += 20;
+    else if (
+      (c >= 0x3000 && c <= 0x30ff) ||
+      (c >= 0x3400 && c <= 0x9fff) ||
+      (c >= 0xff00 && c <= 0xffef)
+    )
+      tenths += 8;
+    else tenths += 10;
+  }
+  return Math.ceil((tenths * 1.1) / 10);
+}
+export type Measure = "exact" | "estimate";
+export function measure(text: string, mode: Measure = "exact") {
   return {
-    reference_tokens: encoder.encode(text, [], []).length,
+    reference_tokens:
+      mode === "estimate"
+        ? estimateTokens(text)
+        : loadEncoder().encode(text, [], []).length,
     bytes: Buffer.byteLength(text),
   };
 }
@@ -46,6 +96,7 @@ export function boundResult(
   input: BudgetInput,
   kind: keyof typeof limits,
   page?: { text: string; identity: unknown },
+  mode: Measure = "exact",
 ) {
   const [defaultTokens, defaultBytes] = limits[kind];
   const tokenLimit = input.max_reference_tokens ?? defaultTokens,
@@ -56,7 +107,7 @@ export function boundResult(
   const budget = {
     limit_reference_tokens: tokenLimit,
     used_reference_tokens: 0,
-    tokenizer_id: "o200k_base",
+    tokenizer_id: mode === "estimate" ? ESTIMATE_TOKENIZER_ID : "o200k_base",
     max_output_bytes: byteLimit,
     output_bytes: 0,
   };
@@ -65,7 +116,7 @@ export function boundResult(
     for (let i = 0; i < 12; i++) {
       const text = serialize(result);
       if (Buffer.byteLength(text) > byteLimit) return false;
-      const m = measure(text);
+      const m = measure(text, mode);
       if (
         m.reference_tokens === budget.used_reference_tokens &&
         m.bytes === budget.output_bytes

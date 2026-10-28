@@ -53,6 +53,8 @@ export function handleHook(input: unknown) {
     a.prompt ?? "",
     a.hook_event_name === "SessionStart",
     a.context_limits,
+    // Hook processes are short-lived: never build the o200k tokenizer here (#30).
+    "estimate",
   );
   if (!output) return {};
   // stdout completion is not a host acknowledgement.

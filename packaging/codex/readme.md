@@ -5,7 +5,7 @@
 ## 内容
 
 - `plugin.json`：插件名 `mwf`，`extensions.com.openai` 声明 `hooks: ./hooks/hooks.json` 与 `onboardingSkill: ./skills/setup/SKILL.md`。`version` 为 `0.3.1`，打包时由 `scripts/pack-release.ts` 以 package.json 的版本覆盖，保证与 runtime 一致。
-- `hooks/hooks.json`：SessionStart（matcher `startup|resume|clear|compact`）与 UserPromptSubmit 调用 `runtime/dist/integrations/codex/runner.js`，timeout 15 秒（0.3.0 起由 5 秒上调；runner 在 14.5 秒终止读取）。每条消息都会触发 UserPromptSubmit，因此在慢机器上每条消息最多可能等待约 15 秒；快机器不受影响。
+- `hooks/hooks.json`：SessionStart（matcher `startup|resume|clear|compact`）与 UserPromptSubmit 调用 `runtime/dist/integrations/codex/runner.js`，timeout 5 秒（0.3.0 曾临时上调到 15 秒，下一版起随 hook 路径免 tokenizer 而恢复；runner 在 4.5 秒终止读取）。hook 路径用字符数估算 token，不加载 o200k tokenizer，慢主机上也在 5 秒内完成；每条消息都会触发 UserPromptSubmit，超时只会跳过本次记忆注入并提示，不阻塞任务。
 
 ## 组装
 
