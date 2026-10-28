@@ -552,6 +552,7 @@ test("test 4: storage exposes no API to extend the managed surface", async () =>
     "recover",
     "safePath",
     "walk",
+    "withLockDeadline",
     "withProjectLock",
   ]);
   assert.deepEqual(Object.keys(receiptModule).sort(), [

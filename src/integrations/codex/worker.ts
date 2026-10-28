@@ -1,5 +1,7 @@
 import { handleHook } from "./hook.js";
 import { failureNotice } from "./notice.js";
+import { withLockDeadline } from "../../storage/index.js";
+import { HOOK_LOCK_BUDGET_MS } from "./timeouts.js";
 let input = "";
 let parsed: unknown;
 try {
@@ -9,7 +11,11 @@ try {
       throw new Error("Hook input too large");
   }
   parsed = JSON.parse(input);
-  console.log(JSON.stringify(handleHook(parsed)));
+  console.log(
+    JSON.stringify(
+      withLockDeadline(HOOK_LOCK_BUDGET_MS, () => handleHook(parsed)),
+    ),
+  );
 } catch {
   console.log(
     JSON.stringify(

@@ -4,7 +4,7 @@
 
 ### 修复
 
-- Codex hook 延迟（[#30](https://github.com/zht7063/memory-with-files/issues/30)）：o200k tokenizer 改为首次精确计量时才加载（长驻 MCP/Pi 进程加载一次后复用）；hook 路径（SessionStart / UserPromptSubmit）不再加载 tokenizer，改用字符数估算 token（`estimateTokens`，偏保守，预算的 `tokenizer_id` 为 `approx_chars_v1`）；MCP `mwf_recall` 对 30 秒内完全相同的请求（含文件指纹校验）复用结果。`hooks.json` timeout 由 15 秒降为 5 秒，runner 截止由 14.5 秒降为 4.5 秒（0.3.0 的临时上调撤销）。新增 `scripts/measure-hook.ts` 用于测量冷启动 hook 延迟。
+- Codex hook 延迟（[#30](https://github.com/zht7063/memory-with-files/issues/30)）：o200k tokenizer 改为首次精确计量时才加载（长驻 MCP/Pi 进程加载一次后复用）；hook 路径（SessionStart / UserPromptSubmit）不再加载 tokenizer，改用不依赖 tokenizer 的保守估算（`estimateTokens`：按词法 run 计价、+10% 余量，并以字节数为硬上限；在英文/代码/JSON/空白/简繁中文/日韩/西里尔/阿拉伯/泰/印地/emoji/稀有汉字等语料上不低于 o200k 精确值，属校准估算而非证明；预算的 `tokenizer_id` 为 `approx_chars_v1`）；MCP `mwf_recall` 对 30 秒内完全相同的请求（含文件指纹校验）复用结果。SessionStart/UserPromptSubmit 的 `hooks.json` timeout 由 15 秒降为 5 秒，runner 截止由 14.5 秒降为 4.5 秒（0.3.0 的临时上调撤销；数值为暂定，真机验证推迟到 1.0）；runner 按事件取截止时间（`--stop` 事件保持 14.5 秒，见 `codex/timeouts.ts`）。hook 路径的项目锁总等待上限为 2 秒（`withLockDeadline`），锁被占用时 fail-open 输出“未恢复记忆”提示，而不是被 4.5 秒 SIGKILL。新增 `scripts/measure-hook.ts` 用于测量冷启动 hook 延迟。
 
 ## 0.3.1
 

@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -164,4 +164,127 @@ test("MCP recall reuses a short-window result and sees writes immediately", asyn
   assert.match(await recall(), /CACHE_MARK_NEW/);
   add("Cache three", "CACHE_MARK_EXTERNAL proxy settings");
   assert.match(await recall(), /CACHE_MARK_EXTERNAL/);
+});
+
+import {
+  killAfterMs,
+  HOOK_KILL_MS,
+  STOP_HOOK_KILL_MS,
+  HOOK_LOCK_BUDGET_MS,
+} from "../dist/integrations/codex/timeouts.js";
+
+test("hook timeouts are per event: hooks.json always exceeds the runner kill time of the same event", () => {
+  assert.equal(killAfterMs(["node", "runner.js"]), HOOK_KILL_MS);
+  assert.equal(killAfterMs(["node", "runner.js", "--stop"]), STOP_HOOK_KILL_MS);
+  assert.ok(HOOK_LOCK_BUDGET_MS < HOOK_KILL_MS);
+  const hooks = JSON.parse(
+    fs.readFileSync(
+      path.join(repo, "packaging/codex/hooks/hooks.json"),
+      "utf8",
+    ),
+  ).hooks as Record<
+    string,
+    { hooks: { command: string; timeout: number }[] }[]
+  >;
+  for (const event of ["SessionStart", "UserPromptSubmit"])
+    for (const group of hooks[event])
+      for (const h of group.hooks) {
+        assert.equal(h.timeout, 5, `${event} hook timeout`);
+        assert.ok(h.timeout * 1000 > killAfterMs(h.command.split(/\s+/)));
+      }
+  // Whatever other events exist (Stop, added separately) keep a margin over the
+  // kill time their command line selects.
+  for (const [event, groups] of Object.entries(hooks))
+    for (const group of groups)
+      for (const h of group.hooks)
+        assert.ok(
+          h.timeout * 1000 > killAfterMs(h.command.split(/\s+/)),
+          `${event}: hooks.json timeout must exceed the runner kill time`,
+        );
+});
+
+test("hook path under project-lock contention fails open before the runner kill time", async (t) => {
+  const root = tmp(t, "mwf-hook-lock-");
+  const setup = `
+    import fs from "node:fs";
+    import path from "node:path";
+    import { execute } from ${JSON.stringify(path.join(repo, "dist/core.js"))};
+    import { lifecycle } from ${JSON.stringify(path.join(repo, "dist/lifecycle/index.js"))};
+    const root = ${JSON.stringify(root)};
+    execute("init", { project_root: root, git_mode: "track" });
+    lifecycle("attach", { project_root: root, harness: "pi", plugin_root: ${JSON.stringify(repo)}, apply: true });
+    const file = path.join(root, ".mwf/local/integration.json");
+    const receipt = JSON.parse(fs.readFileSync(file, "utf8"));
+    receipt.clients.codex = { ...receipt.clients.pi };
+    fs.writeFileSync(file, JSON.stringify(receipt));
+    execute("add", { project_root: root, type: "preference", title: "Busy", summary: "BUSY_MARK", body: "Synthetic" });
+  `;
+  const prepared = spawnSync(
+    process.execPath,
+    ["--input-type=module", "-e", setup],
+    { encoding: "utf8" },
+  );
+  assert.equal(prepared.status, 0, prepared.stderr);
+  const payload = JSON.stringify({
+    cwd: root,
+    session_id: "busy",
+    hook_event_name: "SessionStart",
+    source: "startup",
+  });
+  const run = () =>
+    new Promise<{ ms: number; code: number | null; out: string }>((resolve) => {
+      const started = Date.now();
+      const child = spawn(
+        process.execPath,
+        [path.join(repo, "dist/integrations/codex/runner.js")],
+        { stdio: ["pipe", "pipe", "ignore"] },
+      );
+      let out = "";
+      child.stdout.on("data", (c) => (out += String(c)));
+      child.on("close", (code) =>
+        resolve({ ms: Date.now() - started, code, out }),
+      );
+      child.stdin.end(payload);
+    });
+  // A second process holds the project lock for 8 s (longer than any hook budget).
+  const holder = spawn(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `import { DatabaseSync } from "node:sqlite";
+       const db = new DatabaseSync(${JSON.stringify(path.join(root, ".mwf/local/runtime.sqlite"))});
+       db.exec("BEGIN IMMEDIATE");
+       console.log("held");
+       setTimeout(() => { db.exec("COMMIT"); db.close(); }, 8000);`,
+    ],
+    { stdio: ["ignore", "pipe", "ignore"] },
+  );
+  t.after(() => holder.kill("SIGKILL"));
+  await new Promise<void>((resolve) =>
+    holder.stdout.once("data", () => resolve()),
+  );
+  const busy = await run();
+  assert.equal(busy.code, 0);
+  assert.ok(
+    busy.ms < HOOK_KILL_MS,
+    `busy hook took ${busy.ms} ms, expected to fail open before ${HOOK_KILL_MS} ms`,
+  );
+  const notice = JSON.parse(busy.out);
+  assert.match(notice.systemMessage, /not restored/);
+  assert.doesNotMatch(notice.systemMessage, /timed out/);
+  assert.equal(notice.hookSpecificOutput, undefined);
+  // The wait was bounded by the budget, not instant: the lock was really tried.
+  assert.ok(
+    busy.ms >= HOOK_LOCK_BUDGET_MS - 300,
+    `returned too early: ${busy.ms}`,
+  );
+  holder.kill("SIGKILL");
+  await new Promise((resolve) => holder.once("close", resolve));
+  const free = await run();
+  assert.equal(free.code, 0);
+  assert.match(
+    JSON.parse(free.out).hookSpecificOutput.additionalContext,
+    /BUSY_MARK/,
+  );
 });

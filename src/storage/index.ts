@@ -254,12 +254,31 @@ export class Transaction {
     return changes.map((c) => c.path);
   }
 }
+const LOCK_WAIT_MS = 10000;
+let lockDeadline: number | undefined;
+// Bounds how long every project-lock acquisition inside `fn` may wait in total.
+// Short-lived hook processes use it so lock contention degrades to BUSY (the
+// hook then fails open) before the host or runner kills them (#30).
+export function withLockDeadline<T>(budgetMs: number, fn: () => T): T {
+  const previous = lockDeadline;
+  lockDeadline = Date.now() + budgetMs;
+  try {
+    return fn();
+  } finally {
+    lockDeadline = previous;
+  }
+}
 export function withProjectLock<T>(root: string, fn: () => T): T {
   // This empty SQLite database is an OS-backed mutex only. No memory or result
   // data lives in it. Keep its inode in place; deleting a live lock splits writers.
   const file = safePath(root, ".mwf/local/runtime.sqlite");
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-  const db = new DatabaseSync(file, { timeout: 10000 });
+  const db = new DatabaseSync(file, {
+    timeout:
+      lockDeadline === undefined
+        ? LOCK_WAIT_MS
+        : Math.max(1, Math.min(LOCK_WAIT_MS, lockDeadline - Date.now())),
+  });
   try {
     db.exec("BEGIN IMMEDIATE");
     const value = fn();

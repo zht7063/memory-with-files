@@ -4,7 +4,7 @@
 
 ## 导出（`output.ts`）
 
-- `measure`：离线 `js-tiktoken` o200k_base 计量 `reference_tokens` 与 UTF-8 bytes（不是模型计费 token）。tokenizer 懒加载（首次精确计量时才 `require`，之后复用）；`measure(text, "estimate")` / `estimateTokens` 是不加载 tokenizer 的字符数估算（偏保守），Codex hook 路径使用，预算中 `tokenizer_id` 为 `approx_chars_v1`。
+- `measure`：离线 `js-tiktoken` o200k_base 计量 `reference_tokens` 与 UTF-8 bytes（不是模型计费 token）。tokenizer 懒加载（首次精确计量时才 `require`，之后复用）；`measure(text, "estimate")` / `estimateTokens` 是不加载 tokenizer 的保守估算（按词法 run 计价 + 10% 余量，上限为字节数；校准语料上不低于精确值，但不是证明，详见 output.ts 注释），Codex hook 路径使用，预算中 `tokenizer_id` 为 `approx_chars_v1`。
 - `recall-cache.ts`：长驻 MCP 进程内 30 秒窗口的 recall 结果缓存，key = 完整入参 + 记忆文件 stat 指纹，写入后自动失效。
 - `limits`、`BudgetInput`：默认上限与 `max_reference_tokens` / `max_output_bytes` 输入。
 - `encodeCursor` / `decodeCursor`：绑定内容 identity 的分页 cursor。

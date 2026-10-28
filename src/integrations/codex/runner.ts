@@ -1,8 +1,10 @@
 import { failureNotice } from "./notice.js";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-// Hook timeout is 5 s (packaging/codex/hooks/hooks.json); stay below it. The
-// hook path is tokenizer-free (issue #30), so slow hosts finish well inside.
+import { killAfterMs } from "./timeouts.js";
+// Kill deadline per event (timeouts.ts): 4.5 s for SessionStart/UserPromptSubmit
+// (hooks.json 5 s), 14.5 s for `--stop` (hooks.json 15 s). The hook path is
+// tokenizer-free (issue #30), so slow hosts finish well inside.
 // A supervisor can terminate synchronous filesystem/lock work at the hook deadline.
 const child = spawn(
   process.execPath,
@@ -26,7 +28,7 @@ let output = "",
 const timer = setTimeout(() => {
   expired = true;
   child.kill("SIGKILL");
-}, 4_500);
+}, killAfterMs(process.argv));
 process.stdin.pipe(child.stdin);
 child.stdin.on("error", () => {});
 child.stdout.on("data", (chunk) => {
