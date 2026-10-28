@@ -148,6 +148,7 @@ export async function serve(
           if (binding && !hostConfirmed) {
             const client = server.server.getClientVersion();
             hostConfirmed = confirmHostLoad(binding, {
+              channel: "mcp",
               trigger: `mcp:${op}`,
               hostVersion: client?.version ?? null,
               hostName: client?.name ?? null,

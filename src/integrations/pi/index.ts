@@ -87,6 +87,7 @@ export default function extension(pi: PiAPI) {
       checkBinding(new Transaction(root), binding);
       // Pi started the extension in a trusted project: it is loaded.
       confirmHostLoad(binding, {
+        channel: "extension",
         trigger: `extension:${trigger}`,
         hostVersion: typeof ctx.version === "string" ? ctx.version : null,
         hostName: "pi",

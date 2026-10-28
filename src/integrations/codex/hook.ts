@@ -40,13 +40,13 @@ export function handleHook(input: unknown) {
   checkBinding(new Transaction(root), binding, false);
   // The host ran this hook: it loaded and trusted the plugin.
   confirmHostLoad(binding, {
+    channel: "hook",
     trigger: `hook:${a.hook_event_name}`,
-    hostVersion:
-      typeof a.codex_version === "string"
-        ? a.codex_version
-        : typeof a.version === "string"
-          ? a.version
-          : null,
+    // The documented hook input has no version field; take one if a Codex build
+    // sends it. Otherwise status falls back to the MCP clientInfo version.
+    hostVersion: [a.codex_version, a.client_version, a.version].find(
+      (v): v is string => typeof v === "string" && v !== "",
+    ),
     hostName: "codex",
   });
   if (!a.session_id)

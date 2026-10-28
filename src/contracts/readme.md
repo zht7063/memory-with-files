@@ -7,6 +7,7 @@
 - `version.ts`：`RUNTIME_VERSION`（从包内 package.json 读取）、`API_VERSION = 2`。
 - `error.ts`：`MWFError`（带 code 的错误类型，如 `INVALID_INPUT`、`RUNTIME_MISMATCH`、`CONTEXT_REQUIRED`）。
 - `result.ts`：`failure()`，把异常转换为统一的失败结果（ok=false、error.code/message、runtime/api 版本）。
+- `host-confirmation.ts`：宿主加载确认的纯函数契约——`requiredChannel`（Codex=hook，Pi=extension）、`currentConfirmation`（只认当前 generation／runtime_version 的 `probe.host_confirmation`）、`hostLoad`（status/doctor 与 `probe.host_confirmed` 共用的判定）。记录放在自由格式的 `probe` 内以兼容旧运行时的严格 receipt schema。
 - `records.ts`：schema 1 记录契约——`SCHEMA_VERSION`、`SCOPE_KEYS`、`RECORD_DIRS`/`ALL_DIRS`、`TYPES`、`typeSchema`/`scopeSchema`、`parseRecord`、`validateRecord`、`render`、`boundaries`（适用／失效边界解析）、`secrets`/`requireSafe`（凭据拦截）、旧 AGENTS 块 marker 与 `managed()`。
 
 各操作的输入 schema 位于 `src/core/index.ts` 的 `schemas`，receipt schema 位于 `src/storage/receipt.ts`，不在本目录。
