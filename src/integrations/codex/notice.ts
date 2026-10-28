@@ -51,3 +51,8 @@ export function isStopEvent(input: unknown) {
     (input as { hook_event_name?: unknown }).hook_event_name === "Stop"
   );
 }
+// The Stop hook command carries `--stop` (see hooks.json), so failures are
+// recognised even when stdin is empty, malformed, not an object or oversized.
+export function isStopRun(argv: readonly string[], input: unknown) {
+  return argv.includes("--stop") || isStopEvent(input);
+}

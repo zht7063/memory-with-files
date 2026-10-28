@@ -1,5 +1,5 @@
 import { handleHook } from "./hook.js";
-import { failureNotice, isStopEvent } from "./notice.js";
+import { failureNotice, isStopRun } from "./notice.js";
 let input = "";
 let parsed: unknown;
 try {
@@ -13,7 +13,7 @@ try {
 } catch {
   console.log(
     JSON.stringify(
-      isStopEvent(parsed)
+      isStopRun(process.argv, parsed)
         ? {}
         : failureNotice(
             parsed,

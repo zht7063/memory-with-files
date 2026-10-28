@@ -12,9 +12,13 @@
 
 ## Stop 钩子
 
-每个 agent 回合结束时触发一次。项目已启用 Codex 且绑定有效时，首次触发返回 `{"decision":"block","reason":<自检提示>}`，Codex 将 reason 作为续写提示交给同一会话，由 agent 做两项独立判断：(A) 本回合是否有值得长期保存的记忆，有则经 `mwf_add`/`mwf_propose` 写入（索引 `index.md` 由写入路径维护）；(B) 本回合是否有实质进展（文件被创建/修改/删除，如 apply_patch 等编辑工具调用或改动仓库的 shell 命令；构建/测试/提交等推进工作的命令；任务或计划项推进、完成或受阻，如 update_plan；产出交付物；改变方向的决定），是则先 `mwf_handoff action=read` 取当前 revision（NOT_FOUND 为 0），再以 `expected_revision` 保存（goal/completed/next_action/blockers/decisions，覆盖式更新、revision 加一，合并仍有效的旧条目；有明确 task_id 时按 task 保存，否则用本会话上下文提供的 session_ref，二者皆无则跳过）。纯聊天、问答、只读探索、澄清提问或仅保存记忆的回合不写 handoff。两者皆不适用则静默结束。判断由 agent 依据摘录与 transcript_path 完成；hook 不解析 transcript（其格式不稳定）。钩子本身不写任何记忆，不读取 recall、不占用 context 预算。
+每个 agent 回合结束时触发一次。项目已启用 Codex 且绑定有效时，首次触发返回 `{"decision":"block","reason":<自检提示>}`，Codex 将 reason 作为续写提示交给同一会话，由 agent 做两项独立判断：(A) 本回合是否有值得长期保存的记忆，有则经 `mwf_add`/`mwf_propose` 写入（索引 `index.md` 由写入路径维护）；(B) 本回合是否有实质进展（文件被创建/修改/删除，如 apply_patch 等编辑工具调用或改动仓库的 shell 命令；构建/测试/提交等推进工作的命令；任务或计划项推进、完成或受阻，如 update_plan；产出交付物；改变方向的决定），是则先 `mwf_handoff action=read` 取当前 revision（NOT_FOUND 为 0），再以 `expected_revision` 保存（goal/completed/next_action/blockers/decisions，覆盖式更新、revision 加一，合并仍有效的旧条目；有明确 task_id 时按 task 保存，否则用本会话上下文提供的 session_ref，二者皆无则跳过）。纯聊天、问答、只读探索、澄清提问或仅保存记忆的回合不写 handoff。两者皆不适用则静默结束。判断由 agent 依据摘录与 transcript_path 完成；hook 不解析 transcript（其格式不稳定）。钩子本身不写任何记忆，不读取 recall、不占用 context 预算；唯一的写入是有界的防循环标记（见下）。
 
-`stop_hook_active=true`（该回合已被 Stop 续写过）时直接放行，避免循环。项目未启用、绑定失效、输入非法、worker 崩溃/启动失败或 runner 14.5 秒超时，一律放行（输出 `{}`），不产生 systemMessage，以免每回合重复提示。输入超过 128 KiB（如超长 `last_assistant_message`）时 worker 无法解析事件类型，沿用既有读取失败提示。
+`stop_hook_active=true`（该回合已被 Stop 续写过）时直接放行，避免循环。纵深防御：宿主缺失或为 null 该字段时，以 (session_id, turn_id) 的哈希为键在 `.mwf/local/stop-guards/` 独占创建一个极小标记（`guard.ts`，超过 200 个时按修改时间修剪到 100 个），同一回合第二次触发即放行；无 session_id/turn_id 时仅信任显式 `stop_hook_active: false`；标记无法创建时放行而不是阻断。项目未启用、绑定失效、输入非法、worker 崩溃/启动失败或 runner 14.5 秒超时，一律放行（输出 `{}`），不产生 systemMessage，以免每回合重复提示。Stop 的命令带 `--stop` 参数（runner 转交 worker），因此空输入、非法 JSON、`null`、数组、超过 128 KiB 等无法解析事件类型的输入同样静默放行；其他事件的失败提示不变。
+
+提示词的注入防护：`last_assistant_message` 取末尾 1500 字符，`<<<`/`>>>` 等连续尖括号被替换，围栏名由摘录内容哈希派生，控制/分隔/双向字符被清除；`request_id` 建议值由 hash(session_id, turn_id) 派生；提示写明 handoff 各数组 20 项上限、`relevant_ids` 须为已存在记录，以及本回合已保存过 handoff 则跳过。
+
+未验证：Stop 续写提示是否会再触发 UserPromptSubmit 的 recall/预算消耗；`stop_hook_active` 在续写轮的真实取值；真实 turn_id 形态。
 
 打包的 `packaging/codex/hooks/hooks.json` 以 `node ${PLUGIN_ROOT}/runtime/dist/integrations/codex/runner.js` 注册三个事件（SessionStart、UserPromptSubmit、Stop），timeout 15 秒（0.3.0 起由 5 秒上调，见 CHANGELOG）。每条消息都会触发 UserPromptSubmit，因此在慢机器上每条消息最多可能等待约 15 秒；快机器不受影响。MCP 不由插件 manifest 声明，而由 `attach --harness codex` 写入项目 `.codex/config.toml`。
 

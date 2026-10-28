@@ -4,6 +4,7 @@ import { discover, checkBinding, type Binding } from "../shared/binding.js";
 import { receipt } from "../../storage/receipt.js";
 import { Transaction } from "../../storage/index.js";
 import { stopReason } from "./stop.js";
+import { claimStopGuard } from "./guard.js";
 import {
   beginContext,
   prepareContext,
@@ -31,8 +32,9 @@ function bindingFor(
     cwd,
   };
 }
-// Stop never reads memory or touches the context budget. A first fire in an
-// enabled project asks the agent to self-check; any re-entry or failure allows the stop.
+// Stop never reads memory or touches the context budget; its only write is the
+// bounded loop-guard marker. A first fire in an enabled project asks the agent to
+// self-check; any re-entry or failure allows the stop.
 function handleStop(a: {
   cwd: string;
   session_id?: string;
@@ -52,6 +54,12 @@ function handleStop(a: {
       bindingFor(root, client.binding_generation, a.cwd),
       false,
     );
+    // Defence in depth when the host omits stop_hook_active: block at most once
+    // per (session_id, turn_id). Without those identifiers only an explicit
+    // `stop_hook_active: false` is trusted.
+    if (a.session_id && typeof a.turn_id === "string" && a.turn_id) {
+      if (!claimStopGuard(root, a.session_id, a.turn_id)) return {};
+    } else if (a.stop_hook_active !== false) return {};
     return { decision: "block", reason: stopReason(a) };
   } catch {
     return {};
