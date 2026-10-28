@@ -18,11 +18,25 @@ const blockResource = z
   })
   .strict();
 export const resourceSchema = z.discriminatedUnion("kind", [blockResource]);
+// Written by the first hook / extension start / MCP call that reaches the
+// runtime after attach. Every attach/rebind rebuilds the client entry, so a
+// re-attach (new reload) starts unconfirmed again.
+const hostConfirmationSchema = z
+  .object({
+    time: z.string(),
+    host_version: z.string().nullable(),
+    host_name: z.string().nullable(),
+    trigger: z.string(),
+    binding_generation: z.string(),
+    runtime_version: z.string(),
+  })
+  .strict();
 function client<T extends z.ZodTypeAny>(resource: T) {
   return z
     .object({
       enabled: z.boolean(),
       probe: z.record(z.unknown()).optional(),
+      host_confirmation: hostConfirmationSchema.optional(),
       binding_generation: z.string().optional(),
       runtime_version: z.string().optional(),
       api_version: z.number().optional(),

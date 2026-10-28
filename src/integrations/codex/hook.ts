@@ -1,6 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { discover, checkBinding, type Binding } from "../shared/binding.js";
+import { confirmHostLoad } from "../shared/confirm.js";
 import { receipt } from "../../storage/receipt.js";
 import { Transaction } from "../../storage/index.js";
 import {
@@ -37,6 +38,17 @@ export function handleHook(input: unknown) {
     cwd: a.cwd,
   };
   checkBinding(new Transaction(root), binding, false);
+  // The host ran this hook: it loaded and trusted the plugin.
+  confirmHostLoad(binding, {
+    trigger: `hook:${a.hook_event_name}`,
+    hostVersion:
+      typeof a.codex_version === "string"
+        ? a.codex_version
+        : typeof a.version === "string"
+          ? a.version
+          : null,
+    hostName: "codex",
+  });
   if (!a.session_id)
     return {
       systemMessage:

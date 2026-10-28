@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### 新增
+
+- 宿主加载确认：attach/rebind 后，首次 Codex hook（SessionStart 或 UserPromptSubmit）、首次 Pi 扩展启动（受信任项目）或首次 MCP 工具调用，会在 `.mwf/local/integration.json` 的 `clients.<host>.host_confirmation` 写入确认记录（`time`、`host_version`、`host_name`、`trigger`、`binding_generation`、`runtime_version`），并把 `probe.host_confirmed` 由 `unknown` 置为 `confirmed`。`status` / `doctor` 按客户端在 `probed.<host>.host_load` 显示 `pending` 或 `confirmed`（`host_version` 取宿主上报的版本；hook 载荷或 Pi 未提供时为 null，MCP 取 clientInfo）。attach 后超过 10 分钟仍未确认时，`host_load.hint` 与顶层 `hints` 给出「可能未加载或未信任」（仅提示，不使 doctor 失败）。重新 attach/rebind 会重建客户端条目，确认记录随之清空；attach 自带的独立 MCP 探测（无 `--harness`）不计入确认。写入为尽力而为，失败不影响 hook、扩展或工具调用。
+
 ## 0.3.1
 
 ### 文档

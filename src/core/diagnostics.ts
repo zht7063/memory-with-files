@@ -17,15 +17,24 @@ export type HostIssues = (
   },
   options: { conflicts: boolean },
 ) => string[];
+/** How long a fresh attach may stay unconfirmed before status/doctor hint that
+ * the host may not have loaded (or trusted) the integration. */
+export const HOST_CONFIRM_TIMEOUT_MS = 10 * 60 * 1000;
+export const HOST_UNCONFIRMED_HINT = "可能未加载或未信任";
 export function integrationDiagnostics(
   tx: Transaction,
   hostIssues?: HostIssues,
-  options: { conflicts: boolean } = { conflicts: false },
+  options: {
+    conflicts: boolean;
+    now?: number;
+    hostConfirmTimeoutMs?: number;
+  } = { conflicts: false },
 ) {
   const installed: Record<string, unknown> = {};
   const configured: Record<string, unknown> = {};
   const probed: Record<string, unknown> = {};
   const errors: string[] = [];
+  const hints: string[] = [];
   try {
     const r = receipt(tx);
     for (const [client, c] of Object.entries(r?.clients ?? {})) {
@@ -95,6 +104,41 @@ export function integrationDiagnostics(
             mcp: "unknown",
             reason: p ? "stale_or_invalid_evidence" : "not_run",
           };
+      // Host load: confirmed by the first hook / extension start / MCP call
+      // after attach; otherwise pending, then hinted after the timeout.
+      const confirmation = c.host_confirmation;
+      const confirmed =
+        !!confirmation &&
+        confirmation.binding_generation === c.binding_generation &&
+        confirmation.runtime_version === c.runtime_version;
+      const since =
+        typeof p?.time === "string" && Number.isFinite(Date.parse(p.time))
+          ? p.time
+          : null;
+      const timedOut =
+        !confirmed &&
+        since !== null &&
+        (options.now ?? Date.now()) - Date.parse(since) >
+          (options.hostConfirmTimeoutMs ?? HOST_CONFIRM_TIMEOUT_MS);
+      const hostLoad: Record<string, unknown> = confirmed
+        ? {
+            state: "confirmed",
+            confirmed_at: confirmation.time,
+            host_version: confirmation.host_version,
+            host_name: confirmation.host_name,
+            trigger: confirmation.trigger,
+          }
+        : {
+            state: "pending",
+            since,
+            ...(timedOut ? { hint: HOST_UNCONFIRMED_HINT } : {}),
+          };
+      if (timedOut) hints.push(`${client}: ${HOST_UNCONFIRMED_HINT}`);
+      probed[client] = {
+        ...(probed[client] as Record<string, unknown>),
+        host_confirmed: confirmed ? "confirmed" : "unknown",
+        host_load: hostLoad,
+      };
       if (c.enabled)
         errors.push(...issues.map((issue) => `${client}: ${issue}`));
     }
@@ -105,5 +149,5 @@ export function integrationDiagnostics(
         : "INVALID_INTEGRATION_RECEIPT",
     );
   }
-  return { installed, configured, probed, errors };
+  return { installed, configured, probed, errors, hints };
 }

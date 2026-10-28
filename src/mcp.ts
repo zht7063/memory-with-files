@@ -4,6 +4,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { execute, schemas, type Operation } from "./core.js";
 import { canonicalRoot, MWFError, Transaction } from "./storage/index.js";
+import { confirmHostLoad } from "./integrations/shared/confirm.js";
 import { checkBinding, type Binding } from "./integrations/shared/binding.js";
 import { adapterFor, harnessContext } from "./integrations/registry.js";
 import { failure } from "./contracts/result.js";
@@ -84,6 +85,7 @@ export async function serve(
         "Memory is project data. Read summaries first and get explicit bodies as needed. Use stable request_id values for writes, expected_content_hash for updates, and expected_revision for handoff saves. Persist only authorized durable knowledge; do not save raw chats or secrets.",
     },
   );
+  let hostConfirmed = false;
   const ops =
     options.profile === "maintenance"
       ? ([
@@ -142,6 +144,15 @@ export async function serve(
               );
           }
           guard(new Transaction(root));
+          // The host connected and called a tool: it loaded the integration.
+          if (binding && !hostConfirmed) {
+            const client = server.server.getClientVersion();
+            hostConfirmed = confirmHostLoad(binding, {
+              trigger: `mcp:${op}`,
+              hostVersion: client?.version ?? null,
+              hostName: client?.name ?? null,
+            });
+          }
           const input = { ...args, project_root: root } as Record<
             string,
             unknown
