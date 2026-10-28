@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### 新增
+
+- Codex 插件新增 `Stop` hook：每个 agent 回合结束时首次触发返回 `{decision:"block", reason}`，提示 agent 自检本回合是否有值得保存到 `.mwf/` 的 preference/decision/incident/task/knowledge（带 scope 标签），有则经 `mwf_add`/`mwf_propose` 写入，并判断本回合是否有实质进展（文件改动、任务推进），有则经 `mwf_handoff` 按 task（或会话）覆盖式保存 completed/next_action/blockers/decisions（先 read 取 revision，再以 expected_revision 保存，revision 加一），纯聊天回合跳过，均不适用则静默结束；`stop_hook_active=true`、项目未启用、超时或任何失败（含空/非法/超大输入，Stop 命令带 `--stop`）均放行；宿主缺失 `stop_hook_active` 时以 (session_id, turn_id) 本地标记兜底，同一回合只 block 一次。SessionStart/UserPromptSubmit 行为不变。
+
 ### 修复
 
 - Codex hook 延迟（[#30](https://github.com/zht7063/memory-with-files/issues/30)）：o200k tokenizer 改为首次精确计量时才加载（长驻 MCP/Pi 进程加载一次后复用）；hook 路径（SessionStart / UserPromptSubmit）不再加载 tokenizer，改用不依赖 tokenizer 的保守估算（`estimateTokens`：按词法 run 计价、+10% 余量，并以字节数为硬上限；在英文/代码/JSON/空白/简繁中文/日韩/西里尔/阿拉伯/泰/印地/emoji/稀有汉字等语料上不低于 o200k 精确值，属校准估算而非证明；预算的 `tokenizer_id` 为 `approx_chars_v1`）；MCP `mwf_recall` 对 30 秒内完全相同的请求（含文件指纹校验）复用结果。SessionStart/UserPromptSubmit 的 `hooks.json` timeout 由 15 秒降为 5 秒，runner 截止由 14.5 秒降为 4.5 秒（0.3.0 的临时上调撤销；数值为暂定，真机验证推迟到 1.0）；runner 按事件取截止时间（`--stop` 事件保持 14.5 秒，见 `codex/timeouts.ts`）。hook 路径的项目锁总等待上限为 2 秒（`withLockDeadline`），锁被占用时 fail-open 输出“未恢复记忆”提示，而不是被 4.5 秒 SIGKILL。新增 `scripts/measure-hook.ts` 用于测量冷启动 hook 延迟。

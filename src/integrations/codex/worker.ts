@@ -1,7 +1,7 @@
 import { withLockDeadline } from "../../storage/index.js";
 import { HOOK_LOCK_BUDGET_MS } from "./timeouts.js";
 import { handleHook } from "./hook.js";
-import { failureNotice } from "./notice.js";
+import { failureNotice, isStopRun } from "./notice.js";
 let input = "";
 let parsed: unknown;
 try {
@@ -19,11 +19,13 @@ try {
 } catch {
   console.log(
     JSON.stringify(
-      failureNotice(
-        parsed,
-        "read-failed",
-        "MWF: memory was not restored; inspect mwf doctor.",
-      ),
+      isStopRun(process.argv, parsed)
+        ? {}
+        : failureNotice(
+            parsed,
+            "read-failed",
+            "MWF: memory was not restored; inspect mwf doctor.",
+          ),
     ),
   );
 }
