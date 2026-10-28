@@ -258,10 +258,12 @@ const LOCK_WAIT_MS = 10000;
 let lockDeadline: number | undefined;
 // Bounds how long every project-lock acquisition inside `fn` may wait in total.
 // Short-lived hook processes use it so lock contention degrades to BUSY (the
-// hook then fails open) before the host or runner kills them (#30).
+// hook then fails open) before the host or runner kills them (#30). Nested
+// budgets can only shorten the outer one.
 export function withLockDeadline<T>(budgetMs: number, fn: () => T): T {
-  const previous = lockDeadline;
-  lockDeadline = Date.now() + budgetMs;
+  const previous = lockDeadline,
+    next = Date.now() + budgetMs;
+  lockDeadline = previous === undefined ? next : Math.min(previous, next);
   try {
     return fn();
   } finally {
