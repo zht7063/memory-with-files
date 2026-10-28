@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### 新增
+
+- Codex 插件新增 `Stop` hook：每个 agent 回合结束时首次触发返回 `{decision:"block", reason}`，提示 agent 自检本回合是否有值得保存到 `.mwf/` 的 preference/decision/incident/task/knowledge（带 scope 标签），有则经 `mwf_add`/`mwf_propose` 写入，并判断本回合是否有实质进展（文件改动、任务推进），有则经 `mwf_handoff` 按 task（或会话）覆盖式保存 completed/next_action/blockers/decisions（先 read 取 revision，再以 expected_revision 保存，revision 加一），纯聊天回合跳过，均不适用则静默结束；`stop_hook_active=true`、项目未启用、超时或任何失败均放行。SessionStart/UserPromptSubmit 行为不变。
+
 ## 0.3.1
 
 ### 文档

@@ -43,3 +43,11 @@ export function failureNotice(
   }
   return { systemMessage: message };
 }
+// A Stop failure must never hold the turn open or add per-turn noise: allow the stop.
+export function isStopEvent(input: unknown) {
+  return (
+    typeof input === "object" &&
+    input !== null &&
+    (input as { hook_event_name?: unknown }).hook_event_name === "Stop"
+  );
+}

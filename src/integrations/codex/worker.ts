@@ -1,5 +1,5 @@
 import { handleHook } from "./hook.js";
-import { failureNotice } from "./notice.js";
+import { failureNotice, isStopEvent } from "./notice.js";
 let input = "";
 let parsed: unknown;
 try {
@@ -13,11 +13,13 @@ try {
 } catch {
   console.log(
     JSON.stringify(
-      failureNotice(
-        parsed,
-        "read-failed",
-        "MWF: memory was not restored; inspect mwf doctor.",
-      ),
+      isStopEvent(parsed)
+        ? {}
+        : failureNotice(
+            parsed,
+            "read-failed",
+            "MWF: memory was not restored; inspect mwf doctor.",
+          ),
     ),
   );
 }

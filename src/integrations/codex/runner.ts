@@ -1,4 +1,4 @@
-import { failureNotice } from "./notice.js";
+import { failureNotice, isStopEvent } from "./notice.js";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 // A supervisor can terminate synchronous filesystem/lock work at the hook deadline.
@@ -16,7 +16,8 @@ function notice(category: string, message: string) {
   try {
     parsed = JSON.parse(input);
   } catch {}
-  return failureNotice(parsed, category, message);
+  // Stop failures (start, timeout, read) allow the stop without a notice.
+  return isStopEvent(parsed) ? {} : failureNotice(parsed, category, message);
 }
 let output = "",
   startFailed = false,
