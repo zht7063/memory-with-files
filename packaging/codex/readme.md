@@ -4,7 +4,7 @@
 
 ## 内容
 
-- `plugin.json`：插件名 `mwf`，`extensions.com.openai` 声明 `hooks: ./hooks/hooks.json` 与 `onboardingSkill: ./skills/setup/SKILL.md`。`version` 为 `0.3.1`，打包时由 `scripts/pack-release.ts` 以 package.json 的版本覆盖，保证与 runtime 一致。
+- `plugin.json`：插件名 `mwf`，`extensions.com.openai` 声明 `hooks: ./hooks/hooks.json` 与 `onboardingSkill: ./skills/setup/SKILL.md`。`version` 为 `0.4.0`，打包时由 `scripts/pack-release.ts` 以 package.json 的版本覆盖，保证与 runtime 一致。
 - `hooks/hooks.json`：SessionStart（matcher `startup|resume|clear|compact`）、UserPromptSubmit 与 Stop 调用 `runtime/dist/integrations/codex/runner.js`。SessionStart 与 UserPromptSubmit 的 timeout 为 5 秒（0.3.0 曾临时上调到 15 秒，下一版起随 hook 路径免 tokenizer 而恢复；runner 在 4.5 秒终止读取）；Stop 的命令带 `--stop`，timeout 15 秒（runner 在 14.5 秒终止读取）；runner 按事件取截止时间；数值为暂定，真机验证推迟到 1.0。Stop 每回合结束一次，提示 agent 自检是否有值得写入 `.mwf/` 的记忆，以及是否有实质进展需要保存 handoff；`stop_hook_active` 时放行；Codex 对 Stop 忽略 matcher。hook 路径（SessionStart / UserPromptSubmit）用保守估算 token，不加载 o200k tokenizer，慢主机上也应在 5 秒内完成；项目锁被占用时最多等待 2 秒后 fail-open（提示“未恢复记忆”）；每条消息都会触发 UserPromptSubmit，超时只会跳过本次记忆注入并提示，不阻塞任务。
 
 ## 组装
@@ -13,7 +13,7 @@
 
 ## 使用
 
-本目录不能直接作为插件安装（缺 `runtime/`、`skills/`）。运行 `npm run pack:release`，用 `shasum -a 256 -c SHA256SUMS` 校验后，把 `mwf-codex-0.3.1.zip` 解压到稳定目录，经 Codex 正常插件入口安装并信任 hooks，再按 [安装文档](../../docs/install.md#codex-插件) 用插件缓存内 runtime 执行 init 与 attach。
+本目录不能直接作为插件安装（缺 `runtime/`、`skills/`）。运行 `npm run pack:release`，用 `shasum -a 256 -c SHA256SUMS` 校验后，把 `mwf-codex-0.4.0.zip` 解压到稳定目录，经 Codex 正常插件入口安装并信任 hooks，再按 [安装文档](../../docs/install.md#codex-插件) 用插件缓存内 runtime 执行 init 与 attach。
 
 ## 约束与未验证
 

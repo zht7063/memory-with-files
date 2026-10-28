@@ -2,7 +2,7 @@
 
 本地文件项目记忆：Markdown/schema 1 为长期数据，SQLite 辅助锁和 journal 保证写入、恢复与幂等。CLI、stdio MCP、Pi 原生扩展和 Codex hooks 共用 Core；Core 不调用模型或网络。
 
-**当前版本 0.3.1**（npm 包 `@zht7063/mwf`，[GitHub Releases](https://github.com/zht7063/memory-with-files/releases)）。API 2、receipt 3（写入后不可降级到 0.2.x）、handoff 1；不再支持 0.1 安装；Node.js ≥ 22.19.0；MIT。旧 schema 1 数据可读，不承诺旧自动接入/API 1 兼容。正常操作不写 `AGENTS.md` 或 `CLAUDE.md`。
+**当前版本 0.4.0**（npm 包 `@zht7063/mwf`，[GitHub Releases](https://github.com/zht7063/memory-with-files/releases)）。API 2、receipt 3（写入后不可降级到 0.2.x）、handoff 1；不再支持 0.1 安装；Node.js ≥ 22.19.0；MIT。旧 schema 1 数据可读，不承诺旧自动接入/API 1 兼容。正常操作不写 `AGENTS.md` 或 `CLAUDE.md`。
 
 已实现会话/task 交接、revision/hash 冲突保护、中文检索、有界输出及分页、启用/停用/重绑定、保守旧版迁移、Pi 扩展与完整 runtime 的 Codex 插件。实际包已在隔离环境测试。**发布标准已变更**为 [linux-cli-harness/1](docs/release-criteria.md)：Linux 命令行中 Codex CLI 与 Pi harness 通过即可发布，不再以 44 项门槛、真实宿主、桌面、macOS 或性能报告为门槛；这些项目**仍未验证**，不能由 CLI 证据推导桌面支持。历史记录见 [实施验收记录](docs/validation/implementation-0.2.0.md)。
 
