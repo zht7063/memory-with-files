@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { Transaction } from "../../storage/index.js";
 import { discover, checkBinding, type Binding } from "../shared/binding.js";
 import { receipt } from "../../storage/receipt.js";
+import { confirmHostLoad } from "../shared/confirm.js";
 import { piConflicts } from "./conflicts.js";
 import {
   beginContext,
@@ -13,6 +14,8 @@ import type { BudgetInput } from "../../context/output.js";
 export interface PiContext {
   contextLimits?: Omit<BudgetInput, "cursor">;
   cwd: string;
+  /** Pi version when the host exposes it. */
+  version?: string;
   isProjectTrusted(): boolean;
   sessionManager: { getSessionId(): string };
   ui?: { notify(message: string, level: string): void };
@@ -60,7 +63,11 @@ export default function extension(pi: PiAPI) {
       );
     }
   };
-  const start = (_event: Record<string, unknown>, ctx: PiContext) => {
+  const start = (
+    _event: Record<string, unknown>,
+    ctx: PiContext,
+    trigger = "session_start",
+  ) => {
     if (!active) return;
     clear();
     if (!ctx.isProjectTrusted()) return;
@@ -78,6 +85,13 @@ export default function extension(pi: PiAPI) {
         cwd: ctx.cwd,
       };
       checkBinding(new Transaction(root), binding);
+      // Pi started the extension in a trusted project: it is loaded.
+      confirmHostLoad(binding, {
+        channel: "extension",
+        trigger: `extension:${trigger}`,
+        hostVersion: typeof ctx.version === "string" ? ctx.version : null,
+        hostName: "pi",
+      });
       hostSession = ctx.sessionManager.getSessionId();
       ref = beginContext(binding, hostSession, true);
       execute(
@@ -115,8 +129,8 @@ export default function extension(pi: PiAPI) {
       report(ctx);
     }
   };
-  pi.on("session_start", start);
-  for (const event of ["session_compact", "session_tree"]) pi.on(event, start);
+  for (const event of ["session_start", "session_compact", "session_tree"])
+    pi.on(event, (e, ctx) => start(e, ctx, event));
   pi.on("before_agent_start", (event, ctx) => {
     if (!active) return;
     if (!binding || !ref || !ctx.isProjectTrusted()) {
@@ -128,7 +142,7 @@ export default function extension(pi: PiAPI) {
         discover(ctx.cwd) !== binding.root ||
         hostSession !== ctx.sessionManager.getSessionId()
       ) {
-        start(event, ctx);
+        start(event, ctx, "before_agent_start");
         if (!binding || !ref) return;
       }
       checkBinding(new Transaction(binding.root), binding);

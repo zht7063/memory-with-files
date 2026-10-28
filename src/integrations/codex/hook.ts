@@ -1,6 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { discover, checkBinding, type Binding } from "../shared/binding.js";
+import { confirmHostLoad } from "../shared/confirm.js";
 import { receipt } from "../../storage/receipt.js";
 import { Transaction } from "../../storage/index.js";
 import { stopReason } from "./stop.js";
@@ -93,6 +94,17 @@ export function handleHook(input: unknown): HookOutput {
   if (!client?.enabled) return {};
   const binding = bindingFor(root, client.binding_generation, a.cwd);
   checkBinding(new Transaction(root), binding, false);
+  // The host ran this hook: it loaded and trusted the plugin.
+  confirmHostLoad(binding, {
+    channel: "hook",
+    trigger: `hook:${a.hook_event_name}`,
+    // The documented hook input has no version field; take one if a Codex build
+    // sends it. Otherwise status falls back to the MCP clientInfo version.
+    hostVersion: [a.codex_version, a.client_version, a.version].find(
+      (v): v is string => typeof v === "string" && v !== "",
+    ),
+    hostName: "codex",
+  });
   if (!a.session_id)
     return {
       systemMessage:

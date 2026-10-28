@@ -50,7 +50,7 @@ node dist/cli.js attach --root /absolute/project --harness codex --plugin-root /
 
 运行需要 Node ≥ 22.19.0（使用内置 `node:sqlite`；较旧 Node 会直接报 `No such built-in module: node:sqlite`）。命令列表见 `--help`；子命令没有单独帮助，`<cmd> --help` 打印同一份总帮助。
 
-`init` 仅创建数据，首次必须选择 `track` 或 `ignore`。安装和启用分开；attach/rebind/detach 默认预览，`--apply` 才修改。`--harness` 取 `pi` 或 `codex`（detach 还可用 `all`），attach/rebind 必须传 `--harness`（否则 INVALID_INPUT，退出码 2），一次只接一个客户端。attach/rebind 先定位已安装 runtime：找不到或有多个时报 `PLUGIN_RUNTIME_REQUIRED`（用 `--plugin-root` 指定），版本不一致报 `RUNTIME_MISMATCH`；`--apply` 成功后做 direct 与 MCP 探测并把证据写入本机 receipt。`status`/`doctor` 分别报告数据健康和每个客户端的 installed / configured / probed 状态（installed 只与 receipt 比较；`--diagnostic-limit` 1–100，默认 5）。`setup` 已弃用，请用 init + attach。停用保留数据，独立 CLI 仍可读取。自动接入验证真实 cwd、最近项目、enabled、root、runtime 和 generation。
+`init` 仅创建数据，首次必须选择 `track` 或 `ignore`。安装和启用分开；attach/rebind/detach 默认预览，`--apply` 才修改。`--harness` 取 `pi` 或 `codex`（detach 还可用 `all`），attach/rebind 必须传 `--harness`（否则 INVALID_INPUT，退出码 2），一次只接一个客户端。attach/rebind 先定位已安装 runtime：找不到或有多个时报 `PLUGIN_RUNTIME_REQUIRED`（用 `--plugin-root` 指定），版本不一致报 `RUNTIME_MISMATCH`；`--apply` 成功后做 direct 与 MCP 探测并把证据写入本机 receipt。`status`/`doctor` 分别报告数据健康和每个客户端的 installed / configured / probed 状态；`probed.<host>.host_load` 显示宿主是否已真正加载（首次 hook、Pi 扩展启动或 MCP 调用后为 `confirmed`，否则 `pending`，attach 超过 10 分钟仍未确认则提示「可能未加载或未信任」）（installed 只与 receipt 比较；`--diagnostic-limit` 1–100，默认 5）。`setup` 已弃用，请用 init + attach。停用保留数据，独立 CLI 仍可读取。自动接入验证真实 cwd、最近项目、enabled、root、runtime 和 generation。
 
 - [安装、启用、升级及卸载](docs/install.md)
 - [0.1 → 0.2 迁移（历史，需 0.2.x）](docs/migration-0.2.0.md)

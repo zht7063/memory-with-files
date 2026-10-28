@@ -14,7 +14,7 @@
 
 - 数据初始化（Core `init`）与宿主启用分离；正常流程不写 AGENTS/CLAUDE。
 - 分层：可依赖 core/storage/contracts；Core 不得反向依赖本目录（`tests/architecture.test.ts`）。
-- 未实现／计划中：binding 与迁移的后续工作包（T06 起，对应构建计划 M3–M5 剩余项）及宿主重载后的真实确认（attach 写入的 host_confirmed 目前恒为 unknown）。
+- 未实现／计划中：binding 与迁移的后续工作包（T06 起，对应构建计划 M3–M5 剩余项）（宿主重载后的确认已实现：attach 的 probe 带 `host_confirmed: unknown`，首次 hook／扩展事件／MCP 调用由 `integrations/shared/confirm.ts` 在 `probe.host_confirmation` 记录；每次 attach/rebind 重建 `probe`，确认随之清空）。
 
 ## 依据
 
