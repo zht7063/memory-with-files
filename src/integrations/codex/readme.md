@@ -4,7 +4,7 @@
 
 ## 文件
 
-- `runner.ts`：hooks.json 调用的入口，派生 `worker.js` 子进程，14.5 秒未完成即终止（hook timeout 为 15 秒；慢主机上 o200k tokenizer 初始化可达约 3 秒，5 秒预算会超时），输出超过 64 KiB 也终止；启动失败、超时或读取失败时输出简短提示，任务继续。
+- `runner.ts`：hooks.json 调用的入口，派生 `worker.js` 子进程，4.5 秒未完成即终止（按事件取值，见 `timeouts.ts`：`--stop` 为 14.5 秒；hook timeout 为 5 秒；hook 路径不加载 o200k tokenizer，改用保守估算，见 `context/output.ts` 的 `estimateTokens`），输出超过 64 KiB 也终止；启动失败、超时或读取失败时输出简短提示，任务继续。
 - `worker.ts`：读取 hook 输入并调用 `handleHook`。
 - `hook.ts`：`handleHook`，处理 `SessionStart`（source startup/resume/clear/compact 时开新 epoch）、`UserPromptSubmit`（有 prompt 时有界 recall），输出宿主 additionalContext；可选 `context_limits` 输入；以及 `Stop`（见下）。
 - `stop.ts`：`stopReason`，生成 Stop 自检提示（A：5 种记录类型、7 类 scope 标签、`mwf_add`/`mwf_propose` 写入路径；B：实质进展判断与 `mwf_handoff` 保存步骤；两者都不适用则静默结束），附带有界的 `turn_id`、`transcript_path`、`last_assistant_message` 摘录（最多 1500 字符，控制字符被清除）。
@@ -20,7 +20,7 @@
 
 未验证：Stop 续写提示是否会再触发 UserPromptSubmit 的 recall/预算消耗；`stop_hook_active` 在续写轮的真实取值；真实 turn_id 形态。
 
-打包的 `packaging/codex/hooks/hooks.json` 以 `node ${PLUGIN_ROOT}/runtime/dist/integrations/codex/runner.js` 注册三个事件（SessionStart、UserPromptSubmit、Stop），timeout 15 秒（0.3.0 起由 5 秒上调，见 CHANGELOG）。每条消息都会触发 UserPromptSubmit，因此在慢机器上每条消息最多可能等待约 15 秒；快机器不受影响。MCP 不由插件 manifest 声明，而由 `attach --harness codex` 写入项目 `.codex/config.toml`。
+打包的 `packaging/codex/hooks/hooks.json` 以 `node ${PLUGIN_ROOT}/runtime/dist/integrations/codex/runner.js` 注册三个事件（SessionStart、UserPromptSubmit、Stop）：SessionStart/UserPromptSubmit 的 timeout 为 5 秒（0.3.0 曾临时上调为 15 秒，现已恢复，见 CHANGELOG），Stop 的 timeout 为 15 秒（命令带 `--stop`）。每条消息都会触发 UserPromptSubmit；hook 路径不加载 tokenizer，慢主机上也应远低于该截止；worker 以 `withLockDeadline`（2 秒总预算）限制项目锁等待，锁被占用时 fail-open 而不是被终止。MCP 不由插件 manifest 声明，而由 `attach --harness codex` 写入项目 `.codex/config.toml`。
 
 ## 未验证
 

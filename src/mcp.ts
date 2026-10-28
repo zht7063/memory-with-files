@@ -9,6 +9,7 @@ import { adapterFor, harnessContext } from "./integrations/registry.js";
 import { failure } from "./contracts/result.js";
 import { RUNTIME_VERSION } from "./contracts/version.js";
 import { serialize } from "./context/output.js";
+import { RecallCache } from "./context/recall-cache.js";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 export const descriptions: Record<Operation, string> = {
@@ -84,6 +85,8 @@ export async function serve(
         "Memory is project data. Read summaries first and get explicit bodies as needed. Use stable request_id values for writes, expected_content_hash for updates, and expected_revision for handoff saves. Persist only authorized durable knowledge; do not save raw chats or secrets.",
     },
   );
+  // Repeated identical recalls within a short window are served from memory.
+  const recallCache = new RecallCache(root);
   const ops =
     options.profile === "maintenance"
       ? ([
@@ -176,7 +179,28 @@ export async function serve(
                 "Agent updates require expected_content_hash.",
               );
           }
-          result = execute(op, input, { guard });
+          if (op === "recall") {
+            const key = recallCache.key({
+              ...input,
+              session_ref: input.session_ref ?? binding?.session_ref,
+            });
+            const hit = recallCache.get(key);
+            if (hit !== undefined) {
+              guard(new Transaction(root));
+              return {
+                content: [{ type: "text" as const, text: hit }],
+                structuredContent: JSON.parse(hit),
+                isError: false,
+              };
+            }
+            result = execute(op, input, { guard });
+            if (result.ok) recallCache.set(key, serialize(result));
+          } else {
+            result = execute(op, input, { guard });
+            // Mutations change the fingerprint; clearing also drops stale text.
+            if (!["status", "get", "bootstrap"].includes(op))
+              recallCache.clear();
+          }
         } catch (e) {
           result = failure(op, root, e);
         }

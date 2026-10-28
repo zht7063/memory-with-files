@@ -3,7 +3,7 @@ import { recallRecords, eligible, tokens } from "../retrieval/index.js";
 export { recallRecords, eligible } from "../retrieval/index.js";
 import { resolveSession } from "./identity.js";
 import { integrationDiagnostics, type HostIssues } from "./diagnostics.js";
-import type { BudgetInput } from "../context/output.js";
+import type { BudgetInput, Measure } from "../context/output.js";
 import type { Result } from "../contracts/result.js";
 export type { Result } from "../contracts/result.js";
 import { boundResult, decodeCursor, encodeCursor } from "../context/output.js";
@@ -1014,6 +1014,8 @@ export function execute(
     fault?: (stage: string) => void;
     guard?: (tx: Transaction) => void;
     hostIssues?: HostIssues;
+    // "estimate" keeps the hook path tokenizer-free (issue #30).
+    measure?: Measure;
   } = {},
 ): Result {
   const parsed = schemas[op].safeParse(input);
@@ -1107,7 +1109,7 @@ export function execute(
       tx.commit(options.fault);
     }
     if (op === "bootstrap" || op === "recall")
-      boundResult(result, a as BudgetInput, op);
+      boundResult(result, a as BudgetInput, op, undefined, options.measure);
     if (
       op === "get" ||
       (op === "handoff" && "action" in a && a.action === "read")
@@ -1119,7 +1121,13 @@ export function execute(
         op === "get"
           ? { id: d.id, hash: d.content_hash }
           : { scope: d.scope, revision: d.revision, hash: d.content_hash };
-      boundResult(result, a as BudgetInput, "get", { text, identity });
+      boundResult(
+        result,
+        a as BudgetInput,
+        "get",
+        { text, identity },
+        options.measure,
+      );
     }
     if (op === "handoff" && "action" in a && a.action === "list") {
       const d = result.data as Record<string, unknown>,
@@ -1134,7 +1142,13 @@ export function execute(
         const count = (d.entries as unknown[]).length;
         d.cursor =
           start + count < total ? encodeCursor(identity, start + count) : null;
-        boundResult(result, a as BudgetInput, "recall");
+        boundResult(
+          result,
+          a as BudgetInput,
+          "recall",
+          undefined,
+          options.measure,
+        );
         if (count === (d.entries as unknown[]).length) break;
       } while (true);
       if (!(d.entries as unknown[]).length && start < total)

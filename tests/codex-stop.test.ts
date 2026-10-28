@@ -79,11 +79,11 @@ test("hooks.json registers Stop with the shared runner and leaves the other hook
   assert.deepEqual(hooks.SessionStart, [
     {
       matcher: "startup|resume|clear|compact",
-      hooks: [{ type: "command", command: RUNNER, timeout: 15 }],
+      hooks: [{ type: "command", command: RUNNER, timeout: 5 }],
     },
   ]);
   assert.deepEqual(hooks.UserPromptSubmit, [
-    { hooks: [{ type: "command", command: RUNNER, timeout: 15 }] },
+    { hooks: [{ type: "command", command: RUNNER, timeout: 5 }] },
   ]);
   // Codex ignores matchers on Stop; none is declared. `--stop` marks the run so
   // failures are silent even when the input is unparseable.
@@ -587,7 +587,7 @@ test("runner.js: worker crash or timeout allows the stop silently; other events 
     /memory was not restored/,
   );
 
-  // Hanging worker: runner kills it at 14.5s, before the 15s host timeout.
+  // Hanging worker: runner kills Stop at 14.5s (before the 15s host timeout) and other events at 4.5s (before 5s).
   fs.writeFileSync(
     worker,
     "process.stdin.resume(); setInterval(() => {}, 1000);\n",
@@ -600,11 +600,15 @@ test("runner.js: worker crash or timeout allows the stop silently; other events 
       hook_event_name: "SessionStart",
     }),
   ]);
-  for (const r of [hungStop, hungStart]) {
-    assert.equal(r.code, 0);
-    // Timing is only a sanity bound: the runner kills the worker at 14.5s.
-    assert.ok(r.ms >= 13_000, String(r.ms));
-  }
+  // Per-event deadlines: Stop keeps 14.5s (hooks.json 15s); SessionStart and
+  // UserPromptSubmit are killed at 4.5s (hooks.json 5s). Timing is a sanity bound.
+  assert.equal(hungStop.code, 0);
+  assert.ok(hungStop.ms >= 13_000, String(hungStop.ms));
+  assert.equal(hungStart.code, 0);
+  assert.ok(
+    hungStart.ms >= 4_000 && hungStart.ms < 5_000,
+    String(hungStart.ms),
+  );
   assert.deepEqual(JSON.parse(hungStop.out), {});
   assert.match(JSON.parse(hungStart.out).systemMessage, /timed out/);
 });
