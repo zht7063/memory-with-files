@@ -17,6 +17,7 @@ import {
   serialize,
   limits,
   type BudgetInput,
+  type Measure,
 } from "../../context/output.js";
 const outputSchema = z.object({
   id: z.string(),
@@ -98,6 +99,7 @@ export function prepareContext(
   query: string = "",
   bootstrap = false,
   hostLimits: Omit<BudgetInput, "cursor"> = {},
+  mode: Measure = "exact",
 ) {
   const result = execute(
     bootstrap ? "bootstrap" : "recall",
@@ -106,7 +108,7 @@ export function prepareContext(
       query,
       ...(bootstrap ? { session_ref: ref } : {}),
     },
-    { guard: (tx) => checkBinding(tx, binding, false) },
+    { guard: (tx) => checkBinding(tx, binding, false), measure: mode },
   );
   return locked(binding, (tx) => {
     const s = state(tx, ref),
@@ -149,6 +151,8 @@ export function prepareContext(
           ),
         },
         bootstrap ? "bootstrap" : "recall",
+        undefined,
+        mode,
       );
     } catch (e) {
       if (e instanceof MWFError && e.code === "BUDGET_TOO_SMALL") return null;
@@ -156,7 +160,7 @@ export function prepareContext(
     }
     if (!d.entries.length && !d.handoff) return null;
     const text = serialize(result),
-      m = measure(text),
+      m = measure(text, mode),
       id = randomUUID();
     s.outputs.push({
       id,

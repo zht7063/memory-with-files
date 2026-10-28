@@ -9,7 +9,7 @@ import { promisify } from "node:util";
 import { z } from "zod";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { measure } from "../dist/context/output.js";
+import { estimateTokens, measure } from "../dist/context/output.js";
 import { receiptSchema } from "../dist/storage/receipt.js";
 import { bootstrapData, recallData, recordData } from "./contracts.ts";
 
@@ -19,7 +19,14 @@ const cli = path.join(source, "dist/cli.js");
 const envelope = z.object({ ok: z.literal(true), data: z.unknown() });
 const caps = { max_output_bytes: 4096, max_reference_tokens: 1024 };
 
-function budget(text: string, bytes: number, tokens: number) {
+// The Codex hook path reports the tokenizer-free estimate (issue #30); the exact
+// o200k count must still fit the cap because the estimate is conservative.
+function budget(
+  text: string,
+  bytes: number,
+  tokens: number,
+  estimated = false,
+) {
   const measured = measure(text);
   assert.ok(measured.bytes <= bytes, `${measured.bytes} bytes > ${bytes}`);
   assert.ok(measured.reference_tokens <= tokens);
@@ -34,7 +41,12 @@ function budget(text: string, bytes: number, tokens: number) {
     })
     .parse(JSON.parse(text)).data.budget;
   assert.equal(reported.output_bytes, measured.bytes);
-  assert.equal(reported.used_reference_tokens, measured.reference_tokens);
+  assert.equal(
+    reported.used_reference_tokens,
+    estimated ? estimateTokens(text) : measured.reference_tokens,
+  );
+  if (estimated)
+    assert.ok(measured.reference_tokens <= reported.used_reference_tokens);
 }
 
 test(
@@ -295,9 +307,17 @@ test(
       const piText = z
         .object({ message: z.object({ content: z.string() }) })
         .parse(events.pi[i]).message.content;
-      for (const text of [codexText, piText]) {
+      for (const [text, estimated] of [
+        [codexText, true],
+        [piText, false],
+      ] as const) {
         assert.deepEqual(ids(JSON.parse(text)).sort(), expected);
-        budget(text, caps.max_output_bytes, caps.max_reference_tokens);
+        budget(
+          text,
+          caps.max_output_bytes,
+          caps.max_reference_tokens,
+          estimated,
+        );
       }
     }
     // Restarted MCP processes recover the task handoff and complete working set.

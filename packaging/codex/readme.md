@@ -1,11 +1,11 @@
 # Codex 插件打包
 
-状态：包含插件 manifest 与 SessionStart/UserPromptSubmit hooks；`npm run pack:release` 从同次 npm 产物组装带完整 runtime 的可安装 zip（T11）。桌面正常发现、GUI Node、信任/重载和故障注入仍未实测。
+状态：包含插件 manifest 与 SessionStart/UserPromptSubmit/Stop hooks；`npm run pack:release` 从同次 npm 产物组装带完整 runtime 的可安装 zip（T11）。桌面正常发现、GUI Node、信任/重载和故障注入仍未实测。
 
 ## 内容
 
 - `plugin.json`：插件名 `mwf`，`extensions.com.openai` 声明 `hooks: ./hooks/hooks.json` 与 `onboardingSkill: ./skills/setup/SKILL.md`。`version` 为 `0.3.1`，打包时由 `scripts/pack-release.ts` 以 package.json 的版本覆盖，保证与 runtime 一致。
-- `hooks/hooks.json`：SessionStart（matcher `startup|resume|clear|compact`）与 UserPromptSubmit 调用 `runtime/dist/integrations/codex/runner.js`，timeout 15 秒（0.3.0 起由 5 秒上调；runner 在 14.5 秒终止读取）。每条消息都会触发 UserPromptSubmit，因此在慢机器上每条消息最多可能等待约 15 秒；快机器不受影响。
+- `hooks/hooks.json`：SessionStart（matcher `startup|resume|clear|compact`）、UserPromptSubmit 与 Stop 调用 `runtime/dist/integrations/codex/runner.js`。SessionStart 与 UserPromptSubmit 的 timeout 为 5 秒（0.3.0 曾临时上调到 15 秒，下一版起随 hook 路径免 tokenizer 而恢复；runner 在 4.5 秒终止读取）；Stop 的命令带 `--stop`，timeout 15 秒（runner 在 14.5 秒终止读取）；runner 按事件取截止时间；数值为暂定，真机验证推迟到 1.0。Stop 每回合结束一次，提示 agent 自检是否有值得写入 `.mwf/` 的记忆，以及是否有实质进展需要保存 handoff；`stop_hook_active` 时放行；Codex 对 Stop 忽略 matcher。hook 路径（SessionStart / UserPromptSubmit）用保守估算 token，不加载 o200k tokenizer，慢主机上也应在 5 秒内完成；项目锁被占用时最多等待 2 秒后 fail-open（提示“未恢复记忆”）；每条消息都会触发 UserPromptSubmit，超时只会跳过本次记忆注入并提示，不阻塞任务。
 
 ## 组装
 
