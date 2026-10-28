@@ -1,5 +1,4 @@
 <!-- memory-with-files:start -->
-
 ## Project memory (`.mwf`)
 
 This project uses the `memory-with-files` protocol. When `.mwf/` exists:
