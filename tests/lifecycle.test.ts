@@ -25,7 +25,7 @@ test("installed Codex runtime preserves unrelated TOML and disables before clean
   );
   fs.writeFileSync(
     path.join(plugin, "plugin.json"),
-    JSON.stringify({ name: "mwf", version: "0.3.1" }),
+    JSON.stringify({ name: "mwf", version: "0.4.0" }),
   );
   const project = path.join(base, "项目");
   fs.mkdirSync(project);
@@ -67,7 +67,7 @@ test("installed Codex runtime preserves unrelated TOML and disables before clean
   assert.equal(read().clients.codex.probe.host_confirmed, "unknown");
   assert.equal(read().clients.codex.probe.source, "attach_standalone");
   assert.equal(read().clients.codex.probe.root, project);
-  assert.equal(read().clients.codex.probe.runtime_version, "0.3.1");
+  assert.equal(read().clients.codex.probe.runtime_version, "0.4.0");
   assert.ok(Date.parse(read().clients.codex.probe.time));
   // Bundled entry identifies its own plugin, with no PATH dependency.
   assert.equal(
@@ -145,7 +145,7 @@ test("global CLI discovers Codex cache and delegates only validated plugin runti
   );
   fs.writeFileSync(
     path.join(plugin, "plugin.json"),
-    JSON.stringify({ name: "mwf", version: "0.3.1" }),
+    JSON.stringify({ name: "mwf", version: "0.4.0" }),
   );
   const project = path.join(base, "项目 with spaces");
   fs.mkdirSync(project);
@@ -188,7 +188,7 @@ test("global CLI discovers Codex cache and delegates only validated plugin runti
   const setup = run("setup", "--root", project, "--harness", "pi,codex");
   assert.equal(setup.ok, true);
   assert.equal(setup.data.clients.length, 2);
-  assert.equal(setup.data.clients[1].runtime_version, "0.3.1");
+  assert.equal(setup.data.clients[1].runtime_version, "0.4.0");
   // Failure in standalone MCP leaves the committed resources recoverable.
   fs.writeFileSync(
     path.join(runtime, "dist/mcp.js"),
@@ -258,11 +258,11 @@ test("Codex discovery rejects ambiguity and mismatched manifests", (t) => {
       fs.mkdirSync(path.join(plugin, "runtime/dist"), { recursive: true });
       fs.writeFileSync(
         path.join(plugin, "plugin.json"),
-        JSON.stringify({ name: "mwf", version: "0.3.1" }),
+        JSON.stringify({ name: "mwf", version: "0.4.0" }),
       );
       fs.writeFileSync(
         path.join(plugin, "runtime/package.json"),
-        JSON.stringify({ name: "@zht7063/mwf", version: "0.3.1" }),
+        JSON.stringify({ name: "@zht7063/mwf", version: "0.4.0" }),
       );
       fs.writeFileSync(path.join(plugin, "runtime/dist/cli.js"), "");
     }
@@ -296,11 +296,11 @@ test("Codex cache selects highest semver and prefers local with versions coexist
     fs.mkdirSync(path.join(plugin, "runtime/dist"), { recursive: true });
     fs.writeFileSync(
       path.join(plugin, "plugin.json"),
-      JSON.stringify({ name: "mwf", version: "0.3.1" }),
+      JSON.stringify({ name: "mwf", version: "0.4.0" }),
     );
     fs.writeFileSync(
       path.join(plugin, "runtime/package.json"),
-      JSON.stringify({ name: "@zht7063/mwf", version: "0.3.1" }),
+      JSON.stringify({ name: "@zht7063/mwf", version: "0.4.0" }),
     );
     fs.writeFileSync(path.join(plugin, "runtime/dist/cli.js"), "");
     return plugin;

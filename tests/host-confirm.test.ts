@@ -56,7 +56,7 @@ function codexProject(t: test.TestContext) {
   );
   fs.writeFileSync(
     path.join(plugin, "plugin.json"),
-    JSON.stringify({ name: "mwf", version: "0.3.1" }),
+    JSON.stringify({ name: "mwf", version: "0.4.0" }),
   );
   const project = path.join(base, "项目");
   fs.mkdirSync(project);

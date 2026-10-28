@@ -479,7 +479,7 @@ test("status and doctor inspect runtime, binding and ownership without inventing
     time: new Date().toISOString(),
     root,
     runtime_path: b.runtime,
-    runtime_version: "0.3.1",
+    runtime_version: "0.4.0",
     api_version: 2,
     binding_generation: b.generation,
     direct: "pass",
@@ -539,7 +539,7 @@ test("session diagnostics are bounded, complete and isolated", (t) => {
   assert.equal(event.client, "pi");
   assert.equal(event.session_ref, ref);
   assert.equal(event.epoch, output.epoch);
-  assert.equal(event.runtime_version, "0.3.1");
+  assert.equal(event.runtime_version, "0.4.0");
   assert.equal(event.api_version, 2);
   assert.equal(event.result_code, "submitted");
   assert.equal(event.entry_count, 1);
