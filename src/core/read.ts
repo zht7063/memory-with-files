@@ -121,12 +121,14 @@ function toItem(n: NodeRow): HandoffListItem {
 
 export interface RecallInput {
   query?: string;
+  /** Only records whose scope matches (see scopeMatch). Handoffs are never scope-filtered. */
   scope?: Scope;
   types?: RecordType[];
   /** 'active' (default), 'done' or 'all'. */
   status?: Status | 'all';
   /** Read one handoff in full instead of searching. */
   task?: string;
+  /** Also search handoffs; they ignore `scope`. */
   include_handoffs?: boolean;
   /** Max hits (default 8, max 50). */
   limit?: number;
@@ -221,7 +223,7 @@ export async function recall(ctx: Ctx, input: RecallInput = {}): Promise<RecallR
       : ['record'];
     type Scored = { node: NodeRow; rank: number; hits: number };
     const scored: Scored[] = [];
-    // A scope query filters before anything is cut: fetch every candidate, keep the matching ones
+    // A scope query filters records (not handoffs) before anything is cut: fetch every candidate, keep the matching ones
     // and only then cap at MAX_CANDIDATES, so a match is never lost behind 200 non-matching hits.
     const scoped = SCOPE_KEYS.some((key) => scope[key]?.length);
     for (const kind of kinds) {
@@ -234,7 +236,8 @@ export async function recall(ctx: Ctx, input: RecallInput = {}): Promise<RecallR
             .map((node, i) => ({ node, rank: i }));
       let kept = 0;
       for (const { node, rank } of found) {
-        const m = scopeMatch(node.scope, scope);
+        // Handoffs carry no scope: they are never scope-filtered (and rank after scope matches).
+        const m = kind === 'handoff' ? { ok: true, hits: 0 } : scopeMatch(node.scope, scope);
         if (!m.ok) continue;
         if (kept++ >= MAX_CANDIDATES) break;
         scored.push({ node, rank, hits: m.hits });

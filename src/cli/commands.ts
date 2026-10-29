@@ -164,7 +164,7 @@ export const COMMANDS: readonly Command[] = [
       types: list(RECORD_TYPE, 'Restrict to these record types.'),
       status: oneOf([...STATUS, 'all'], 'Which statuses to search (default active).'),
       task: str('Read this handoff in full instead of searching.'),
-      include_handoffs: bool('Also search handoffs.'),
+      include_handoffs: bool('Also search handoffs; they are never filtered by scope.'),
       limit: int('Max hits (default 8).', 1, 50),
       max_chars: int('Output budget in characters (default 4000).', 100, 20_000),
     }),

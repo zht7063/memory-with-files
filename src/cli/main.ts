@@ -53,7 +53,7 @@ recall options:
   --type <type>        record type (repeatable): preference, decision, incident, task, knowledge
   --status <s>         active (default), done or all
   --task <name>        read this handoff in full
-  --handoffs           also search handoffs
+  --handoffs           also search handoffs (never filtered by --scope)
   --scope <key=value>  only records whose scope matches (repeatable); keys: ${SCOPE_KEYS.join(', ')}
   --limit <n>          max hits (default 8)
   --max-chars <n>      output budget in characters (default 4000)

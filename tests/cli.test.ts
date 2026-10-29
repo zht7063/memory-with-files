@@ -355,6 +355,20 @@ describe('mwf command line', () => {
     assert.match(handoff.out, /migration notes/);
     const withHandoffs = await sh(['recall', 'migration', '--handoffs'], ctx.root);
     assert.match(withHandoffs.out, /job-1/);
+    // --scope filters records but not handoffs: job-1 stays, 'Tabs' (no scope) is still out
+    const scopedHandoffs = await sh(
+      ['recall', 'sqlite', '--handoffs', '--scope', 'tools=db', '--json'],
+      ctx.root,
+    );
+    const handoffHits = JSON.parse(scopedHandoffs.out).data.hits as Array<{
+      kind: string;
+      id: string;
+      title: string;
+    }>;
+    assert.deepEqual(
+      handoffHits.map((h) => `${h.kind}:${h.title}`),
+      ['record:Pick sqlite', 'handoff:job-1'],
+    );
     const none = await sh(['recall', 'zzzznothing'], ctx.root);
     assert.match(none.out, /no matches/);
   });

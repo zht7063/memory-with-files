@@ -337,6 +337,85 @@ describe('recall', () => {
     assert.ok(!ids(await core.recall(ctx, { scope: { paths: ['nowhere/'] } })).includes(other.id));
   });
 
+  it('handoffs are not scope-filtered; records still are', async () => {
+    const ctx = await project();
+    const inScope = await core.add(ctx, {
+      type: 'knowledge',
+      title: 'migration in scope',
+      body: 'migration steps',
+      scope: { paths: ['src/db/'] },
+    });
+    await core.add(ctx, {
+      type: 'knowledge',
+      title: 'migration elsewhere',
+      body: 'migration steps',
+      scope: { paths: ['src/ui/'] },
+    });
+    await core.add(ctx, { type: 'knowledge', title: 'migration general', body: 'migration steps' });
+    await core.handoff(ctx, {
+      action: 'save',
+      task: 'db-migration',
+      content: 'migration progress notes',
+    });
+    await core.handoff(ctx, {
+      action: 'save',
+      task: 'old-migration',
+      content: 'migration finished long ago',
+      status: 'done',
+    });
+    const scope = { paths: ['src/db/schema.ts'] };
+
+    const withHandoffs = await core.recall(ctx, {
+      query: 'migration',
+      scope,
+      include_handoffs: true,
+    });
+    const kindsAndIds = withHandoffs.hits.map((h) => `${h.kind}:${h.id}`);
+    // the in-scope record ranks first; the active handoff is returned despite the scope
+    assert.deepEqual(kindsAndIds, [`record:${inScope.id}`, 'handoff:db-migration']);
+    assert.equal(withHandoffs.total_matched, 2);
+
+    // without include_handoffs the same query returns only the matching record
+    const records = await core.recall(ctx, { query: 'migration', scope });
+    assert.deepEqual(
+      records.hits.map((h) => h.id),
+      [inScope.id],
+    );
+    // no scope at all: every record and the handoff
+    const unscoped = await core.recall(ctx, { query: 'migration', include_handoffs: true });
+    assert.equal(unscoped.hits.length, 4);
+    // a scope that matches no record still returns the handoff, and only it
+    const noRecords = await core.recall(ctx, {
+      query: 'migration',
+      scope: { tools: ['nothing'] },
+      include_handoffs: true,
+    });
+    assert.deepEqual(
+      noRecords.hits.map((h) => `${h.kind}:${h.id}`),
+      ['handoff:db-migration'],
+    );
+    // handoffs still obey status and the text query
+    const all = await core.recall(ctx, {
+      query: 'migration',
+      scope: { tools: ['nothing'] },
+      include_handoffs: true,
+      status: 'all',
+    });
+    assert.deepEqual(all.hits.map((h) => h.id).sort(), ['db-migration', 'old-migration']);
+    const other = await core.recall(ctx, {
+      query: 'unrelatedterm',
+      scope,
+      include_handoffs: true,
+    });
+    assert.deepEqual(other.hits, []);
+    // list path (no query)
+    const listed = await core.recall(ctx, { scope, include_handoffs: true });
+    assert.deepEqual(listed.hits.map((h) => `${h.kind}:${h.id}`).sort(), [
+      'handoff:db-migration',
+      `record:${inScope.id}`,
+    ]);
+  });
+
   it('is bounded by limit and max_chars', async () => {
     const ctx = await project();
     for (let i = 0; i < 12; i++)
