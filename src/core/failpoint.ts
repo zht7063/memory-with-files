@@ -5,7 +5,15 @@
  */
 const hits = new Map<string, number>();
 
+let hook: ((name: string) => void) | null = null;
+
+/** In-process observer of failpoints, for tests that need to interleave an action (e.g. steal a lock). */
+export function setFailpointHook(fn: ((name: string) => void) | null): void {
+  hook = fn;
+}
+
 export function failpoint(name: string): void {
+  hook?.(name);
   const spec = process.env['MWF_FAILPOINT'];
   if (!spec) return;
   const [target, nth = '1'] = spec.split('@');

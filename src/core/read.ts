@@ -312,7 +312,7 @@ export async function status(ctx: Ctx): Promise<StatusResult> {
     if (inbox) hints.push(`inbox 有 ${inbox} 条待整理`);
     if (trash.note) hints.push(trash.note);
     if (lock.held && lock.foreign)
-      hints.push('锁由其他主机持有（仅按心跳超时回收），运行 doctor 查看');
+      hints.push('锁由其他主机（或其他 pid 命名空间）持有，仅按心跳超时回收，运行 doctor 查看');
     else if (lock.held && lock.stale) hints.push('锁持有者已不存在，下次写入会自动回收');
     if (!existsSync(layout.hostLocal)) hints.push('尚未确认宿主加载（host.local.toml 不存在）');
     return {

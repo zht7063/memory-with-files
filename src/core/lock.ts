@@ -4,6 +4,7 @@ import {
   fsyncSync,
   openSync,
   readFileSync,
+  readlinkSync,
   readSync,
   statSync,
   unlinkSync,
@@ -17,19 +18,29 @@ import { sleep } from './util.ts';
 
 export const DEFAULT_LOCK_STALE_MS = 30_000;
 export const DEFAULT_WAIT_MS = 5_000;
+/** doctor flags a live lock whose holder has had it for longer than this (L2). */
+export const DEFAULT_LOCK_HELD_WARN_MS = 120_000;
 const GUARD_STALE_MS = 10_000;
 
 export interface LockInfo {
   pid: number;
   host: string;
-  /** Acquisition time, refreshed by the holder's heartbeat. */
+  /** Last heartbeat (equals the acquisition time until the first heartbeat). */
   time: number;
+  /** Acquisition time; never refreshed, so doctor can tell how long the lock has been held. */
+  acquired?: number;
   token: string;
   /**
    * Opaque start-time identity of the holder process (Linux: boot id + /proc/<pid>/stat
    * starttime). Guards against pid reuse. Absent on platforms without /proc.
    */
   start?: string;
+  /**
+   * Identity of the holder's pid namespace (Linux: the target of /proc/self/ns/pid). Two containers
+   * can share a hostname (`--hostname`, `--uts=host`) while having unrelated pid spaces; see
+   * `isForeign`.
+   */
+  pidns?: string;
 }
 
 export interface LockOptions {
@@ -44,8 +55,15 @@ export interface LockHandle {
   readonly info: LockInfo;
   /** True when we reclaimed a lock from a dead holder or a stale foreign-host holder. */
   readonly reclaimed: boolean;
-  /** Refresh the lock timestamp (throttled; cheap to call in loops). Returns false if we lost the lock. */
+  /**
+   * Refresh the lock timestamp (throttled; cheap to call in loops). Returns false if we lost the
+   * lock (file gone or now owned by someone else); `lost` stays true from then on.
+   */
   heartbeat(force?: boolean): boolean;
+  /** True once a heartbeat or `assertHeld` found that the lock is no longer ours. */
+  readonly lost: boolean;
+  /** Re-verify ownership right now (no throttle); throws LOCK_LOST when the lock is not ours. */
+  assertHeld(): void;
   release(): void;
 }
 
@@ -108,6 +126,37 @@ export function processStart(pid: number): string | null {
   }
 }
 
+let ownPidns: string | null | undefined;
+
+/** Identity of this process's pid namespace, or null where the platform cannot tell. */
+export function pidNamespace(): string | null {
+  if (ownPidns === undefined) {
+    try {
+      ownPidns = readlinkSync('/proc/self/ns/pid');
+    } catch {
+      ownPidns = null;
+    }
+  }
+  return ownPidns;
+}
+
+/**
+ * True when pid checks against this holder are meaningless for us: another hostname, or the same
+ * hostname but a different pid namespace (both sides known). Such a holder is only ever reclaimed
+ * by heartbeat staleness, never by "its pid is dead here".
+ *
+ * Known limit (L3): if the namespace of either side cannot be read (no /proc, a lock written by an
+ * older mwf without `pidns`), two containers that share a hostname but not a pid namespace look
+ * like the same host, and one can wrongly reclaim the other's lock because the holder's pid does
+ * not exist in its namespace (or belongs to an unrelated process). Give such containers distinct
+ * hostnames, or share the pid namespace.
+ */
+export function isForeign(info: LockInfo): boolean {
+  if (info.host !== hostname()) return true;
+  const own = pidNamespace();
+  return info.pidns !== undefined && own !== null && info.pidns !== own;
+}
+
 /** Why a lock may be taken over (null = it must be respected). */
 export type Takeover = 'dead-pid' | 'pid-reused' | 'foreign-stale' | 'torn-stale';
 
@@ -117,8 +166,9 @@ export type Takeover = 'dead-pid' | 'pid-reused' | 'foreign-stale' | 'torn-stale
  *    a process with a different start time (pid reuse). A live same-host holder is never
  *    reclaimed, however old the lock is. Where the start time cannot be read (no /proc) or the
  *    lock predates the `start` field, we fall back to plain pid liveness.
- *  - different host: pid checks are meaningless, so the lock is reclaimed by staleness
- *    (`staleMs` since the last heartbeat). Long operations heartbeat to stay below that.
+ *  - different host, or same hostname but a different pid namespace (`isForeign`): pid checks are
+ *    meaningless, so the lock is reclaimed by staleness (`staleMs` since the last heartbeat).
+ *    Long operations heartbeat to stay below that.
  *  - unparseable lock file (holder died between create and write): staleness by file mtime.
  */
 export function takeoverReason(
@@ -134,7 +184,7 @@ export function takeoverReason(
       return null;
     }
   }
-  if (info.host === hostname()) {
+  if (!isForeign(info)) {
     if (!pidAlive(info.pid)) return 'dead-pid';
     if (info.start !== undefined) {
       const current = processStart(info.pid);
@@ -171,7 +221,7 @@ export function inspectLock(
   return {
     held: true,
     stale: reason !== null,
-    foreign: info !== null && info.host !== hostname(),
+    foreign: info !== null && isForeign(info),
     reason,
     holder: info,
   };
@@ -206,13 +256,7 @@ function reclaim(
   seen: LockInfo | null,
   opts: Required<Omit<LockOptions, 'waitMs'>>,
 ): boolean {
-  const guardInfo: LockInfo = {
-    pid: process.pid,
-    host: hostname(),
-    time: opts.now(),
-    token: randomBytes(8).toString('hex'),
-    ...(processStart(process.pid) !== null ? { start: processStart(process.pid) as string } : {}),
-  };
+  const guardInfo = holderInfo(opts.now());
   if (!tryCreate(layout.lockGuard, guardInfo)) {
     // Someone else is reclaiming; clear the guard only if its owner is dead / it is stale, and only
     // if it is still the very same guard right before we unlink it (token compare), so a guard that
@@ -255,8 +299,23 @@ function reclaim(
   }
 }
 
+function holderInfo(now: number): LockInfo {
+  const info: LockInfo = {
+    pid: process.pid,
+    host: hostname(),
+    time: now,
+    acquired: now,
+    token: randomBytes(8).toString('hex'),
+  };
+  const start = processStart(process.pid);
+  if (start !== null) info.start = start;
+  const pidns = pidNamespace();
+  if (pidns !== null) info.pidns = pidns;
+  return info;
+}
+
 /** Lock files are padded to a fixed size so a heartbeat can rewrite them in place. */
-const LOCK_FILE_BYTES = 256;
+const LOCK_FILE_BYTES = 512;
 
 function encode(info: LockInfo): Buffer {
   const json = JSON.stringify(info);
@@ -268,9 +327,27 @@ let activeHandle: LockHandle | null = null;
 /**
  * Heartbeat for the lock this process currently holds (no-op otherwise). Long loops in core
  * (reindex, compact, purge, index sync) call this; it is throttled to a fraction of the stale age.
+ * Throws LOCK_LOST when a heartbeat (this one, or the timer's) found the lock taken away: the
+ * caller must stop writing.
  */
 export function beat(): void {
-  activeHandle?.heartbeat();
+  const handle = activeHandle;
+  if (!handle) return;
+  handle.heartbeat();
+  if (handle.lost) throw lockLost(handle.info);
+}
+
+/** Verify right now that this process still owns its lock; throws LOCK_LOST otherwise (no-op without a lock). */
+export function assertLockHeld(): void {
+  activeHandle?.assertHeld();
+}
+
+function lockLost(info: LockInfo): MwfError {
+  return new MwfError(
+    'LOCK_LOST',
+    'the project lock was lost (another process reclaimed it, e.g. after a long pause); the write was aborted and any half-applied change is recovered by the next lock holder',
+    { pid: info.pid, host: info.host },
+  );
 }
 
 function makeHandle(
@@ -281,11 +358,26 @@ function makeHandle(
   now: () => number,
 ): LockHandle {
   let released = false;
+  let lost = false;
   let lastBeat = info.time;
   const interval = Math.max(1, Math.floor(staleMs / 4));
+  const owns = (): boolean => {
+    const current = readInfo(layout.lock);
+    return current !== 'absent' && current !== null && current.token === info.token;
+  };
   const handle: LockHandle = {
     info,
     reclaimed,
+    get lost() {
+      return lost;
+    },
+    assertHeld() {
+      if (released) return;
+      if (!owns()) {
+        lost = true;
+        throw lockLost(info);
+      }
+    },
     heartbeat(force = false) {
       if (released) return false;
       const t = now();
@@ -293,7 +385,8 @@ function makeHandle(
       let fd: number;
       try {
         fd = openSync(layout.lock, 'r+');
-      } catch {
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') lost = true;
         return false;
       }
       try {
@@ -302,7 +395,10 @@ function makeHandle(
         const buf = Buffer.alloc(1024);
         const n = readSync(fd, buf, 0, buf.length, 0);
         const current = JSON.parse(buf.subarray(0, n).toString('utf8')) as Partial<LockInfo>;
-        if (current.token !== info.token) return false;
+        if (current.token !== info.token) {
+          lost = true;
+          return false;
+        }
         const data = encode({ ...info, time: t });
         writeSync(fd, data, 0, data.length, 0);
         lastBeat = t;
@@ -339,14 +435,7 @@ export async function acquireLock(layout: Layout, options: LockOptions = {}): Pr
   let reclaimed = false;
   let delay = 5;
   for (;;) {
-    const info: LockInfo = {
-      pid: process.pid,
-      host: hostname(),
-      time: now(),
-      token: randomBytes(8).toString('hex'),
-    };
-    const start = processStart(process.pid);
-    if (start !== null) info.start = start;
+    const info = holderInfo(now());
     if (tryCreate(layout.lock, info)) return makeHandle(layout, info, reclaimed, staleMs, now);
     const holder = readInfo(layout.lock);
     if (holder === 'absent') continue; // released between our attempts

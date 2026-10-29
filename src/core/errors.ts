@@ -3,6 +3,7 @@ export type MwfErrorCode =
   | 'INVALID_ARGUMENT'
   | 'NOT_FOUND'
   | 'LOCK_TIMEOUT'
+  | 'LOCK_LOST'
   | 'HASH_MISMATCH'
   | 'ID_COLLISION'
   | 'REQUEST_ID_REUSED'

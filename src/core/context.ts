@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { MwfError } from './errors.ts';
 import { layoutOf, type Layout } from './paths.ts';
-import { DEFAULT_LOCK_STALE_MS, DEFAULT_WAIT_MS } from './lock.ts';
+import { DEFAULT_LOCK_HELD_WARN_MS, DEFAULT_LOCK_STALE_MS, DEFAULT_WAIT_MS } from './lock.ts';
 
 export interface Ctx {
   /** Project root: the directory that contains (or will contain) `.mwf/`. */
@@ -11,8 +11,10 @@ export interface Ctx {
   now?: () => number;
   /** Default lock wait budget. MCP: 5000 (default). Hooks: 2000, then caller proceeds/gives up. */
   waitMs?: number;
-  /** Heartbeat age after which a lock held from ANOTHER host is reclaimable (default 30s). Same-host locks are never reclaimed while the holder is alive. */
+  /** Heartbeat age after which a lock held from ANOTHER host is reclaimable (default 30s). Same-host locks (same hostname and pid namespace) are never reclaimed while the holder is alive. */
   lockStaleMs?: number;
+  /** doctor reports a live lock held for longer than this many ms (default 120000). */
+  lockHeldWarnMs?: number;
 }
 
 /** Options accepted by every write operation. */
@@ -37,6 +39,10 @@ export function waitOf(ctx: Ctx, override?: number): number {
 
 export function staleOf(ctx: Ctx): number {
   return ctx.lockStaleMs ?? DEFAULT_LOCK_STALE_MS;
+}
+
+export function heldWarnOf(ctx: Ctx): number {
+  return ctx.lockHeldWarnMs ?? DEFAULT_LOCK_HELD_WARN_MS;
 }
 
 export function requireInitialized(ctx: Ctx): Layout {
