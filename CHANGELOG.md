@@ -10,7 +10,7 @@
 ### 新增 / Added
 
 - `src/core`：`.mwf/` 布局（config.toml、protocol.md、index.md、inbox.md、handoff/、memory/<五类>/、index.db、state.toml、host.local.toml、trash/）、init（git 模式 track/local）、bootstrap、recall、get、add、propose、edit（内容哈希前置条件）、handoff read/save（版本检查，冲突追加「并行更新」段）、status、doctor、inbox、compact、reindex、forget/restore/purge（30 天回收站）。
-- 并发与崩溃安全：同目录临时文件 + fsync + rename + fsync 目录；O_EXCL 锁（pid/host/time，死 pid 或超过 30 秒回收）；request_id 幂等（intent → 原子写 → 登记 dedup → 删 intent，下次加锁恢复遗留 intent）；forget/purge/compact 预览 + preview_token 确认。
+- 并发与崩溃安全：同目录临时文件 + fsync + rename + fsync 目录；O_EXCL 锁（pid/host/time/start；同主机仅在持有者 pid 确认已死、或进程启动时间不符（pid 复用，Linux 读 /proc/<pid>/stat + boot_id）时回收，活着的同主机持有者无论多久都不回收，无 /proc 的平台退化为仅 pid 存活检查；异主机持有者按心跳超时（默认 30 秒）回收并由 doctor 报告；长操作（compact/reindex/purge 等）定期心跳刷新锁时间；回收守卫文件清理前复读 token 比对）；forget/purge/compact 的多文件写入先写后删，崩溃后恢复时对已落盘的删除向前滚动，compact 的 preview_token 不含保留记录的 scope（只做幂等并集）；request_id 幂等（intent → 原子写 → 登记 dedup → 删 intent，下次加锁恢复遗留 intent）；forget/purge/compact 预览 + preview_token 确认。
 - Tests: multi-process writes, kill -9 at every failpoint, dedup, reindex equivalence, lock timeout / stale reclaim, reader-during-write, preview_token, gitignore modes.
 
 ## 0.4.0

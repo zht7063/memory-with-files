@@ -4,6 +4,7 @@ import {
   fsyncSync,
   openSync,
   readFileSync,
+  readSync,
   statSync,
   unlinkSync,
   writeSync,
@@ -21,8 +22,14 @@ const GUARD_STALE_MS = 10_000;
 export interface LockInfo {
   pid: number;
   host: string;
+  /** Acquisition time, refreshed by the holder's heartbeat. */
   time: number;
   token: string;
+  /**
+   * Opaque start-time identity of the holder process (Linux: boot id + /proc/<pid>/stat
+   * starttime). Guards against pid reuse. Absent on platforms without /proc.
+   */
+  start?: string;
 }
 
 export interface LockOptions {
@@ -35,8 +42,10 @@ export interface LockOptions {
 
 export interface LockHandle {
   readonly info: LockInfo;
-  /** True when we reclaimed a stale lock from a dead / expired holder. */
+  /** True when we reclaimed a lock from a dead holder or a stale foreign-host holder. */
   readonly reclaimed: boolean;
+  /** Refresh the lock timestamp (throttled; cheap to call in loops). Returns false if we lost the lock. */
+  heartbeat(force?: boolean): boolean;
   release(): void;
 }
 
@@ -73,17 +82,71 @@ function pidAlive(pid: number): boolean {
   }
 }
 
-function isStale(path: string, info: LockInfo | null, staleMs: number, now: number): boolean {
+let bootId: string | null | undefined;
+
+/**
+ * Start-time identity of a process, or null when the platform cannot tell (anything without
+ * /proc, e.g. macOS / Windows) or the process does not exist. On Linux this is the boot id plus
+ * field 22 (starttime) of /proc/<pid>/stat, so a recycled pid never matches an old lock.
+ */
+export function processStart(pid: number): string | null {
+  try {
+    if (bootId === undefined) {
+      try {
+        bootId = readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim();
+      } catch {
+        bootId = '';
+      }
+    }
+    const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
+    // "pid (comm) state ..." where comm may contain spaces and parentheses: split after the last ')'.
+    const rest = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
+    const starttime = rest[19]; // field 22 overall; fields 1-2 are pid and comm
+    return starttime ? `${bootId}:${starttime}` : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Why a lock may be taken over (null = it must be respected). */
+export type Takeover = 'dead-pid' | 'pid-reused' | 'foreign-stale' | 'torn-stale';
+
+/**
+ * Lock takeover rules:
+ *  - same host: ONLY when the holder is confirmed dead: its pid is gone, or the pid now belongs to
+ *    a process with a different start time (pid reuse). A live same-host holder is never
+ *    reclaimed, however old the lock is. Where the start time cannot be read (no /proc) or the
+ *    lock predates the `start` field, we fall back to plain pid liveness.
+ *  - different host: pid checks are meaningless, so the lock is reclaimed by staleness
+ *    (`staleMs` since the last heartbeat). Long operations heartbeat to stay below that.
+ *  - unparseable lock file (holder died between create and write): staleness by file mtime.
+ */
+export function takeoverReason(
+  path: string,
+  info: LockInfo | null,
+  staleMs: number,
+  now: number,
+): Takeover | null {
   if (info === null) {
-    // Unparseable: holder died between create and write, or is mid-write. Use file mtime.
     try {
-      return now - statSync(path).mtimeMs > staleMs;
+      return now - statSync(path).mtimeMs > staleMs ? 'torn-stale' : null;
     } catch {
-      return false;
+      return null;
     }
   }
-  if (info.host === hostname() && !pidAlive(info.pid)) return true;
-  return now - info.time > staleMs;
+  if (info.host === hostname()) {
+    if (!pidAlive(info.pid)) return 'dead-pid';
+    if (info.start !== undefined) {
+      const current = processStart(info.pid);
+      if (current !== null && current !== info.start) return 'pid-reused';
+    }
+    return null;
+  }
+  return now - info.time > staleMs ? 'foreign-stale' : null;
+}
+
+function isStale(path: string, info: LockInfo | null, staleMs: number, now: number): boolean {
+  return takeoverReason(path, info, staleMs, now) !== null;
 }
 
 /** Inspect the current lock holder without touching it (for doctor/status). */
@@ -92,15 +155,24 @@ export function inspectLock(
   opts: LockOptions = {},
 ): {
   held: boolean;
+  /** Reclaimable right now (dead holder, or foreign-host holder past the stale age). */
   stale: boolean;
+  /** Held by a process on another host; only the stale timeout protects/reclaims it. */
+  foreign: boolean;
+  reason: Takeover | null;
   holder: LockInfo | null;
 } {
   const now = (opts.now ?? Date.now)();
   const info = readInfo(layout.lock);
-  if (info === 'absent') return { held: false, stale: false, holder: null };
+  if (info === 'absent') {
+    return { held: false, stale: false, foreign: false, reason: null, holder: null };
+  }
+  const reason = takeoverReason(layout.lock, info, opts.staleMs ?? DEFAULT_LOCK_STALE_MS, now);
   return {
     held: true,
-    stale: isStale(layout.lock, info, opts.staleMs ?? DEFAULT_LOCK_STALE_MS, now),
+    stale: reason !== null,
+    foreign: info !== null && info.host !== hostname(),
+    reason,
     holder: info,
   };
 }
@@ -115,7 +187,7 @@ function tryCreate(path: string, info: LockInfo): boolean {
   }
   try {
     failpoint('lock:created');
-    const data = Buffer.from(JSON.stringify(info), 'utf8');
+    const data = encode(info);
     writeSync(fd, data, 0, data.length);
     fsyncSync(fd);
   } finally {
@@ -139,15 +211,24 @@ function reclaim(
     host: hostname(),
     time: opts.now(),
     token: randomBytes(8).toString('hex'),
+    ...(processStart(process.pid) !== null ? { start: processStart(process.pid) as string } : {}),
   };
   if (!tryCreate(layout.lockGuard, guardInfo)) {
-    // Someone else is reclaiming; clear the guard if its owner died.
+    // Someone else is reclaiming; clear the guard only if its owner is dead / it is stale, and only
+    // if it is still the very same guard right before we unlink it (token compare), so a guard that
+    // was released and freshly re-created by another reclaimer in the meantime is never deleted.
     const guard = readInfo(layout.lockGuard);
     if (guard !== 'absent' && isStale(layout.lockGuard, guard, GUARD_STALE_MS, opts.now())) {
-      try {
-        unlinkSync(layout.lockGuard);
-      } catch {
-        // someone else cleared it
+      const again = readInfo(layout.lockGuard);
+      const same =
+        again !== 'absent' &&
+        (again === null ? guard === null : guard !== null && again.token === guard.token);
+      if (same) {
+        try {
+          unlinkSync(layout.lockGuard);
+        } catch {
+          // someone else cleared it
+        }
       }
     }
     return false;
@@ -174,6 +255,82 @@ function reclaim(
   }
 }
 
+/** Lock files are padded to a fixed size so a heartbeat can rewrite them in place. */
+const LOCK_FILE_BYTES = 256;
+
+function encode(info: LockInfo): Buffer {
+  const json = JSON.stringify(info);
+  return Buffer.from(json.length < LOCK_FILE_BYTES ? json.padEnd(LOCK_FILE_BYTES, ' ') : json);
+}
+
+let activeHandle: LockHandle | null = null;
+
+/**
+ * Heartbeat for the lock this process currently holds (no-op otherwise). Long loops in core
+ * (reindex, compact, purge, index sync) call this; it is throttled to a fraction of the stale age.
+ */
+export function beat(): void {
+  activeHandle?.heartbeat();
+}
+
+function makeHandle(
+  layout: Layout,
+  info: LockInfo,
+  reclaimed: boolean,
+  staleMs: number,
+  now: () => number,
+): LockHandle {
+  let released = false;
+  let lastBeat = info.time;
+  const interval = Math.max(1, Math.floor(staleMs / 4));
+  const handle: LockHandle = {
+    info,
+    reclaimed,
+    heartbeat(force = false) {
+      if (released) return false;
+      const t = now();
+      if (!force && t - lastBeat < interval) return true;
+      let fd: number;
+      try {
+        fd = openSync(layout.lock, 'r+');
+      } catch {
+        return false;
+      }
+      try {
+        // verify ownership through the same fd we write to: if the file was replaced, we only
+        // ever touch the (unlinked) old inode.
+        const buf = Buffer.alloc(1024);
+        const n = readSync(fd, buf, 0, buf.length, 0);
+        const current = JSON.parse(buf.subarray(0, n).toString('utf8')) as Partial<LockInfo>;
+        if (current.token !== info.token) return false;
+        const data = encode({ ...info, time: t });
+        writeSync(fd, data, 0, data.length, 0);
+        lastBeat = t;
+        return true;
+      } catch {
+        return false;
+      } finally {
+        closeSync(fd);
+      }
+    },
+    release() {
+      if (released) return;
+      released = true;
+      if (activeHandle === handle) activeHandle = null;
+      const current = readInfo(layout.lock);
+      if (current !== 'absent' && current?.token === info.token) {
+        try {
+          unlinkSync(layout.lock);
+        } catch {
+          // already gone
+        }
+      }
+    },
+  };
+  activeHandle = handle;
+  return handle;
+}
+
 export async function acquireLock(layout: Layout, options: LockOptions = {}): Promise<LockHandle> {
   const now = options.now ?? Date.now;
   const staleMs = options.staleMs ?? DEFAULT_LOCK_STALE_MS;
@@ -188,25 +345,9 @@ export async function acquireLock(layout: Layout, options: LockOptions = {}): Pr
       time: now(),
       token: randomBytes(8).toString('hex'),
     };
-    if (tryCreate(layout.lock, info)) {
-      let released = false;
-      return {
-        info,
-        reclaimed,
-        release() {
-          if (released) return;
-          released = true;
-          const current = readInfo(layout.lock);
-          if (current !== 'absent' && current?.token === info.token) {
-            try {
-              unlinkSync(layout.lock);
-            } catch {
-              // already gone
-            }
-          }
-        },
-      };
-    }
+    const start = processStart(process.pid);
+    if (start !== null) info.start = start;
+    if (tryCreate(layout.lock, info)) return makeHandle(layout, info, reclaimed, staleMs, now);
     const holder = readInfo(layout.lock);
     if (holder === 'absent') continue; // released between our attempts
     if (isStale(layout.lock, holder, staleMs, now())) {

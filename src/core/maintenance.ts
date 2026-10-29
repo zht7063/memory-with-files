@@ -1,3 +1,4 @@
+import { beat } from './lock.ts';
 import { requireInitialized, nowOf, type Ctx, type WriteInput } from './context.ts';
 import { listTrash, type TrashRow } from './db.ts';
 import { invalid, MwfError } from './errors.ts';
@@ -195,6 +196,7 @@ export async function forget(ctx: Ctx, input: ForgetInput) {
       const targets: Target[] = [];
       const forgotten: Array<{ id: string; trash_id: string }> = [];
       for (const a of affected) {
+        beat();
         const rec = loaded.records.find((r) => r.doc.id === a.id) as LoadedRecord;
         const { target, trashId } = trashEntry(rec, loaded, env.now, reason);
         if (target) targets.push(target);
@@ -415,7 +417,20 @@ export async function compact(ctx: Ctx, input: CompactInput = {}) {
       });
     }
     affected.sort((a, b) => a.keep.localeCompare(b.keep));
-    return { affected, tokenObjects: affected.map((g) => ({ keep: g.keep, hashes: g.hashes })) };
+    // The token covers everything compact can destroy: the duplicates' full content, and the kept
+    // record's identity/title/body/status. The kept record's *scope* is deliberately excluded: compact
+    // only ever widens it (union), idempotently, so a retry after a crash that already merged some
+    // scopes still matches the token that was previewed.
+    const byId = new Map(loaded.records.map((r) => [r.doc.id, r]));
+    const tokenObjects = affected.map((g) => {
+      const keep = (byId.get(g.keep) as LoadedRecord).doc;
+      return {
+        keep: g.keep,
+        keepContent: sha256(canonicalJson([keep.type, keep.title, keep.status, keep.body])),
+        merge: g.merge.map((id) => ({ id, hash: g.hashes[id] })),
+      };
+    });
+    return { affected, tokenObjects };
   };
   return destructive<CompactGroup, { merged_groups: number; trashed: string[] }>(
     ctx,
@@ -432,6 +447,7 @@ export async function compact(ctx: Ctx, input: CompactInput = {}) {
         const keep = loaded.records.find((r) => r.doc.id === g.keep) as LoadedRecord;
         let scope: Scope = keep.doc.scope;
         for (const id of g.merge) {
+          beat();
           const dup = loaded.records.find((r) => r.doc.id === id) as LoadedRecord;
           scope = mergeScopes(scope, dup.doc.scope);
           const { target } = trashEntry(dup, loaded, env.now, `compact: merged into ${g.keep}`);

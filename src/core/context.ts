@@ -11,7 +11,7 @@ export interface Ctx {
   now?: () => number;
   /** Default lock wait budget. MCP: 5000 (default). Hooks: 2000, then caller proceeds/gives up. */
   waitMs?: number;
-  /** Lock considered stale after this age (default 30s). */
+  /** Heartbeat age after which a lock held from ANOTHER host is reclaimable (default 30s). Same-host locks are never reclaimed while the holder is alive. */
   lockStaleMs?: number;
 }
 

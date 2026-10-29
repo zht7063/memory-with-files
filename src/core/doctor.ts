@@ -84,11 +84,22 @@ export async function doctor(ctx: Ctx): Promise<DoctorResult> {
     );
   }
   const lock = inspectLock(layout, { staleMs: staleOf(ctx), now: ctx.now ?? Date.now });
-  if (lock.held && lock.stale) {
+  if (lock.held && lock.foreign) {
+    // Another hostname: we cannot check its pid, so only the stale timeout protects/reclaims it.
+    add(
+      'warn',
+      'foreign_host_lock',
+      `lock is held by host "${lock.holder?.host ?? '?'}" (pid ${lock.holder?.pid ?? '?'}), not this host; ` +
+        (lock.stale
+          ? 'its heartbeat is older than the stale age, so the next writer will reclaim it'
+          : 'it is respected until its heartbeat goes stale'),
+      '.mwf/mwf.local.lock',
+    );
+  } else if (lock.held && lock.stale) {
     add(
       'warn',
       'stale_lock',
-      `lock held by pid ${lock.holder?.pid ?? '?'} is stale and will be reclaimed`,
+      `lock held by pid ${lock.holder?.pid ?? '?'} is stale (${lock.reason}) and will be reclaimed`,
       '.mwf/mwf.local.lock',
     );
   }

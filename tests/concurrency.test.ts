@@ -13,7 +13,8 @@ import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import * as core from '../src/core/index.ts';
 import { loadAll } from '../src/core/load.ts';
-import { acquireLock, inspectLock } from '../src/core/lock.ts';
+import { acquireLock, beat, inspectLock, processStart } from '../src/core/lock.ts';
+import { withLock } from '../src/core/write.ts';
 import { layoutOf } from '../src/core/paths.ts';
 import { DEDUP_MAX_ENTRIES, emptyState, pruneDedup } from '../src/core/state.ts';
 import { project, runChild } from './helpers/util.ts';
@@ -210,7 +211,7 @@ describe('lock', () => {
     assert.equal(existsSync(layout.lock), false);
   });
 
-  it('reclaims a lock older than the stale age (live pid on another host); keeps a fresh one', async () => {
+  it('foreign hostname: reclaimed by staleness only (pid is meaningless there); a fresh one is respected', async () => {
     const ctx = await project();
     const layout = layoutOf(ctx.root);
     let now = 1_000_000;
@@ -229,21 +230,220 @@ describe('lock', () => {
     assert.equal(existsSync(layout.lock), false);
   });
 
-  it('a live same-host holder is respected even when old, until the age limit', async () => {
+  it('never reclaims a live same-host holder, however old the lock is', async () => {
     const ctx = await project();
     const layout = layoutOf(ctx.root);
-    const now = 5_000_000;
-    writeFileSync(
-      layout.lock,
-      JSON.stringify({ pid: process.pid, host: hostname(), time: now - 10_000, token: 't' }),
-    );
+    const now = Date.now();
+    const lock = {
+      pid: process.pid,
+      host: hostname(),
+      time: now - 24 * 3600_000, // a day old
+      token: 't',
+      start: processStart(process.pid) ?? undefined,
+    };
+    writeFileSync(layout.lock, JSON.stringify(lock));
+    const state = inspectLock(layout, { staleMs: 30_000, now: () => now });
+    assert.equal(state.stale, false);
+    assert.equal(state.reason, null);
+    for (const at of [now, now + 31_000, now + 7 * 24 * 3600_000]) {
+      await assert.rejects(
+        acquireLock(layout, { waitMs: 0, now: () => at }),
+        (e: { code?: string }) => e.code === 'LOCK_TIMEOUT',
+      );
+    }
+    // same for a lock written before the `start` field existed (plain liveness fallback)
+    writeFileSync(layout.lock, JSON.stringify({ ...lock, start: undefined }));
     await assert.rejects(
-      acquireLock(layout, { waitMs: 0, now: () => now }),
+      acquireLock(layout, { waitMs: 0, now: () => now + 3600_000 }),
       (e: { code?: string }) => e.code === 'LOCK_TIMEOUT',
     );
-    const h = await acquireLock(layout, { waitMs: 0, now: () => now + 25_000 }); // 35s old
+    assert.ok(existsSync(layout.lock));
+  });
+
+  it('a second process does not take a lock held by a live process past the stale age', async () => {
+    const ctx = await project('track', { lockStaleMs: 150 });
+    const layout = layoutOf(ctx.root);
+    const script = `
+      import { acquireLock } from ${JSON.stringify(new URL('../src/core/lock.ts', import.meta.url).href)};
+      const h = await acquireLock(${JSON.stringify(layout)}, { waitMs: 0 });
+      process.stdout.write('held');
+      await new Promise((r) => setTimeout(r, 1500)); // no heartbeat: lock "time" goes far past staleMs
+      h.release();
+    `;
+    const holder = spawn(
+      process.execPath,
+      ['--experimental-strip-types', '--no-warnings', '--input-type=module', '-e', script],
+      { stdio: ['ignore', 'pipe', 'inherit'] },
+    );
+    const exited = new Promise((res) => holder.on('close', res));
+    await new Promise<void>((res) => holder.stdout.once('data', () => res()));
+    await new Promise((r) => setTimeout(r, 400)); // > 2x staleMs
+    assert.equal(inspectLock(layout, { staleMs: 150 }).stale, false);
+    const t0 = Date.now();
+    const second = await runChild({ ...ctx, waitMs: 500, lockStaleMs: 150 }, [
+      { fn: 'add', input: { type: 'task', title: 'blocked', body: 'x' } },
+    ]);
+    assert.equal(second.code, 1);
+    assert.equal((second.results[0] as { error: { code: string } }).error.code, 'LOCK_TIMEOUT');
+    assert.ok(Date.now() - t0 >= 450);
+    assert.equal(loadAll(layout).records.length, 0, 'second process wrote nothing');
+    await exited; // holder released normally
+    const third = await runChild(ctx, [
+      { fn: 'add', input: { type: 'task', title: 'ok', body: 'x' } },
+    ]);
+    assert.equal(third.code, 0, third.stderr);
+  });
+
+  it('reclaims when the pid is alive but is a different process (start time mismatch = pid reuse)', async (t) => {
+    if (processStart(process.pid) === null) return t.skip('no /proc start time on this platform');
+    const ctx = await project();
+    const layout = layoutOf(ctx.root);
+    writeFileSync(
+      layout.lock,
+      JSON.stringify({
+        pid: process.pid, // alive, but not the process that took the lock
+        host: hostname(),
+        time: Date.now(),
+        token: 'old-owner',
+        start: 'boot:1', // recorded start time differs from the live process
+      }),
+    );
+    const state = inspectLock(layout);
+    assert.equal(state.reason, 'pid-reused');
+    const h = await acquireLock(layout, { waitMs: 0 });
     assert.equal(h.reclaimed, true);
     h.release();
+    assert.equal(existsSync(layout.lock), false);
+    // the lock a live process takes records its own start time
+    const own = await acquireLock(layout, { waitMs: 0 });
+    assert.equal(own.info.start, processStart(process.pid));
+    own.release();
+  });
+
+  it('parses /proc/<pid>/stat start time robustly (comm with spaces / parentheses)', (t) => {
+    const a = processStart(process.pid);
+    if (a === null) return t.skip('no /proc start time on this platform');
+    assert.equal(processStart(process.pid), a); // stable
+    assert.equal(processStart(2 ** 22 + 12345), null); // no such process
+    assert.match(a, /:\d+$/);
+  });
+
+  it('heartbeat refreshes the lock time (throttled) and never touches a lock it lost', async () => {
+    const ctx = await project();
+    const layout = layoutOf(ctx.root);
+    let now = 1_000_000;
+    const h = await acquireLock(layout, { waitMs: 0, staleMs: 1000, now: () => now });
+    const time = (): number => JSON.parse(readFileSync(layout.lock, 'utf8')).time;
+    assert.equal(time(), 1_000_000);
+    now += 100;
+    beat();
+    assert.equal(time(), 1_000_000, 'throttled: less than staleMs/4 since the last beat');
+    now += 400;
+    beat();
+    assert.equal(time(), 1_000_500);
+    now += 10;
+    assert.equal(h.heartbeat(true), true);
+    assert.equal(time(), 1_000_510, 'force bypasses the throttle');
+    // another owner took over: we must not overwrite its lock
+    const foreign = JSON.stringify({ pid: 1, host: 'x', time: 5, token: 'someone-else' });
+    writeFileSync(layout.lock, foreign);
+    now += 5000;
+    assert.equal(h.heartbeat(true), false);
+    assert.equal(readFileSync(layout.lock, 'utf8'), foreign);
+    h.release();
+  });
+
+  it('a long async operation keeps heartbeating so a foreign-host stale check never fires', async () => {
+    const ctx = await project('track', { lockStaleMs: 120, waitMs: 0 });
+    const layout = layoutOf(ctx.root);
+    const times = new Set<number>();
+    const op = withLock(ctx, 0, async () => {
+      for (let i = 0; i < 12; i++) {
+        await new Promise((r) => setTimeout(r, 50));
+        times.add(JSON.parse(readFileSync(layout.lock, 'utf8')).time);
+      }
+    });
+    await op;
+    assert.ok(times.size >= 3, `lock time advanced ${times.size} times during a 600ms op`);
+    const first = Math.min(...times);
+    const last = Math.max(...times);
+    assert.ok(last - first >= 300);
+  });
+
+  it('foreign hostname: a fresh lock is respected even if its pid does not exist here; doctor reports it', async () => {
+    const dead = await deadPid();
+    const t = Date.now();
+    const ctx = await project('track', { lockStaleMs: 30_000, now: () => t });
+    const layout = layoutOf(ctx.root);
+    writeFileSync(
+      layout.lock,
+      JSON.stringify({ pid: dead, host: 'other-box', time: t - 1000, token: 'f' }),
+    );
+    assert.equal(inspectLock(layout, { now: () => t }).stale, false);
+    await assert.rejects(
+      acquireLock(layout, { waitMs: 0, now: () => t }),
+      (e: { code?: string }) => e.code === 'LOCK_TIMEOUT',
+    );
+    let doc = await core.doctor(ctx);
+    const fresh = doc.issues.find((i) => i.code === 'foreign_host_lock');
+    assert.ok(fresh, 'doctor reports a lock held from another host');
+    assert.match(fresh.message, /other-box/);
+    assert.match(fresh.message, /respected/);
+    const st = await core.status(ctx);
+    assert.equal(st.lock.foreign_host, true);
+    assert.equal(st.lock.held, true);
+    // once its heartbeat is older than the stale age doctor says it will be reclaimed
+    const later = { ...ctx, now: () => t + 31_000 };
+    doc = await core.doctor(later);
+    assert.match(doc.issues.find((i) => i.code === 'foreign_host_lock')?.message ?? '', /reclaim/);
+    // and a writer actually reclaims it
+    await core.add(later, { type: 'task', title: 'after reclaim', body: 'x' });
+    assert.equal(existsSync(layout.lock), false);
+  });
+
+  it('doctor reports a dead same-host holder as stale_lock (not foreign)', async () => {
+    const ctx = await project();
+    const layout = layoutOf(ctx.root);
+    writeFileSync(
+      layout.lock,
+      JSON.stringify({ pid: await deadPid(), host: hostname(), time: Date.now(), token: 'd' }),
+    );
+    const doc = await core.doctor(ctx);
+    assert.ok(doc.issues.some((i) => i.code === 'stale_lock'));
+    assert.ok(!doc.issues.some((i) => i.code === 'foreign_host_lock'));
+  });
+
+  it("reclaim guard: a guard left by a dead reclaimer is cleaned up; a live reclaimer's guard is never deleted", async () => {
+    const ctx = await project();
+    const layout = layoutOf(ctx.root);
+    const deadLock = {
+      pid: await deadPid(),
+      host: hostname(),
+      time: Date.now(),
+      token: 'dead-lock',
+    };
+    // dead reclaimer left its guard behind, plus a dead lock holder
+    writeFileSync(layout.lock, JSON.stringify(deadLock));
+    writeFileSync(layout.lockGuard, JSON.stringify({ ...deadLock, token: 'dead-guard' }));
+    const h = await acquireLock(layout, { waitMs: 2000 });
+    assert.equal(h.reclaimed, true);
+    assert.equal(existsSync(layout.lockGuard), false);
+    h.release();
+    // a guard held by a LIVE process (mid-reclaim) is kept untouched, and we time out
+    writeFileSync(layout.lock, JSON.stringify(deadLock));
+    const live = JSON.stringify({
+      pid: process.pid,
+      host: hostname(),
+      time: 1,
+      token: 'live-guard',
+      start: processStart(process.pid) ?? undefined,
+    });
+    writeFileSync(layout.lockGuard, live);
+    await assert.rejects(
+      acquireLock(layout, { waitMs: 150 }),
+      (e: { code?: string }) => e.code === 'LOCK_TIMEOUT',
+    );
+    assert.equal(readFileSync(layout.lockGuard, 'utf8').trimEnd(), live.trimEnd());
   });
 
   it('an empty lock file (holder died between create and write) is reclaimed by mtime age', async () => {

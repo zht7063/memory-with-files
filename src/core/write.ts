@@ -21,7 +21,7 @@ import {
 import { invalid, MwfError } from './errors.ts';
 import { failpoint } from './failpoint.ts';
 import { atomicWrite, readBytesIfExists, removeDurable, removeTempFiles } from './fsx.ts';
-import { acquireLock } from './lock.ts';
+import { acquireLock, beat } from './lock.ts';
 import { REQUEST_ID_RE, type Layout } from './paths.ts';
 import { pruneDedup, readState, writeState } from './state.ts';
 import { canonicalJson, newRequestId, sha256 } from './util.ts';
@@ -55,7 +55,12 @@ interface Intent {
   op: string;
   fingerprint: string;
   at: number;
-  targets: Array<{ path: string; hash: string | null }>;
+  /**
+   * `hash` is the content hash the target must end up with (null = file removed). For removals
+   * `prior` is the hash of the file as planned for removal, so a roll-forward never deletes a
+   * file that was modified in the meantime.
+   */
+  targets: Array<{ path: string; hash: string | null; prior?: string | null }>;
   result: unknown;
 }
 
@@ -94,8 +99,10 @@ function registerDedup(layout: Layout, now: number, entry: Omit<Intent, 'targets
 
 /**
  * Recover an intent left behind by a crashed writer. If every target already matches the intended
- * content hash the write completed: finish the dedup registration. Otherwise discard the intent
- * (the caller may retry with the same request_id; ops are written to be re-executable).
+ * content hash the write completed: finish the dedup registration. If only removals are pending
+ * (all content writes durable) they are rolled forward first. Otherwise discard the intent (the
+ * caller may retry with the same request_id; nothing was removed yet, so the retry sees the
+ * original state).
  */
 function recoverIntent(layout: Layout, now: number): 'none' | 'completed' | 'discarded' {
   const intent = readIntent(layout);
@@ -106,8 +113,22 @@ function recoverIntent(layout: Layout, now: number): 'none' | 'completed' | 'dis
     }
     return 'none';
   }
-  const complete = intent.targets.every((t) => fileHash(layout, t.path) === t.hash);
-  if (complete) {
+  const matches = (t: Intent['targets'][number]): boolean => fileHash(layout, t.path) === t.hash;
+  // Writes always precede removals (see runWrite). When every written target is already durable
+  // the destructive op had been authorised and its replacement copies exist, so a crash between
+  // the removals is ROLLED FORWARD: the remaining removals are performed (only for files that
+  // still hold the planned content). Without this a half-finished forget/compact/purge could
+  // never be retried (the preview_token / NOT_FOUND checks no longer see the original state).
+  const writes = intent.targets.filter((t) => t.hash !== null);
+  if (writes.every(matches)) {
+    for (const t of intent.targets) {
+      if (t.hash !== null || matches(t)) continue;
+      if (t.prior !== undefined && fileHash(layout, t.path) === t.prior) {
+        removeDurable(abs(layout, t.path));
+      }
+    }
+  }
+  if (intent.targets.every(matches)) {
     registerDedup(layout, now, intent);
     removeDurable(layout.intent);
     return 'completed';
@@ -142,12 +163,16 @@ export async function withLock<T>(
     removeTempFiles(layout.mwf);
     recoverIntent(layout, nowOf(ctx));
     const { db } = openIndex(layout, nowOf(ctx));
+    // Heartbeat while awaiting (sync loops call beat() themselves; timers cannot fire during them).
+    const timer = setInterval(() => lock.heartbeat(), Math.max(1, Math.floor(staleOf(ctx) / 4)));
+    timer.unref();
     try {
       syncIndex(db, layout);
       const value = await fn({ layout, db, now: nowOf(ctx) });
       checkpoint(db);
       return value;
     } finally {
+      clearInterval(timer);
       db.close();
     }
   } finally {
@@ -203,22 +228,33 @@ export async function runWrite<R extends object>(
       }
       return { ...(JSON.parse(prior.result) as R), request_id: requestId, deduped: true };
     }
-    const plan = await build({ layout, db, now, requestId, ctx });
+    const built = await build({ layout, db, now, requestId, ctx });
+    // Invariant: every content write is applied before any removal, so a crash never loses data
+    // (replacement copies exist before originals go) and recoverIntent can roll removals forward.
+    const plan = {
+      ...built,
+      targets: [
+        ...built.targets.filter((t) => t.content !== null),
+        ...built.targets.filter((t) => t.content === null),
+      ],
+    };
     const intent: Intent = {
       request_id: requestId,
       op,
       fingerprint,
       at: now,
-      targets: plan.targets.map((t) => ({
-        path: t.path,
-        hash: t.content === null ? null : sha256(t.content),
-      })),
+      targets: plan.targets.map((t) =>
+        t.content === null
+          ? { path: t.path, hash: null, prior: fileHash(layout, t.path) }
+          : { path: t.path, hash: sha256(t.content) },
+      ),
       result: plan.result,
     };
     if (plan.targets.length) {
       atomicWrite(layout.intent, JSON.stringify(intent));
       failpoint('write:intent');
       for (const target of plan.targets) {
+        beat();
         if (target.content === null) removeDurable(abs(layout, target.path));
         else atomicWrite(abs(layout, target.path), target.content);
         failpoint('write:target');

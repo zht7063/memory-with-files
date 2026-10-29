@@ -1,3 +1,4 @@
+import { beat } from './lock.ts';
 import { readFileSync } from 'node:fs';
 import { scanFiles } from './db.ts';
 import { ID_RE, TASK_RE, TRASH_ID_RE, TYPE_DIR, type Layout } from './paths.ts';
@@ -43,6 +44,7 @@ export function loadAll(layout: Layout): Loaded {
   const out: Loaded = { records: [], handoffs: [], trash: [], invalid: [] };
   const seenIds = new Map<string, string>();
   for (const file of scanFiles(layout)) {
+    beat();
     let text: string;
     try {
       text = readFileSync(file.abs, 'utf8');

@@ -266,7 +266,12 @@ export interface StatusResult {
   inbox_pending: number;
   trash: TrashSummary;
   index: { in_sync: boolean; invalid_files: number };
-  lock: { held: boolean; stale: boolean; holder_pid: number | null };
+  lock: {
+    held: boolean;
+    stale: boolean;
+    foreign_host: boolean;
+    holder_pid: number | null;
+  };
   host: Record<string, Record<string, string>>;
   hints: string[];
   warnings: string[];
@@ -306,7 +311,9 @@ export async function status(ctx: Ctx): Promise<StatusResult> {
     if (invalidFiles) hints.push(`${invalidFiles} 个记录文件无法解析，运行 doctor 查看`);
     if (inbox) hints.push(`inbox 有 ${inbox} 条待整理`);
     if (trash.note) hints.push(trash.note);
-    if (lock.held && lock.stale) hints.push('锁文件已过期，下次写入会自动回收');
+    if (lock.held && lock.foreign)
+      hints.push('锁由其他主机持有（仅按心跳超时回收），运行 doctor 查看');
+    else if (lock.held && lock.stale) hints.push('锁持有者已不存在，下次写入会自动回收');
     if (!existsSync(layout.hostLocal)) hints.push('尚未确认宿主加载（host.local.toml 不存在）');
     return {
       initialized: true as const,
@@ -323,7 +330,12 @@ export async function status(ctx: Ctx): Promise<StatusResult> {
         in_sync: diff.changed.length === 0 && diff.removed.length === 0,
         invalid_files: invalidFiles,
       },
-      lock: { held: lock.held, stale: lock.stale, holder_pid: lock.holder?.pid ?? null },
+      lock: {
+        held: lock.held,
+        stale: lock.stale,
+        foreign_host: lock.foreign,
+        holder_pid: lock.holder?.pid ?? null,
+      },
       host: readHost(layout.hostLocal),
       hints,
       warnings,

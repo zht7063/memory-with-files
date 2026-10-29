@@ -18,6 +18,7 @@ import {
   type Scope,
   type Status,
 } from './records.ts';
+import { beat } from './lock.ts';
 import { sha256 } from './util.ts';
 
 export const SCHEMA_VERSION = 1;
@@ -451,7 +452,10 @@ export function syncIndex(db: DatabaseSync, layout: Layout, diff?: IndexDiff): S
   db.exec('BEGIN IMMEDIATE');
   try {
     for (const path of d.removed) removePath(db, path);
-    for (const file of d.changed) indexFile(db, file);
+    for (const file of d.changed) {
+      beat();
+      indexFile(db, file);
+    }
     db.exec('COMMIT');
   } catch (error) {
     db.exec('ROLLBACK');
@@ -466,7 +470,10 @@ export function rebuildIndex(db: DatabaseSync, layout: Layout): SyncResult {
   try {
     db.exec('DELETE FROM nodes; DELETE FROM trash; DELETE FROM invalid; DELETE FROM fts;');
     const files = scanFiles(layout);
-    for (const file of files) indexFile(db, file);
+    for (const file of files) {
+      beat();
+      indexFile(db, file);
+    }
     db.exec('COMMIT');
     return { updated: files.length, removed: 0 };
   } catch (error) {

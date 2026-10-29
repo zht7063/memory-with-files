@@ -6,6 +6,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import * as core from '../src/core/index.ts';
+import { listTrash, openIndexReadOnly } from '../src/core/db.ts';
 import { loadAll } from '../src/core/load.ts';
 import { layoutOf } from '../src/core/paths.ts';
 import { project, runChild } from './helpers/util.ts';
@@ -37,6 +38,29 @@ function walk(dir: string): string[] {
 function assertNoPartialFiles(ctx: core.Ctx): void {
   const loaded = loadAll(layoutOf(ctx.root));
   assert.deepEqual(loaded.invalid, [], 'every visible file is complete');
+}
+
+/** Exactly `copies` trash file(s) per record id, and the index manifest lists the same set. */
+function assertTrashManifest(ctx: core.Ctx, ids: string[], copies: number): void {
+  const files = readdirSync(join(ctx.root, '.mwf/trash')).filter((f) => f.endsWith('.md'));
+  for (const id of ids) {
+    assert.equal(
+      files.filter((f) => f.startsWith(`${id}.`)).length,
+      copies,
+      `${copies} trash cop${copies === 1 ? 'y' : 'ies'} of ${id}`,
+    );
+  }
+  assert.equal(files.length, ids.length * copies, 'no stray trash files');
+  const db = openIndexReadOnly(layoutOf(ctx.root));
+  assert.ok(db);
+  try {
+    const rows = listTrash(db)
+      .map((r) => `${r.trash_id}.md`)
+      .sort();
+    assert.deepEqual(rows, [...files].sort(), 'trash manifest == trash directory');
+  } finally {
+    db.close();
+  }
 }
 
 async function assertClean(ctx: core.Ctx): Promise<void> {
@@ -163,6 +187,123 @@ const scenarios: Scenario[] = [
       );
       const trash = (await core.restore(ctx)) as { entries: unknown[] };
       assert.equal(trash.entries.length, 1, 'exactly one trash entry');
+    },
+  },
+  {
+    name: 'forget (3 records: 3 trash copies + 3 removals)',
+    setup: async (ctx) => {
+      for (const n of ['a', 'b', 'c'])
+        await core.add(ctx, {
+          type: 'incident',
+          title: `F${n}`,
+          body: `multi forget ${n}`,
+          request_id: `setup-mf-${n}`,
+        });
+    },
+    call: async (ctx) => {
+      const ids = (await core.recall(ctx, { query: 'multi forget' })).hits.map((h) => h.id).sort();
+      assert.equal(ids.length, 3);
+      const pre = (await core.forget(ctx, { ids })) as core.Preview<unknown>;
+      return {
+        fn: 'forget',
+        input: { ids, confirm: true, preview_token: pre.preview_token, request_id: REQ },
+      };
+    },
+    verify: async (ctx, result) => {
+      assert.equal(
+        (await core.recall(ctx, { query: 'multi forget', status: 'all' })).hits.length,
+        0,
+        'no live copy',
+      );
+      const forgotten = result['forgotten'] as Array<{ id: string; trash_id: string }>;
+      assert.equal(forgotten.length, 3);
+      assertTrashManifest(
+        ctx,
+        forgotten.map((f) => f.id),
+        1,
+      );
+    },
+  },
+  {
+    name: 'compact (2 groups: scope merge + trash + removal)',
+    setup: async (ctx) => {
+      let i = 0;
+      for (const g of ['x', 'y']) {
+        for (const dir of ['p', 'q']) {
+          await core.add(ctx, {
+            type: 'knowledge',
+            title: `Dup ${g}`,
+            body: `identical body ${g}`,
+            scope: { paths: [`${g}/${dir}/`] },
+            request_id: `setup-cp-${g}${dir}${i++}`,
+          });
+        }
+      }
+    },
+    call: async (ctx) => {
+      const pre = (await core.compact(ctx)) as core.Preview<unknown>;
+      assert.equal(pre.affected.length, 2);
+      return {
+        fn: 'compact',
+        input: { confirm: true, preview_token: pre.preview_token, request_id: REQ },
+      };
+    },
+    verify: async (ctx, result) => {
+      const live = (await core.recall(ctx, { query: 'identical body', status: 'all' })).hits;
+      assert.equal(live.length, 2, 'one survivor per group');
+      for (const h of live) {
+        const g = h.title.endsWith('x') ? 'x' : 'y';
+        assert.deepEqual(
+          core.get(ctx, { id: h.id }).scope,
+          { paths: [`${g}/p/`, `${g}/q/`] },
+          'scopes merged',
+        );
+      }
+      assertTrashManifest(ctx, result['trashed'] as string[], 1);
+      assert.equal((result['trashed'] as string[]).length, 2);
+    },
+  },
+  {
+    name: 'purge (3 trash entries removed)',
+    setup: async (ctx) => {
+      const ids: string[] = [];
+      for (const n of ['a', 'b', 'c'])
+        ids.push(
+          (
+            await core.add(ctx, {
+              type: 'task',
+              title: `P${n}`,
+              body: `purge me ${n}`,
+              request_id: `setup-pg-${n}`,
+            })
+          ).id,
+        );
+      const pre = (await core.forget(ctx, { ids })) as core.Preview<unknown>;
+      await core.forget(ctx, {
+        ids,
+        confirm: true,
+        preview_token: pre.preview_token,
+        request_id: 'setup-pg-forget',
+      });
+    },
+    call: async (ctx) => {
+      const ids = (
+        (await core.restore(ctx)) as { entries: Array<{ trash_id: string }> }
+      ).entries.map((e) => e.trash_id);
+      assert.equal(ids.length, 3);
+      const pre = (await core.purge(ctx, { ids })) as core.Preview<unknown>;
+      return {
+        fn: 'purge',
+        input: { ids, confirm: true, preview_token: pre.preview_token, request_id: REQ },
+      };
+    },
+    verify: async (ctx) => {
+      assert.deepEqual(walk(join(ctx.root, '.mwf/trash')), [], 'trash is empty');
+      assert.equal(
+        ((await core.restore(ctx)) as { entries: unknown[] }).entries.length,
+        0,
+        'manifest is empty',
+      );
     },
   },
 ];
