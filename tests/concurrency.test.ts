@@ -115,7 +115,8 @@ describe('multi-process concurrent writes', () => {
       import * as core from ${JSON.stringify(new URL('../src/core/index.ts', import.meta.url).href)};
       const ctx = ${JSON.stringify(ctx)};
       const mk = (v) => Array.from({ length: 400 }, () => 'version-' + v + ' ' + 'line '.repeat(20)).join('\\n');
-      for (let v = 1; v <= 40; v++) {
+      process.stdout.write('go');
+      for (let v = 1; v <= 60; v++) {
         const cur = core.get(ctx, { id: ${JSON.stringify(r.id)} });
         await core.edit(ctx, { id: ${JSON.stringify(r.id)}, expected_hash: cur.hash, body: mk(v) });
       }
@@ -124,10 +125,11 @@ describe('multi-process concurrent writes', () => {
       process.execPath,
       ['--experimental-strip-types', '--no-warnings', '--input-type=module', '-e', script],
       {
-        stdio: ['ignore', 'ignore', 'pipe'],
+        stdio: ['ignore', 'pipe', 'pipe'],
       },
     );
     let err = '';
+    const started = new Promise<void>((res) => writer.stdout.once('data', () => res()));
     writer.stderr.on('data', (d: Buffer) => (err += d.toString()));
     let done = false;
     const exited = new Promise<number | null>((res) =>
@@ -136,26 +138,29 @@ describe('multi-process concurrent writes', () => {
         res(c);
       }),
     );
+    await started; // only start reading once the writer is about to begin editing
     let reads = 0;
     const seen = new Set<string>();
     while (!done) {
-      // 1. raw file read: complete frontmatter + body of one single version
-      const text = readFileSync(file, 'utf8');
-      assert.match(text, /^---\n[\s\S]*?\n---\n/);
-      const versions = new Set([...text.matchAll(/version-(\d+) /g)].map((m) => m[1]));
-      assert.equal(versions.size, 1, 'file contains exactly one version');
-      seen.add([...versions][0]!);
-      // 2. API reads (index may be repaired under a short lock)
+      // 1. raw file reads (cheap, many): complete frontmatter + a body of one single version
+      for (let i = 0; i < 25; i++) {
+        const text = readFileSync(file, 'utf8');
+        assert.match(text, /^---\n[\s\S]*?\n---\n/);
+        const versions = new Set([...text.matchAll(/version-(\d+) /g)].map((m) => m[1]));
+        assert.equal(versions.size, 1, 'file contains exactly one version');
+        seen.add([...versions][0]!);
+        reads++;
+      }
+      // 2. API reads (the index may be repaired under a short lock)
       const got = core.get(ctx, { id: r.id });
       assert.equal(new Set([...got.body.matchAll(/version-(\d+) /g)].map((m) => m[1])).size, 1);
       const hits = await core.recall(ctx, { query: 'version' });
       assert.ok(hits.hits.length <= 1);
-      reads++;
-      await new Promise((r) => setTimeout(r, 2)); // let the child's exit event through
+      await new Promise((r) => setTimeout(r, 1)); // let the child's exit event through
     }
     assert.equal(await exited, 0, err);
     assert.ok(reads > 3 && seen.size > 1, `observed ${seen.size} versions over ${reads} reads`);
-    assert.match(core.get(ctx, { id: r.id }).body, /version-40 /);
+    assert.match(core.get(ctx, { id: r.id }).body, /version-60 /);
     assert.deepEqual(
       readdirSync(join(ctx.root, '.mwf/memory/knowledge')).filter((f) => f.includes('.tmp-')),
       [],
