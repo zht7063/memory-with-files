@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [v1, "feat/**"]
   pull_request:
-    branches: [main]
+    branches: [v1]
 
 permissions:
   contents: read
@@ -26,4 +26,4 @@ jobs:
       - run: npm run format:check
       - run: npm run typecheck
       - run: npm test
-      - run: npm run test:package
+      - run: npm run build

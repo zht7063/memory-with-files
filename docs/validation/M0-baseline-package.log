@@ -1,5 +1,0 @@
-npm notice run @zht7063/mwf@0.1.0 test:package
-npm notice run npm run build && node --experimental-strip-types scripts/check-package.ts
-npm notice run @zht7063/mwf@0.1.0 build
-npm notice run tsc && node --experimental-strip-types scripts/build.ts
-PASS: packed files only, empty PATH, offline empty-cache install, stdio handshake, write/read/doctor, TS installer preview/install/retry/conflict retention

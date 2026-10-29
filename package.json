@@ -1,20 +1,16 @@
 {
   "name": "@zht7063/mwf",
-  "version": "0.4.0",
-  "description": "Project-local file memory with a CLI and stdio MCP server",
+  "version": "1.0.0-alpha.0",
+  "description": "Project-local file memory (v1 rewrite): layered core, CLI, MCP and hooks",
   "type": "module",
-  "bin": {
-    "mwf": "dist/cli.js"
-  },
   "exports": {
-    ".": "./dist/core.js"
+    "./core": {
+      "types": "./dist/core/index.d.ts",
+      "default": "./dist/core/index.js"
+    }
   },
   "files": [
     "dist",
-    "assets/memory",
-    "assets/skills",
-    "assets/mwf-template/agents-block.md",
-    "README.md",
     "LICENSE",
     "THIRD-PARTY.md"
   ],
@@ -22,37 +18,19 @@
     "node": ">=22.19.0"
   },
   "scripts": {
-    "build": "tsc && node --experimental-strip-types scripts/build.ts",
-    "test": "npm run typecheck && node --experimental-strip-types --test tests/*.test.ts",
-    "prepack": "npm run build",
-    "test:package": "npm run build && node --experimental-strip-types scripts/check-package.ts",
-    "test:pi": "npm run test:integrations",
-    "format:check": "prettier --check \"src/**/*.ts\" \"tests/**/*.ts\" \"scripts/**/*.ts\" package.json \"tsconfig*.json\"",
-    "typecheck": "npm run build && tsc -p tsconfig.tools.json",
-    "pack:release": "npm run build && node --experimental-strip-types scripts/pack-release.ts",
-    "test:integrations": "npm run build && node --experimental-strip-types scripts/check-integrations.ts"
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --experimental-strip-types --no-warnings=ExperimentalWarning \"tests/**/*.test.ts\"",
+    "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\" package.json \"tsconfig*.json\"",
+    "format:check": "prettier --check \"src/**/*.ts\" \"tests/**/*.ts\" package.json \"tsconfig*.json\""
   },
   "dependencies": {
-    "@iarna/toml": "2.2.5",
-    "@modelcontextprotocol/sdk": "1.30.0",
-    "js-tiktoken": "1.0.21",
-    "zod": "3.25.76"
+    "@iarna/toml": "2.2.5"
   },
   "devDependencies": {
     "@types/node": "22.19.11",
     "prettier": "3.6.2",
     "typescript": "5.9.3"
-  },
-  "bundleDependencies": [
-    "@iarna/toml",
-    "@modelcontextprotocol/sdk",
-    "zod",
-    "js-tiktoken"
-  ],
-  "pi": {
-    "extensions": [
-      "./dist/integrations/pi/index.js"
-    ]
   },
   "license": "MIT"
 }

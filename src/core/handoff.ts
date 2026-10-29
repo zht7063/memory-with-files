@@ -1,123 +1,183 @@
-import { z } from "zod";
-import { hash, MWFError, Transaction } from "../storage/index.js";
-import { requireSafe } from "../contracts/records.js";
-import { resolveSession } from "./identity.js";
-export const scopeSchema = z
-  .object({
-    kind: z.enum(["session", "task"]),
-    id: z.string().min(1).max(1000),
-  })
-  .strict();
-const list = z.array(z.string().max(1000)).max(20).default([]);
-export const handoffDataSchema = z
-  .object({
-    goal: z.string().min(1).max(2000),
-    completed: list,
-    decisions: list,
-    blockers: list,
-    next_action: z.string().min(1).max(2000),
-    relevant_ids: z.array(z.string().max(200)).max(50).default([]),
-  })
-  .strict();
-export const handoffSchema = z
-  .object({
-    handoff_version: z.literal(1),
-    scope: scopeSchema,
-    revision: z.number().int().positive(),
-    updated_at: z.string(),
-    written_by_session_ref: z.string().nullable(),
-    data: handoffDataSchema,
-  })
-  .strict();
-export const routingFields = {
-  session_ref: z.string().optional(),
-  task_id: z.string().min(1).max(1000).optional(),
-};
-export function currentScope(
-  tx: Transaction,
-  a: { session_ref?: string; task_id?: string },
-) {
-  if (a.task_id) return { kind: "task" as const, id: a.task_id };
-  if (a.session_ref)
-    return {
-      kind: "session" as const,
-      id: resolveSession(tx, a.session_ref).session_key,
-    };
-  throw new MWFError(
-    "CONTEXT_REQUIRED",
-    "Specify task_id or a registered session_ref.",
-  );
+import { requireInitialized, type Ctx, type WriteInput } from './context.ts';
+import { listNodes } from './db.ts';
+import { invalid, MwfError } from './errors.ts';
+import { handoffRelPath } from './paths.ts';
+import {
+  parseHandoff,
+  serializeHandoff,
+  validateBody,
+  validateStatus,
+  validateTask,
+  type HandoffDoc,
+  type Status,
+} from './records.ts';
+import { runWrite, readFileText, withIndexRead } from './write.ts';
+import { isoTime, oneLine, sha256 } from './util.ts';
+
+export interface HandoffView {
+  task: string;
+  status: Status;
+  version: number;
+  updated: string;
+  summary: string;
+  body: string;
+  hash: string;
+  path: string;
 }
-function file(scope: z.infer<typeof scopeSchema>) {
-  if (scope.kind === "session" && !/^[a-f0-9]{64}$/.test(scope.id))
-    throw new MWFError("CONTEXT_REQUIRED", "Invalid session scope ID.");
-  return `.mwf/local/handoffs/${scope.kind}s/${scope.kind === "task" ? hash(scope.id) : scope.id}.json`;
+
+export interface HandoffListItem {
+  task: string;
+  status: Status;
+  version: number;
+  updated: string;
+  summary: string;
 }
-export function readHandoff(
-  tx: Transaction,
-  scope: z.infer<typeof scopeSchema>,
-) {
-  const raw = tx.get(file(scope));
-  if (!raw) return null;
-  const value = handoffSchema.parse(JSON.parse(raw));
-  if (value.scope.kind !== scope.kind || value.scope.id !== scope.id)
-    throw new MWFError("INVALID_HANDOFF", "Scope does not match file.");
-  requireSafe(raw);
-  return value;
+
+function view(doc: HandoffDoc, text: string, rel: string): HandoffView {
+  return {
+    task: doc.task,
+    status: doc.status,
+    version: doc.version,
+    updated: doc.updated,
+    summary: doc.summary,
+    body: doc.body,
+    hash: sha256(Buffer.from(text, 'utf8')),
+    path: `.mwf/${rel}`,
+  };
 }
-export function saveHandoff(
-  tx: Transaction,
-  a: {
-    session_ref?: string;
-    task_id?: string;
-    expected_revision?: number;
-    data?: z.infer<typeof handoffDataSchema>;
-  },
-) {
-  const scope = currentScope(tx, a);
-  if (a.session_ref) resolveSession(tx, a.session_ref);
-  if (a.expected_revision === undefined || !a.data)
-    throw new MWFError(
-      "INVALID_INPUT",
-      "Save requires expected_revision and data.",
-    );
-  const previous = readHandoff(tx, scope);
-  if ((previous?.revision ?? 0) !== a.expected_revision)
-    throw new MWFError(
-      "HANDOFF_CONFLICT",
-      `Current revision: ${previous?.revision ?? 0}. Read and reconcile before saving.`,
-      { current_revision: previous?.revision ?? 0 },
-    );
-  const value = handoffSchema.parse({
-    handoff_version: 1,
-    scope,
-    revision: a.expected_revision + 1,
-    updated_at: new Date().toISOString(),
-    written_by_session_ref: a.session_ref ?? null,
-    data: a.data,
+
+/** Read one handoff's full text from its file. */
+export function readHandoffFile(ctx: Ctx, taskInput: string): HandoffView {
+  const layout = requireInitialized(ctx);
+  const task = validateTask(taskInput);
+  const rel = handoffRelPath(task);
+  const text = readFileText(layout, rel);
+  if (text === null) throw new MwfError('NOT_FOUND', `no handoff for task ${task}`, { task });
+  try {
+    return view(parseHandoff(text, task), text, rel);
+  } catch (error) {
+    throw invalid(`handoff ${task} is malformed: ${(error as Error).message}`);
+  }
+}
+
+/** Handoff index (task, last update, one-line status), open ones by default. */
+export async function listHandoffs(
+  ctx: Ctx,
+  opts: { status?: Status | 'all' } = {},
+): Promise<{ items: HandoffListItem[]; warnings: string[] }> {
+  return withIndexRead(ctx, ({ db, warnings }) => {
+    const status = opts.status === 'all' ? undefined : (opts.status ?? 'active');
+    const items = listNodes(db, { kind: 'handoff', status }).map((n) => ({
+      task: n.id,
+      status: n.status,
+      version: n.version,
+      updated: n.updated,
+      summary: n.summary,
+    }));
+    return { items, warnings };
   });
-  const raw = JSON.stringify(value);
-  if (Buffer.byteLength(raw) > 65536)
-    throw new MWFError("INPUT_TOO_LARGE", "Handoff exceeds 64 KiB.");
-  requireSafe(raw);
-  tx.set(file(scope), raw);
-  return value;
 }
-export function listHandoffs(tx: Transaction) {
-  return tx
-    .files(".mwf/local/handoffs")
-    .filter((f) => f.endsWith(".json"))
-    .map((f) => {
-      const v = handoffSchema.parse(JSON.parse(tx.get(f)!));
-      readHandoff(tx, v.scope);
+
+export type HandoffInput =
+  | { action: 'read'; task?: string; status?: Status | 'all' }
+  | ({
+      action: 'save';
+      task: string;
+      content: string;
+      summary?: string;
+      base_version?: number;
+      status?: Status;
+    } & WriteInput);
+
+export interface HandoffSaveResult {
+  task: string;
+  version: number;
+  status: Status;
+  /** True when the version check failed and the content was appended as a 「并行更新」 section. */
+  conflict: boolean;
+  hash: string;
+  path: string;
+}
+
+/** handoff read|save. Save = lock + version check; conflicts append a section, never overwrite. */
+export async function handoff(
+  ctx: Ctx,
+  input: HandoffInput,
+): Promise<
+  | HandoffView
+  | { items: HandoffListItem[]; warnings: string[] }
+  | (HandoffSaveResult & { request_id: string; deduped: boolean })
+> {
+  if (input.action === 'read') {
+    if (input.task !== undefined) return readHandoffFile(ctx, input.task);
+    return listHandoffs(ctx, input.status === undefined ? {} : { status: input.status });
+  }
+  if (input.action !== 'save') throw invalid("action must be 'read' or 'save'");
+  const task = validateTask(input.task);
+  const content = validateBody(input.content);
+  if (!content.trim()) throw invalid('content is required');
+  const summary = input.summary === undefined ? undefined : oneLine(String(input.summary), 200);
+  const status = input.status === undefined ? undefined : validateStatus(input.status);
+  const base = input.base_version;
+  if (base !== undefined && (!Number.isInteger(base) || base < 0))
+    throw invalid('base_version must be a non-negative integer');
+  const rel = handoffRelPath(task);
+  return runWrite<HandoffSaveResult>(
+    ctx,
+    'handoff.save',
+    input,
+    { task, content, summary, base, status },
+    (env) => {
+      const text = readFileText(env.layout, rel);
+      const stamp = isoTime(env.now);
+      let doc: HandoffDoc;
+      let conflict = false;
+      if (text === null) {
+        doc = {
+          task,
+          status: status ?? 'active',
+          version: 1,
+          updated: stamp,
+          summary: summary ?? '',
+          extra: [],
+          body: content,
+        };
+      } else {
+        const cur = parseHandoff(text, task);
+        if (base === cur.version) {
+          doc = {
+            ...cur,
+            status: status ?? 'active',
+            version: cur.version + 1,
+            updated: stamp,
+            summary: summary ?? cur.summary,
+            body: content,
+          };
+        } else {
+          conflict = true;
+          const heading = `## 并行更新（${stamp}，基于 v${base ?? '未提供'}，当前 v${cur.version}）`;
+          doc = {
+            ...cur,
+            status: status ?? cur.status,
+            version: cur.version + 1,
+            updated: stamp,
+            summary: summary ?? cur.summary,
+            body: `${cur.body}\n\n${heading}\n\n${content.trim()}`,
+          };
+        }
+      }
+      const out = serializeHandoff(doc);
       return {
-        scope: v.scope,
-        revision: v.revision,
-        updated_at: v.updated_at,
-        goal: [...v.data.goal].slice(0, 120).join(""),
+        targets: [{ path: rel, content: out }],
+        result: {
+          task,
+          version: doc.version,
+          status: doc.status,
+          conflict,
+          hash: sha256(out),
+          path: `.mwf/${rel}`,
+        },
       };
-    })
-    .sort((a, b) =>
-      JSON.stringify(a.scope).localeCompare(JSON.stringify(b.scope), "en"),
-    );
+    },
+  );
 }
