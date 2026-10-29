@@ -8,7 +8,7 @@ Project memory for coding agents, stored as plain Markdown files under `.mwf/` i
 
 ```
 src/core    # file store, index, locking, all operations
-src/cli     # structured command functions + the read-only command line (this PR)
+src/cli     # structured command functions + the shell command line (this PR)
 src/mcp     # MCP server (planned)
 src/hooks   # host hooks (planned)
 src/bin     # the `mwf` executable: dispatch only
@@ -59,20 +59,31 @@ const preview = await forget({ ids: [id] }, env); // preview only
 await forget({ ids: [id], confirm: true, preview_token: preview.data.preview_token }, env);
 ```
 
-The `mwf` executable exposes only the three read-only commands; every write goes through MCP tools.
+The `mwf` executable exposes `status`, `recall`, `doctor` and two write commands, `add` and `handoff`. Every other write (`edit`, `propose`, `inbox`, `forget`, `restore`, `purge`, `compact`, `reindex`, `init`) is only an MCP tool. The executable is dispatch only; the command line itself lives in `src/cli/main.ts`.
 
 ```
 mwf status [--json] [--cwd dir]
 mwf recall [query] [--type t]... [--status active|done|all] [--task name] [--handoffs]
            [--scope key=value]... [--limit n] [--max-chars n] [--json]
 mwf doctor [--json]
+mwf add --type T --title "…" (--body "…" | --body-file path|-) [--scope key=value]...
+        [--status active|done] [--request-id id] [--wait-ms n] [--json]
+mwf handoff read [--task name] [--status active|done|all] [--json]
+mwf handoff save --task name (--content "…" | --content-file path|-) [--summary line]
+        [--base-version n] [--status active|done] [--request-id id] [--wait-ms n] [--json]
 ```
+
+`add` and `handoff save` call the same core functions as the MCP tools, so nothing about the write path differs: the one `runWrite` under the project lock, the secret scan (a body that looks like a credential is refused with `SECRET_DETECTED`, exit 1, nothing written, the value never printed), the `request_id` idempotency, and for `handoff save` the version check (a stale `--base-version` appends a "并行更新" section and reports `conflict`, it never overwrites). Long text: `--body-file -` / `--content-file -` read standard input (refused on an interactive terminal; at most 1 MB, core then limits a body to 50 000 characters); a file path is relative to the shell's directory, while `--cwd` only selects the project. Prefer the file forms over `--body` for anything sensitive-adjacent, because arguments show up in shell history and process lists. `--json` prints the structured result envelope for every command.
+
+The shell always sends a `request_id` (generated as `cli-<uuid>` unless you pass `--request-id`) and prints it, also on failure (`error.details.request_id` with `--json`). **`LOCK_LOST` is terminal for that attempt** (see Locking), as are `LOCK_TIMEOUT` and `INTERNAL`: the command stops with exit 1 and the caller repeats it with the same `--request-id`. The write is then applied exactly once, whatever state the failed attempt left.
+
+`recall --scope key=value` returns **only records whose scope matches**: records without a scope are not returned. A record matches when it declares at least one queried dimension and every queried dimension it declares has a matching entry (`paths` match by prefix / glob, the other keys case-insensitively); records that match more dimensions rank first. Without `--scope` every record is eligible. This is the core `recall` rule, so the shell, the structured CLI functions and MCP behave identically.
 
 "Read-only" means these commands never change memory, not that they never write files. `status` and `recall` may take the project lock and write under `.mwf/`: they recover a leftover intent from a crashed write (roll it forward or discard it, and repair `index.md`) and refresh a stale `index.db`. If another writer holds the lock they wait briefly (up to 1.5 s), then answer from the existing index with a warning. `doctor` never takes the lock and never writes; it only reports (a leftover intent shows up as a warning).
 
 A project is created through the MCP tool `mwf_init` (or `mwf install`, once available); the shell has no `init` command, and the not-initialized error says so.
 
-Exit codes: `0` ok, `1` the command failed or `doctor` found errors, `2` usage error. `hook`, `mcp` and the lifecycle commands (`install`, `uninstall`, `update`) are not part of this build.
+Exit codes: `0` ok, `1` the command failed (including a refused write) or `doctor` found errors, `2` usage error or invalid input. `hook`, `mcp` and the lifecycle commands (`install`, `uninstall`, `update`) are not part of this build.
 
 ## Locking
 
@@ -80,7 +91,7 @@ All writes run under `.mwf/mwf.local.lock` (an `O_EXCL` file holding pid, hostna
 
 - A holder on **this host and pid namespace** is reclaimed only when its pid is gone or the pid now belongs to a different process; a live holder is never reclaimed, however old.
 - A holder on **another host, or in another pid namespace under the same hostname**, cannot be checked by pid, so it is reclaimed only when its heartbeat is older than `lockStaleMs` (default 30 s). Long operations heartbeat.
-- **A writer whose lock was taken away aborts.** Before the intent, before every target and before the index sync / dedup registration the writer re-reads the lock; if it is no longer ours the write stops with `LOCK_LOST` and nothing more is written. The partial state is an intent, which the next lock holder recovers (roll forward, or discard). The timer heartbeat also notices a lost lock while an operation is awaiting. A small window remains between the last check and the final dedup / intent removal.
+- **A writer whose lock was taken away aborts.** (`LOCK_LOST` is terminal for that call: the library and the shell do not retry on their own. The caller retries with the same `request_id`, which lands the write exactly once; a further repeat returns the recorded result with `deduped: true`.) Before the intent, before every target and before the index sync / dedup registration the writer re-reads the lock; if it is no longer ours the write stops with `LOCK_LOST` and nothing more is written. The partial state is an intent, which the next lock holder recovers (roll forward, or discard). The timer heartbeat also notices a lost lock while an operation is awaiting. A small window remains between the last check and the final dedup / intent removal.
 - **`doctor` reports** a live lock held longer than `lockHeldWarnMs` (default 120 s, `lock_held_long`), and a roll-forward that left a changed file in place (`rollforward_skipped`; see below).
 - **Known limit: same hostname, different pid namespace.** Containers that share a hostname (`--hostname`, `--uts=host`) but not a pid namespace cannot see each other's pids. mwf records the pid namespace in the lock (Linux, `/proc/self/ns/pid`) and treats a holder from another namespace like a foreign host, so it is not reclaimed by a pid check. Where the namespace cannot be read (no `/proc`, or a lock written by an older mwf without it) two such containers look like one host: the other container's pid does not exist (or is an unrelated process) in the reclaimer's namespace, and it can wrongly reclaim a live lock. Give such containers distinct hostnames or a shared pid namespace.
 

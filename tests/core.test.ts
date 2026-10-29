@@ -234,7 +234,7 @@ describe('recall', () => {
     assert.equal((await core.recall(ctx, { query: '检索' })).hits[0]?.id, a.id); // 2-char term
   });
 
-  it('filters by scope: unscoped records are general, scoped ones must match', async () => {
+  it('filters by scope: only records whose scope matches; general records are not returned', async () => {
     const ctx = await project();
     const general = await core.add(ctx, {
       type: 'preference',
@@ -254,13 +254,43 @@ describe('recall', () => {
       scope: { paths: ['src/cli/**'], tools: ['mwf'] },
     });
     const ids = (r: core.RecallResult): string[] => r.hits.map((h) => h.id);
+    // no scope query: everything, general records included
+    assert.deepEqual(new Set(ids(await core.recall(ctx))), new Set([core1.id, cli.id, general.id]));
+    assert.deepEqual(
+      new Set(ids(await core.recall(ctx, { scope: {} }))),
+      new Set([core1.id, cli.id, general.id]),
+    );
     const forCore = await core.recall(ctx, { scope: { paths: ['src/core/lock.ts'] } });
-    assert.deepEqual(ids(forCore), [core1.id, general.id]); // scoped match ranks first
+    assert.deepEqual(ids(forCore), [core1.id]);
     const forCli = await core.recall(ctx, { scope: { paths: ['src/cli/a/b.ts'], tools: ['MWF'] } });
-    assert.deepEqual(new Set(ids(forCli)), new Set([cli.id, general.id]));
-    // a record is excluded only when the query supplies a dimension it constrains and nothing matches
+    assert.deepEqual(ids(forCli), [cli.id]);
+    // a queried dimension the record declares must match; one it does not declare does not count
     const none = await core.recall(ctx, { scope: { tools: ['git'] } });
-    assert.deepEqual(new Set(ids(none)), new Set([core1.id, general.id]));
+    assert.deepEqual(ids(none), []);
+    const mismatch = await core.recall(ctx, {
+      scope: { paths: ['src/core/x.ts'], tools: ['mwf'] },
+    });
+    assert.deepEqual(
+      ids(mismatch),
+      [core1.id],
+      'cli is excluded by paths, core1 declares only paths',
+    );
+    const onlyTool = await core.recall(ctx, { scope: { tools: ['mwf'] } });
+    assert.deepEqual(ids(onlyTool), [cli.id]);
+    // the scope filter also applies to a text search, and ranks better matches first
+    const both = await core.add(ctx, {
+      type: 'preference',
+      title: 'core tool pref',
+      body: 'core and tool',
+      scope: { paths: ['src/core/'], tools: ['mwf'] },
+    });
+    const ranked = await core.recall(ctx, { scope: { paths: ['src/core/a.ts'], tools: ['mwf'] } });
+    assert.deepEqual(ids(ranked), [both.id, core1.id]);
+    const searched = await core.recall(ctx, {
+      query: 'always applies',
+      scope: { paths: ['src/core/a.ts'] },
+    });
+    assert.deepEqual(ids(searched), []);
   });
 
   it('is bounded by limit and max_chars', async () => {

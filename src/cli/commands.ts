@@ -24,7 +24,7 @@ export interface Command {
   name: string;
   description: string;
   access: Access;
-  /** Exposed as a shell command line (`mwf <name>`). Only the read-only diagnostics are. */
+  /** Exposed as a shell command line (`mwf <name>`): status, recall, doctor, add, handoff. */
   shell: boolean;
   /** JSON-Schema description of the input; validated before core is called. */
   input: ObjectSchema;
@@ -194,6 +194,7 @@ export const COMMANDS: readonly Command[] = [
       ['type', 'title', 'body'],
     ),
     core.add,
+    { shell: true },
   ),
   command(
     'propose',
@@ -244,6 +245,7 @@ export const COMMANDS: readonly Command[] = [
       ['action'],
     ),
     core.handoff,
+    { shell: true },
   ),
   command(
     'status',

@@ -23,6 +23,7 @@ export {
   get,
   propose,
   type AddInput,
+  type AddResult,
   type EditInput,
   type ProposeInput,
   type RecordView,

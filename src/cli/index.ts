@@ -67,7 +67,7 @@ export const forget = byName('forget');
 export const restore = byName('restore');
 export const purge = byName('purge');
 
-/** Names of the commands that may be run from a shell (all read-only). */
+/** Names of the commands that may be run from a shell: the read-only ones plus add and handoff. */
 export const SHELL_COMMANDS: readonly string[] = COMMANDS.filter((c) => c.shell).map((c) => c.name);
 
 export function accessOf(name: string): Access | undefined {

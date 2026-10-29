@@ -6,6 +6,7 @@ import { describe, it } from 'node:test';
 import * as cli from '../src/cli/index.ts';
 import { main, type Io } from '../src/cli/main.ts';
 import { validate, type ObjectSchema } from '../src/cli/schema.ts';
+import { withLock } from '../src/core/write.ts';
 import { project, runChild, tmpDir } from './helpers/util.ts';
 
 const FAST = { waitMs: 3000, lockStaleMs: 300 };
@@ -25,11 +26,12 @@ async function fails(p: Promise<cli.CliResult>, code: string): Promise<cli.CliEr
   return (r as { ok: false; error: cli.CliError }).error;
 }
 
-function io(cwd: string): Io & { out: string; err: string } {
+function io(cwd: string, stdin?: string): Io & { out: string; err: string } {
   const sink = {
     out: '',
     err: '',
     cwd,
+    ...(stdin === undefined ? {} : { stdin: async () => stdin }),
     stdout: (t: string) => void (sink.out += t),
     stderr: (t: string) => void (sink.err += t),
   };
@@ -39,8 +41,9 @@ function io(cwd: string): Io & { out: string; err: string } {
 async function sh(
   argv: string[],
   cwd: string,
+  stdin?: string,
 ): Promise<{ code: number; out: string; err: string }> {
-  const sink = io(cwd);
+  const sink = io(cwd, stdin);
   const code = await main(argv, sink);
   return { code, out: sink.out, err: sink.err };
 }
@@ -122,10 +125,16 @@ describe('CLI functions', () => {
     }
   });
 
-  it('only the read-only diagnostics are shell commands; destructive ones take confirm + preview_token', () => {
-    assert.deepEqual([...cli.SHELL_COMMANDS].sort(), ['doctor', 'recall', 'status']);
+  it('shell commands: the read-only diagnostics plus add and handoff; destructive ones take confirm + preview_token', () => {
+    assert.deepEqual([...cli.SHELL_COMMANDS].sort(), [
+      'add',
+      'doctor',
+      'handoff',
+      'recall',
+      'status',
+    ]);
     for (const c of cli.COMMANDS) {
-      if (c.shell) assert.equal(c.access, 'read', c.name);
+      if (c.shell) assert.notEqual(c.access, 'destructive', c.name);
       if (c.access === 'destructive') {
         assert.ok('confirm' in c.input.properties && 'preview_token' in c.input.properties, c.name);
       }
@@ -330,8 +339,14 @@ describe('mwf command line', () => {
     assert.doesNotMatch(typed.out, /Pick sqlite/);
     assert.match(typed.out, /Tabs/);
     const scoped = await sh(['recall', '--scope', 'tools=db', '--json'], ctx.root);
-    // scope narrows records that declare a scope and ranks scope matches first
-    assert.equal(JSON.parse(scoped.out).data.hits[0].title, 'Pick sqlite');
+    // --scope returns only records whose scope matches (not the unscoped 'Tabs')
+    const scopedHits = JSON.parse(scoped.out).data.hits as Array<{ title: string }>;
+    assert.deepEqual(
+      scopedHits.map((h) => h.title),
+      ['Pick sqlite'],
+    );
+    const noScopeMatch = await sh(['recall', '--scope', 'tools=git', '--json'], ctx.root);
+    assert.deepEqual(JSON.parse(noScopeMatch.out).data.hits, []);
     const limited = await sh(['recall', 'sqlite', '--limit', '1', '--json'], ctx.root);
     assert.equal(JSON.parse(limited.out).data.hits.length, 1);
     const handoff = await sh(['recall', '--task', 'job-1'], ctx.root);
@@ -397,7 +412,17 @@ describe('mwf command line', () => {
 
   it('writes are not reachable from the shell; later-PR commands say so', async () => {
     const ctx = await project();
-    for (const name of ['add', 'forget', 'init', 'purge', 'edit']) {
+    for (const name of [
+      'forget',
+      'init',
+      'purge',
+      'edit',
+      'propose',
+      'inbox',
+      'compact',
+      'reindex',
+      'restore',
+    ]) {
       const r = await sh([name], ctx.root);
       assert.equal(r.code, 2);
       assert.match(r.err, /MCP tool/);
@@ -422,6 +447,13 @@ describe('mwf command line', () => {
     assert.match(help.out, /recover a leftover\s+intent/);
     assert.match(help.out, /doctor never takes the lock or writes/);
     assert.match(help.out, /mwf_init/);
+    // writes from the shell: add and handoff, with the retry rule and the secret scan
+    assert.match(help.out, /^\s+add\s/m);
+    assert.match(help.out, /handoff read\|save/);
+    assert.match(help.out, /LOCK_LOST or LOCK_TIMEOUT/);
+    assert.match(help.out, /same --request-id/);
+    assert.match(help.out, /secret scan/);
+    assert.match(help.out, /only records whose scope matches/);
     assert.equal((await sh([], ctx.root)).code, 2);
     assert.equal((await sh(['status', '--help'], ctx.root)).code, 0);
     const version = await sh(['--version'], ctx.root);
@@ -478,5 +510,389 @@ describe('CLI read commands and a leftover crash intent', () => {
       );
       assert.equal(codesAfter.includes('pending_intent'), false);
     }
+  });
+});
+
+describe('mwf add and handoff from the shell', () => {
+  const FAKE_SECRET = `AKIA${'ABCDEFGHIJKLMNOP'}`;
+  const jsonOf = (r: { out: string }): { ok: boolean; data: Data; error: cli.CliError } =>
+    JSON.parse(r.out);
+
+  it('add: flags, body from a file and from stdin, scope, --json; recall finds it', async () => {
+    const ctx = await project();
+    const a = await sh(
+      [
+        'add',
+        '--type',
+        'decision',
+        '--title',
+        'Use WAL',
+        '--body',
+        'wal mode for sqlite',
+        '--scope',
+        'paths=src/core/',
+        '--scope',
+        'tools=db',
+        '--json',
+      ],
+      ctx.root,
+    );
+    assert.equal(a.code, 0, a.err);
+    const added = jsonOf(a);
+    assert.equal(added.ok, true);
+    assert.match(added.data['id'], /^dec_/);
+    assert.match(String(added.data['request_id']), /^cli-/);
+    assert.equal(added.data['deduped'], false);
+    const got = await ok(cli.get({ id: added.data['id'] }, { root: ctx.root }));
+    assert.equal(got['title'], 'Use WAL');
+    assert.deepEqual(got['scope'], { paths: ['src/core/'], tools: ['db'] });
+
+    writeFileSync(join(ctx.root, 'body.md'), 'from a file\n\nwith two paragraphs');
+    const f = await sh(
+      ['add', '--type', 'knowledge', '--title', 'File body', '--body-file', 'body.md'],
+      ctx.root,
+    );
+    assert.equal(f.code, 0, f.err);
+    assert.match(f.out, /^added kn_\w+ \[knowledge\] File body\n/);
+    assert.match(f.out, /request_id: cli-/);
+
+    const sub = join(ctx.root, 'sub');
+    mkdirSync(sub);
+    // file arguments are relative to the shell's directory; --cwd only selects the project
+    const viaCwd = await sh(
+      [
+        'add',
+        '--type',
+        'knowledge',
+        '--title',
+        'Relative',
+        '--body-file',
+        'body.md',
+        '--cwd',
+        'sub',
+      ],
+      ctx.root,
+    );
+    assert.equal(viaCwd.code, 0, viaCwd.err);
+
+    const piped = await sh(
+      ['add', '--type', 'preference', '--title', 'Piped', '--body-file', '-'],
+      ctx.root,
+      'body from stdin with unicode 检索',
+    );
+    assert.equal(piped.code, 0, piped.err);
+    const id = /added (\S+)/.exec(piped.out)![1]!;
+    assert.equal(
+      (await ok(cli.get({ id }, { root: ctx.root })))['body'],
+      'body from stdin with unicode 检索',
+    );
+
+    const found = await sh(['recall', 'wal', '--scope', 'paths=src/core/x.ts'], ctx.root);
+    assert.match(found.out, /Use WAL/);
+    assert.doesNotMatch(found.out, /Piped/);
+  });
+
+  it('add: the same --request-id applies once; reusing it for different input fails', async () => {
+    const ctx = await project();
+    const argv = [
+      'add',
+      '--type',
+      'task',
+      '--title',
+      'Once',
+      '--body',
+      'b',
+      '--request-id',
+      'req-1',
+    ];
+    const first = await sh([...argv, '--json'], ctx.root);
+    const second = await sh([...argv, '--json'], ctx.root);
+    assert.equal(first.code, 0);
+    assert.equal(second.code, 0);
+    assert.equal(jsonOf(second).data['deduped'], true);
+    assert.equal(jsonOf(second).data['id'], jsonOf(first).data['id']);
+    assert.match((await sh([...argv], ctx.root)).out, /^already added /);
+    const status = jsonOf(await sh(['status', '--json'], ctx.root));
+    assert.equal(status.data['records'].task.active, 1);
+    const other = await sh(
+      [
+        'add',
+        '--type',
+        'task',
+        '--title',
+        'Different',
+        '--body',
+        'b',
+        '--request-id',
+        'req-1',
+        '--json',
+      ],
+      ctx.root,
+    );
+    assert.equal(other.code, 1);
+    assert.equal(jsonOf(other).error.code, 'REQUEST_ID_REUSED');
+  });
+
+  it('add: usage errors exit 2 and write nothing', async () => {
+    const ctx = await project();
+    for (const argv of [
+      ['add', '--title', 't', '--body', 'b'],
+      ['add', '--type', 'task', '--body', 'b'],
+      ['add', '--type', 'task', '--title', 't'],
+      ['add', '--type', 'task', '--title', 't', '--body', 'b', '--body-file', 'x'],
+      ['add', '--type', 'task', '--title', 't', '--body-file', 'missing.md'],
+      ['add', '--type', 'task', '--title', 't', '--body-file', '-'], // no stdin available
+      ['add', '--type', 'nonsense', '--title', 't', '--body', 'b'],
+      ['add', '--type', 'task', '--title', 'two\nlines', '--body', 'b'],
+      ['add', '--type', 'task', '--title', 't', '--body', 'b', '--status', 'bogus'],
+      ['add', '--type', 'task', '--title', 't', '--body', 'b', '--wait-ms', 'soon'],
+      ['add', '--type', 'task', '--title', 't', '--body', 'b', '--bogus'],
+      ['add', '--type', 'task', '--title', 't', '--body', 'b', 'extra'],
+      ['add', '--type', 'task', '--title', 't', '--body', 'b', '--scope', 'nokey=x'],
+      ['add', '--type', 'task', '--title', 't', '--body', 'b', '--request-id', 'bad id!'],
+    ]) {
+      const r = await sh(argv, ctx.root);
+      assert.equal(r.code, 2, `${argv.join(' ')} -> ${r.err}`);
+      assert.match(r.err, /^mwf: /);
+      assert.equal(r.out, '');
+    }
+    const big = await sh(
+      ['add', '--type', 'task', '--title', 't', '--body-file', '-'],
+      ctx.root,
+      'x'.repeat(60_000),
+    );
+    assert.equal(big.code, 2, 'over core limit is invalid input');
+    const status = jsonOf(await sh(['status', '--json'], ctx.root));
+    assert.equal(status.data['records'].task.active, 0);
+  });
+
+  it('add: the secret scan is unchanged: refused, exit 1, nothing written, value never printed', async () => {
+    const ctx = await project();
+    for (const extra of [[], ['--json']]) {
+      const r = await sh(
+        [
+          'add',
+          '--type',
+          'knowledge',
+          '--title',
+          'creds',
+          '--body',
+          `key ${FAKE_SECRET}`,
+          ...extra,
+        ],
+        ctx.root,
+      );
+      assert.equal(r.code, 1);
+      assert.doesNotMatch(r.out + r.err, new RegExp(FAKE_SECRET));
+      if (extra.length) assert.equal(jsonOf(r).error.code, 'SECRET_DETECTED');
+      else assert.match(r.err, /SECRET_DETECTED/);
+    }
+    const viaStdin = await sh(
+      ['add', '--type', 'knowledge', '--title', 'creds', '--body-file', '-'],
+      ctx.root,
+      `key ${FAKE_SECRET}`,
+    );
+    assert.equal(viaStdin.code, 1);
+    assert.doesNotMatch(viaStdin.out + viaStdin.err, new RegExp(FAKE_SECRET));
+    const status = jsonOf(await sh(['status', '--json'], ctx.root));
+    assert.equal(status.data['records'].knowledge.active, 0);
+  });
+
+  it('a failed write reports its request_id; LOCK_TIMEOUT is repeated with the same one, exactly once', async () => {
+    const ctx = await project('track', { waitMs: 5000 });
+    const argv = ['add', '--type', 'task', '--title', 'Retry me', '--body', 'b', '--wait-ms', '0'];
+    let blocked!: { code: number; out: string; err: string };
+    await withLock(ctx, 1000, async () => {
+      blocked = await sh(argv, ctx.root);
+    });
+    assert.equal(blocked.code, 1);
+    assert.match(blocked.err, /LOCK_TIMEOUT/);
+    const id = /request_id: (cli-\S+) \(repeat the command with --request-id \1/.exec(
+      blocked.err,
+    )?.[1];
+    assert.ok(id, `retry hint with the request id in: ${blocked.err}`);
+
+    await withLock(ctx, 1000, async () => {
+      blocked = await sh([...argv, '--json'], ctx.root);
+    });
+    assert.equal(jsonOf(blocked).error.code, 'LOCK_TIMEOUT');
+    assert.match(String(jsonOf(blocked).error.details['request_id']), /^cli-/);
+
+    const retried = await sh([...argv.slice(0, -2), '--request-id', id!, '--json'], ctx.root);
+    assert.equal(retried.code, 0, retried.err);
+    const again = await sh([...argv.slice(0, -2), '--request-id', id!, '--json'], ctx.root);
+    assert.equal(jsonOf(again).data['deduped'], true);
+    assert.equal(jsonOf(again).data['id'], jsonOf(retried).data['id']);
+    const status = jsonOf(await sh(['status', '--json'], ctx.root));
+    assert.equal(status.data['records'].task.active, 1);
+  });
+
+  it('a crashed attempt (as after LOCK_LOST) leaves an intent; the same request_id then applies exactly once', async () => {
+    const ctx = await project('track', { waitMs: 5000, lockStaleMs: 300 });
+    const crashed = await runChild(
+      ctx,
+      [{ fn: 'add', input: { type: 'task', title: 'Lost', body: 'b', request_id: 'lost-1' } }],
+      { MWF_FAILPOINT: 'write:target@1' },
+    );
+    assert.equal(crashed.signal, 'SIGKILL');
+    const retried = await sh(
+      [
+        'add',
+        '--type',
+        'task',
+        '--title',
+        'Lost',
+        '--body',
+        'b',
+        '--request-id',
+        'lost-1',
+        '--json',
+      ],
+      ctx.root,
+    );
+    assert.equal(retried.code, 0, retried.err);
+    const again = await sh(
+      [
+        'add',
+        '--type',
+        'task',
+        '--title',
+        'Lost',
+        '--body',
+        'b',
+        '--request-id',
+        'lost-1',
+        '--json',
+      ],
+      ctx.root,
+    );
+    assert.equal(jsonOf(again).data['id'], jsonOf(retried).data['id']);
+    const status = jsonOf(await sh(['status', '--json'], ctx.root));
+    assert.equal(status.data['records'].task.active, 1);
+  });
+
+  it('handoff: save, list, read, version conflict, stdin; usage errors', async () => {
+    const ctx = await project();
+    const save = await sh(
+      ['handoff', 'save', '--task', 'job-9', '--content', 'step one done', '--summary', 'halfway'],
+      ctx.root,
+    );
+    assert.equal(save.code, 0, save.err);
+    assert.match(save.out, /^saved handoff job-9 v1 \[active\]/);
+    assert.match(save.out, /request_id: cli-/);
+
+    const list = await sh(['handoff', 'read'], ctx.root);
+    assert.match(list.out, /job-9 \[active\] v1 · .* · halfway/);
+    const listJson = jsonOf(await sh(['handoff', 'read', '--json'], ctx.root));
+    assert.equal(listJson.data['items'][0].task, 'job-9');
+
+    const second = await sh(
+      [
+        'handoff',
+        'save',
+        '--task',
+        'job-9',
+        '--content-file',
+        '-',
+        '--base-version',
+        '1',
+        '--json',
+      ],
+      ctx.root,
+      'step two done',
+    );
+    assert.equal(jsonOf(second).data['version'], 2);
+    assert.equal(jsonOf(second).data['conflict'], false);
+
+    const stale = await sh(
+      ['handoff', 'save', '--task', 'job-9', '--content', 'late writer', '--base-version', '1'],
+      ctx.root,
+    );
+    assert.equal(stale.code, 0, stale.err);
+    assert.match(stale.out, /conflict: .*appended as a 「并行更新」 section/);
+
+    const read = await sh(['handoff', 'read', '--task', 'job-9'], ctx.root);
+    assert.match(read.out, /^# handoff job-9 \[active\] v3/);
+    assert.match(read.out, /step two done/);
+    assert.match(read.out, /late writer/);
+
+    const done = await sh(
+      ['handoff', 'save', '--task', 'job-9', '--content', 'all done', '--status', 'done', '--json'],
+      ctx.root,
+    );
+    assert.equal(jsonOf(done).data['status'], 'done');
+    assert.match((await sh(['handoff', 'read'], ctx.root)).out, /no handoffs/);
+    assert.match(
+      (await sh(['handoff', 'read', '--status', 'all'], ctx.root)).out,
+      /job-9 \[done\]/,
+    );
+
+    for (const argv of [
+      ['handoff'],
+      ['handoff', 'frobnicate'],
+      ['handoff', 'read', 'save'],
+      ['handoff', 'save', '--content', 'x'],
+      ['handoff', 'save', '--task', 't'],
+      ['handoff', 'save', '--task', 't', '--content', 'x', '--content-file', 'y'],
+      ['handoff', 'save', '--task', 't', '--content', 'x', '--base-version', '-1'],
+      ['handoff', 'save', '--task', 'bad task!', '--content', 'x'],
+      ['handoff', 'read', '--content', 'x'],
+      ['handoff', 'read', '--request-id', 'r'],
+      ['handoff', 'save', '--task', 't', '--content', '   '],
+    ]) {
+      const r = await sh(argv, ctx.root);
+      assert.equal(r.code, 2, `${argv.join(' ')} -> ${r.err}`);
+    }
+    assert.equal(
+      (await sh(['handoff', 'read', '--task', 'nonexistent-task-name'], ctx.root)).code,
+      1,
+    );
+  });
+
+  it('handoff save: the secret scan refuses it (exit 1, nothing written)', async () => {
+    const ctx = await project();
+    const r = await sh(
+      ['handoff', 'save', '--task', 'job-s', '--content', `token ${FAKE_SECRET}`],
+      ctx.root,
+    );
+    assert.equal(r.code, 1);
+    assert.match(r.err, /SECRET_DETECTED/);
+    assert.doesNotMatch(r.out + r.err, new RegExp(FAKE_SECRET));
+    assert.match((await sh(['handoff', 'read'], ctx.root)).out, /no handoffs/);
+  });
+
+  it('other writes stay MCP-only; the executable pipes stdin through', async () => {
+    const ctx = await project();
+    for (const name of ['edit', 'propose', 'forget']) {
+      const r = await sh([name, '--help'], ctx.root);
+      assert.equal(r.code, 2);
+    }
+    const bin = new URL('../src/bin/mwf.ts', import.meta.url).pathname;
+    const spawn = (args: string[], input?: string) =>
+      spawnSync(process.execPath, ['--experimental-strip-types', '--no-warnings', bin, ...args], {
+        cwd: ctx.root,
+        encoding: 'utf8',
+        ...(input === undefined ? {} : { input }),
+      });
+    const added = spawn(
+      ['add', '--type', 'knowledge', '--title', 'Via pipe', '--body-file', '-'],
+      'piped body text',
+    );
+    assert.equal(added.status, 0, added.stderr);
+    assert.match(added.stdout, /added kn_/);
+    const saved = spawn(
+      ['handoff', 'save', '--task', 'pipe-task', '--content-file', '-', '--json'],
+      'handoff body',
+    );
+    assert.equal(saved.status, 0, saved.stderr);
+    assert.equal(JSON.parse(saved.stdout).data.version, 1);
+    assert.match(spawn(['recall', 'piped body']).stdout, /Via pipe/);
+    assert.match(spawn(['recall', '--task', 'pipe-task']).stdout, /handoff body/);
+    const secret = spawn(
+      ['add', '--type', 'knowledge', '--title', 'c', '--body-file', '-'],
+      `k ${FAKE_SECRET}`,
+    );
+    assert.equal(secret.status, 1);
+    assert.doesNotMatch(secret.stdout + secret.stderr, new RegExp(FAKE_SECRET));
   });
 });

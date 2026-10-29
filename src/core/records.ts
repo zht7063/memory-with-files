@@ -162,15 +162,19 @@ function pathMatches(pattern: string, query: string): boolean {
 }
 
 /**
- * Scope filtering rule: for every dimension present in the query, a record matches when it has no
- * entries for that dimension (general) or at least one entry matches. `hits` counts explicit
- * matches and is used to rank scoped records above general ones.
+ * Scope filtering rule. With no query dimensions every record matches. Otherwise a record matches
+ * only when it declares at least one of the queried dimensions and every queried dimension it
+ * declares has an entry that matches: records without a scope (general records), and records
+ * whose scope never mentions a queried dimension, are not returned. `hits` counts the matching
+ * dimensions and ranks better matches first.
  */
 export function scopeMatch(record: Scope, query: Scope): { ok: boolean; hits: number } {
   let hits = 0;
+  let queried = false;
   for (const key of SCOPE_KEYS) {
     const wanted = query[key];
     if (!wanted?.length) continue;
+    queried = true;
     const have = record[key];
     if (!have?.length) continue;
     const matched = have.some((item) =>
@@ -181,7 +185,7 @@ export function scopeMatch(record: Scope, query: Scope): { ok: boolean; hits: nu
     if (!matched) return { ok: false, hits: 0 };
     hits++;
   }
-  return { ok: true, hits };
+  return { ok: !queried || hits > 0, hits };
 }
 
 // ---- records --------------------------------------------------------------------------------

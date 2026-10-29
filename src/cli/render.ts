@@ -1,4 +1,12 @@
-import type { DoctorResult, RecallResult, StatusResult } from '../core/index.ts';
+import type {
+  AddResult,
+  DoctorResult,
+  HandoffListItem,
+  HandoffSaveResult,
+  HandoffView,
+  RecallResult,
+  StatusResult,
+} from '../core/index.ts';
 
 /** Plain-text renderings for the shell commands (`--json` prints the structured result instead). */
 
@@ -70,5 +78,50 @@ export function renderDoctor(d: DoctorResult): string {
       ? `${errors} error(s), ${warns} warning(s), ${d.issues.length - errors - warns} note(s)`
       : 'no issues',
   );
+  return lines.join('\n');
+}
+
+export function renderAdd(r: AddResult & { request_id: string; deduped: boolean }): string {
+  const lines = [
+    `${r.deduped ? 'already added' : 'added'} ${r.id} [${r.type}] ${r.title}`,
+    `  ${r.path}`,
+  ];
+  if (r.similar.length) lines.push(`similar active records: ${r.similar.join(', ')}`);
+  lines.push(`request_id: ${r.request_id}`);
+  return lines.join('\n');
+}
+
+export function renderHandoff(
+  r:
+    | HandoffView
+    | { items: HandoffListItem[]; warnings: string[] }
+    | (HandoffSaveResult & { request_id: string; deduped: boolean }),
+): string {
+  if ('items' in r) {
+    const lines = r.items.map(
+      (i) =>
+        `${i.task} [${i.status}] v${i.version} · ${i.updated}${i.summary ? ` · ${i.summary}` : ''}`,
+    );
+    if (!lines.length) lines.push('no handoffs');
+    for (const warning of r.warnings) lines.push(`warning: ${warning}`);
+    return lines.join('\n');
+  }
+  if ('body' in r) {
+    return [
+      `# handoff ${r.task} [${r.status}] v${r.version} · ${r.updated}`,
+      '',
+      r.body.trimEnd(),
+    ].join('\n');
+  }
+  const lines = [
+    `${r.deduped ? 'already saved' : 'saved'} handoff ${r.task} v${r.version} [${r.status}]`,
+    `  ${r.path}`,
+  ];
+  if (r.conflict) {
+    lines.push(
+      'conflict: --base-version was not the current version; the content was appended as a 「并行更新」 section, nothing was overwritten',
+    );
+  }
+  lines.push(`request_id: ${r.request_id}`);
   return lines.join('\n');
 }
