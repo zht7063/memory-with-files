@@ -37,6 +37,8 @@ export interface Layout {
   memoryDir: string;
   db: string;
   state: string;
+  /** request_id dedup table; machine-local (gitignored by `.mwf/*.local.*`). */
+  dedup: string;
   hostLocal: string;
   trash: string;
   lock: string;
@@ -58,6 +60,7 @@ export function layoutOf(root: string): Layout {
     memoryDir: join(mwf, 'memory'),
     db: join(mwf, 'index.db'),
     state: join(mwf, 'state.toml'),
+    dedup: join(mwf, 'dedup.local.toml'),
     hostLocal: join(mwf, 'host.local.toml'),
     trash: join(mwf, 'trash'),
     lock: join(mwf, 'mwf.local.lock'),

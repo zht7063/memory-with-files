@@ -21,9 +21,12 @@ import {
 import { invalid, MwfError } from './errors.ts';
 import { failpoint } from './failpoint.ts';
 import { atomicWrite, readBytesIfExists, removeDurable, removeTempFiles } from './fsx.ts';
-import { acquireLock, beat } from './lock.ts';
+import { acquireLock, beat, inspectLock } from './lock.ts';
 import { REQUEST_ID_RE, type Layout } from './paths.ts';
-import { pruneDedup, readState, writeState } from './state.ts';
+import { buildIndexMd } from './indexmd.ts';
+import { loadAll } from './load.ts';
+import { assertNoSecrets, isScannedPath } from './secrets.ts';
+import { pruneDedup, readDedup, writeDedup } from './state.ts';
 import { canonicalJson, newRequestId, sha256 } from './util.ts';
 
 /** One file effect of a write: set content, or remove the file when content is null. */
@@ -86,15 +89,15 @@ function readIntent(layout: Layout): Intent | null {
 }
 
 function registerDedup(layout: Layout, now: number, entry: Omit<Intent, 'targets' | 'at'>): void {
-  const state = readState(layout);
-  state.dedup[entry.request_id] = {
+  const table = readDedup(layout);
+  table[entry.request_id] = {
     at: now,
     op: entry.op,
     fingerprint: entry.fingerprint,
     result: JSON.stringify(entry.result),
   };
-  pruneDedup(state, now);
-  writeState(layout, state);
+  pruneDedup(table, now);
+  writeDedup(layout, table);
 }
 
 /**
@@ -108,6 +111,7 @@ function recoverIntent(layout: Layout, now: number): 'none' | 'completed' | 'dis
   const intent = readIntent(layout);
   if (!intent) {
     if (readBytesIfExists(layout.intent) !== null) {
+      repairIndexMd(layout);
       removeDurable(layout.intent);
       return 'discarded';
     }
@@ -128,6 +132,11 @@ function recoverIntent(layout: Layout, now: number): 'none' | 'completed' | 'dis
       }
     }
   }
+  // index.md is written FIRST in every plan, so a discarded (or otherwise interrupted) intent can
+  // leave it describing records that never landed (or missing ones that did). Rebuild it from the
+  // records actually on disk BEFORE the intent is removed: if we crash in here the intent is still
+  // there and the next lock holder simply repeats this.
+  repairIndexMd(layout);
   if (intent.targets.every(matches)) {
     registerDedup(layout, now, intent);
     removeDurable(layout.intent);
@@ -135,6 +144,12 @@ function recoverIntent(layout: Layout, now: number): 'none' | 'completed' | 'dis
   }
   removeDurable(layout.intent);
   return 'discarded';
+}
+
+/** Rewrite index.md from the record files on disk if it differs (no-op when current). */
+function repairIndexMd(layout: Layout): void {
+  const content = buildIndexMd(loadAll(layout));
+  if (readFileText(layout, 'index.md') !== content) atomicWrite(layout.indexMd, content);
 }
 
 export interface LockedSession {
@@ -200,8 +215,9 @@ export function validateWait(input: WriteInput): number | undefined {
  * The single write path (everything that mutates .mwf/ goes through here).
  *
  * Inside the lock: dedup lookup -> build plan (hash / version checks happen here) -> write intent
- * (request_id, target paths, content hashes) -> atomically apply every target -> sync index.db ->
- * register request_id in state.toml -> remove intent -> WAL checkpoint (in withLock).
+ * (request_id, target paths, content hashes; includes the regenerated index.md) -> atomically apply
+ * every target -> sync index.db ->
+ * register request_id in dedup.local.toml -> remove intent -> WAL checkpoint (in withLock).
  */
 export async function runWrite<R extends object>(
   ctx: Ctx,
@@ -214,8 +230,7 @@ export async function runWrite<R extends object>(
   const waitMs = validateWait(input);
   const fingerprint = sha256(canonicalJson({ op, args }));
   return withLock(ctx, waitMs, async ({ layout, db, now }) => {
-    const state = readState(layout);
-    const prior = state.dedup[requestId];
+    const prior = readDedup(layout)[requestId];
     if (prior && now - prior.at <= 24 * 60 * 60 * 1000) {
       if (prior.op !== op || prior.fingerprint !== fingerprint) {
         throw new MwfError(
@@ -229,11 +244,23 @@ export async function runWrite<R extends object>(
       return { ...(JSON.parse(prior.result) as R), request_id: requestId, deduped: true };
     }
     const built = await build({ layout, db, now, requestId, ctx });
+    // Secret scan: nothing is written (not even the intent) if the plan introduces a likely secret.
+    assertNoSecrets(
+      built.targets.flatMap((t) =>
+        t.content !== null && isScannedPath(t.path)
+          ? [{ path: t.path, before: readFileText(layout, t.path), after: t.content }]
+          : [],
+      ),
+    );
+    // index.md is part of the same plan (same intent, same recovery) whenever records/handoffs
+    // change; it is written FIRST so that no state with the new record present has a stale index.
+    const indexTarget = planIndexMd(layout, built.targets);
     // Invariant: every content write is applied before any removal, so a crash never loses data
     // (replacement copies exist before originals go) and recoverIntent can roll removals forward.
     const plan = {
       ...built,
       targets: [
+        ...(indexTarget ? [indexTarget] : []),
         ...built.targets.filter((t) => t.content !== null),
         ...built.targets.filter((t) => t.content === null),
       ],
@@ -271,6 +298,22 @@ export async function runWrite<R extends object>(
   });
 }
 
+/** index.md as it will be once `targets` are applied; null when unaffected or already current. */
+function planIndexMd(layout: Layout, targets: Target[]): Target | null {
+  if (targets.some((t) => t.path === 'index.md')) return null; // reindex supplies its own
+  if (!targets.some((t) => t.path.startsWith('memory/') || t.path.startsWith('handoff/')))
+    return null;
+  const overlay = new Map(targets.map((t) => [t.path, t.content] as const));
+  const content = buildIndexMd(loadAll(layout, overlay));
+  return readFileText(layout, 'index.md') === content ? null : { path: 'index.md', content };
+}
+
+function pendingDeadIntent(ctx: Ctx, layout: Layout): boolean {
+  if (readBytesIfExists(layout.intent) === null) return false;
+  const lock = inspectLock(layout, { staleMs: staleOf(ctx), now: ctx.now ?? Date.now });
+  return !lock.held || lock.stale;
+}
+
 export interface ReadSession {
   db: DatabaseSync;
   layout: Layout;
@@ -289,7 +332,10 @@ export async function withIndexRead<T>(
 ): Promise<T> {
   const layout = requireInitialized(ctx);
   const warnings: string[] = [];
-  const ro = openIndexReadOnly(layout);
+  // A leftover intent (its writer died: nobody holds the lock) must be recovered, which also repairs
+  // index.md, even when index.db happens to be in step with the files; so skip the lock-free fast
+  // path in that case. A live writer's intent is left alone (its lock is held).
+  const ro = pendingDeadIntent(ctx, layout) ? null : openIndexReadOnly(layout);
   if (ro) {
     let fresh = false;
     try {
