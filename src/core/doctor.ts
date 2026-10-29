@@ -9,7 +9,7 @@ import { inspectLock } from './lock.ts';
 import { TRASH_NEAR_DAYS, TRASH_RETENTION_DAYS } from './paths.ts';
 import { parseInbox } from './inbox.ts';
 import { readHost, trashSummary, type TrashSummary } from './read.ts';
-import { parseState } from './state.ts';
+import { parseDedup, parseState } from './state.ts';
 import { DAY_MS, isoTime } from './util.ts';
 
 export type IssueLevel = 'error' | 'warn' | 'info';
@@ -71,6 +71,17 @@ export async function doctor(ctx: Ctx): Promise<DoctorResult> {
       'state_invalid',
       `state.toml cannot be parsed: ${(error as Error).message}`,
       '.mwf/state.toml',
+    );
+  }
+
+  try {
+    parseDedup(readTextIfExists(layout.dedup));
+  } catch (error) {
+    add(
+      'warn',
+      'dedup_invalid',
+      `dedup.local.toml cannot be parsed (treated as empty; the next write replaces it): ${(error as Error).message}`,
+      '.mwf/dedup.local.toml',
     );
   }
 
@@ -178,7 +189,7 @@ export async function doctor(ctx: Ctx): Promise<DoctorResult> {
     add(
       'info',
       'index_md_stale',
-      'index.md is out of date; run reindex to regenerate it',
+      'index.md is out of date (it is refreshed by every write that changes records or handoffs); run reindex to regenerate it',
       '.mwf/index.md',
     );
   }

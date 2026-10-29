@@ -1,5 +1,6 @@
 import { beat } from './lock.ts';
 import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { scanFiles } from './db.ts';
 import { ID_RE, TASK_RE, TRASH_ID_RE, TYPE_DIR, type Layout } from './paths.ts';
 import {
@@ -39,17 +40,36 @@ export interface Loaded {
   invalid: Array<{ path: string; error: string }>;
 }
 
-/** Parse every record file from disk (the source of truth), independent of index.db. */
-export function loadAll(layout: Layout): Loaded {
+/**
+ * Parse every record file from disk (the source of truth), independent of index.db.
+ *
+ * `overlay` (path relative to .mwf/ -> new text, or null = removed) loads the state AS IF a planned
+ * set of target writes had already been applied; used to derive index.md before the writes happen.
+ */
+export function loadAll(layout: Layout, overlay?: ReadonlyMap<string, string | null>): Loaded {
   const out: Loaded = { records: [], handoffs: [], trash: [], invalid: [] };
   const seenIds = new Map<string, string>();
-  for (const file of scanFiles(layout)) {
+  const files: Array<{ path: string; abs: string }> = scanFiles(layout);
+  if (overlay) {
+    const known = new Set(files.map((f) => f.path));
+    for (const [path, text] of overlay) {
+      if (text !== null && !known.has(path) && /^(memory|handoff|trash)\/.+\.md$/.test(path))
+        files.push({ path, abs: join(layout.mwf, ...path.split('/')) });
+    }
+    files.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  }
+  for (const file of files) {
     beat();
     let text: string;
-    try {
-      text = readFileSync(file.abs, 'utf8');
-    } catch {
-      continue;
+    const over = overlay?.get(file.path);
+    if (over === null) continue;
+    if (over !== undefined) text = over;
+    else {
+      try {
+        text = readFileSync(file.abs, 'utf8');
+      } catch {
+        continue;
+      }
     }
     const hash = sha256(Buffer.from(text, 'utf8'));
     const stem = file.path.slice(file.path.lastIndexOf('/') + 1, -3);

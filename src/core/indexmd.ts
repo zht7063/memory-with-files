@@ -15,7 +15,7 @@ export function buildIndexMd(loaded: Loaded): string {
   const lines = [
     '# MWF index',
     '',
-    '> 由 `reindex` 从记录文件生成，请勿手工编辑；记录文件才是事实来源。',
+    '> 由 MWF 在每次写入记录/交接时自动更新（`reindex` 可重建），请勿手工编辑；记录文件才是事实来源。',
     '',
   ];
   for (const type of RECORD_TYPES) {

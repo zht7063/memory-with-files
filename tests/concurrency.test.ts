@@ -16,7 +16,7 @@ import { loadAll } from '../src/core/load.ts';
 import { acquireLock, beat, inspectLock, processStart } from '../src/core/lock.ts';
 import { withLock } from '../src/core/write.ts';
 import { layoutOf } from '../src/core/paths.ts';
-import { DEDUP_MAX_ENTRIES, emptyState, pruneDedup } from '../src/core/state.ts';
+import { DEDUP_MAX_ENTRIES, pruneDedup, type DedupEntry } from '../src/core/state.ts';
 import { project, runChild } from './helpers/util.ts';
 
 async function deadPid(): Promise<number> {
@@ -552,14 +552,14 @@ describe('request_id deduplication', () => {
   });
 
   it('pruneDedup keeps at most 1000 entries (newest first) and drops anything older than 24h', () => {
-    const state = emptyState();
+    const state: Record<string, DedupEntry> = {};
     const now = 10 * 24 * 3600_000;
     for (let i = 0; i < 1200; i++) {
-      state.dedup[`r${i}`] = { at: now - (1200 - i), op: 'add', fingerprint: 'f', result: '{}' };
+      state[`r${i}`] = { at: now - (1200 - i), op: 'add', fingerprint: 'f', result: '{}' };
     }
-    state.dedup['old'] = { at: now - 25 * 3600_000, op: 'add', fingerprint: 'f', result: '{}' };
+    state['old'] = { at: now - 25 * 3600_000, op: 'add', fingerprint: 'f', result: '{}' };
     pruneDedup(state, now);
-    const keys = Object.keys(state.dedup);
+    const keys = Object.keys(state);
     assert.equal(keys.length, DEDUP_MAX_ENTRIES);
     assert.ok(!keys.includes('old'));
     assert.ok(keys.includes('r1199') && !keys.includes('r0'));

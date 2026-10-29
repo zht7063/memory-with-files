@@ -23,7 +23,10 @@ import { failpoint } from './failpoint.ts';
 import { atomicWrite, readBytesIfExists, removeDurable, removeTempFiles } from './fsx.ts';
 import { acquireLock, beat } from './lock.ts';
 import { REQUEST_ID_RE, type Layout } from './paths.ts';
-import { pruneDedup, readState, writeState } from './state.ts';
+import { buildIndexMd } from './indexmd.ts';
+import { loadAll } from './load.ts';
+import { assertNoSecrets, isScannedPath } from './secrets.ts';
+import { pruneDedup, readDedup, writeDedup } from './state.ts';
 import { canonicalJson, newRequestId, sha256 } from './util.ts';
 
 /** One file effect of a write: set content, or remove the file when content is null. */
@@ -86,15 +89,15 @@ function readIntent(layout: Layout): Intent | null {
 }
 
 function registerDedup(layout: Layout, now: number, entry: Omit<Intent, 'targets' | 'at'>): void {
-  const state = readState(layout);
-  state.dedup[entry.request_id] = {
+  const table = readDedup(layout);
+  table[entry.request_id] = {
     at: now,
     op: entry.op,
     fingerprint: entry.fingerprint,
     result: JSON.stringify(entry.result),
   };
-  pruneDedup(state, now);
-  writeState(layout, state);
+  pruneDedup(table, now);
+  writeDedup(layout, table);
 }
 
 /**
@@ -200,8 +203,9 @@ export function validateWait(input: WriteInput): number | undefined {
  * The single write path (everything that mutates .mwf/ goes through here).
  *
  * Inside the lock: dedup lookup -> build plan (hash / version checks happen here) -> write intent
- * (request_id, target paths, content hashes) -> atomically apply every target -> sync index.db ->
- * register request_id in state.toml -> remove intent -> WAL checkpoint (in withLock).
+ * (request_id, target paths, content hashes; includes the regenerated index.md) -> atomically apply
+ * every target -> sync index.db ->
+ * register request_id in dedup.local.toml -> remove intent -> WAL checkpoint (in withLock).
  */
 export async function runWrite<R extends object>(
   ctx: Ctx,
@@ -214,8 +218,7 @@ export async function runWrite<R extends object>(
   const waitMs = validateWait(input);
   const fingerprint = sha256(canonicalJson({ op, args }));
   return withLock(ctx, waitMs, async ({ layout, db, now }) => {
-    const state = readState(layout);
-    const prior = state.dedup[requestId];
+    const prior = readDedup(layout)[requestId];
     if (prior && now - prior.at <= 24 * 60 * 60 * 1000) {
       if (prior.op !== op || prior.fingerprint !== fingerprint) {
         throw new MwfError(
@@ -229,11 +232,23 @@ export async function runWrite<R extends object>(
       return { ...(JSON.parse(prior.result) as R), request_id: requestId, deduped: true };
     }
     const built = await build({ layout, db, now, requestId, ctx });
+    // Secret scan: nothing is written (not even the intent) if the plan introduces a likely secret.
+    assertNoSecrets(
+      built.targets.flatMap((t) =>
+        t.content !== null && isScannedPath(t.path)
+          ? [{ path: t.path, before: readFileText(layout, t.path), after: t.content }]
+          : [],
+      ),
+    );
+    // index.md is part of the same plan (same intent, same recovery) whenever records/handoffs
+    // change; it is written FIRST so that no state with the new record present has a stale index.
+    const indexTarget = planIndexMd(layout, built.targets);
     // Invariant: every content write is applied before any removal, so a crash never loses data
     // (replacement copies exist before originals go) and recoverIntent can roll removals forward.
     const plan = {
       ...built,
       targets: [
+        ...(indexTarget ? [indexTarget] : []),
         ...built.targets.filter((t) => t.content !== null),
         ...built.targets.filter((t) => t.content === null),
       ],
@@ -269,6 +284,16 @@ export async function runWrite<R extends object>(
     failpoint('write:done');
     return { ...plan.result, request_id: requestId, deduped: false };
   });
+}
+
+/** index.md as it will be once `targets` are applied; null when unaffected or already current. */
+function planIndexMd(layout: Layout, targets: Target[]): Target | null {
+  if (targets.some((t) => t.path === 'index.md')) return null; // reindex supplies its own
+  if (!targets.some((t) => t.path.startsWith('memory/') || t.path.startsWith('handoff/')))
+    return null;
+  const overlay = new Map(targets.map((t) => [t.path, t.content] as const));
+  const content = buildIndexMd(loadAll(layout, overlay));
+  return readFileText(layout, 'index.md') === content ? null : { path: 'index.md', content };
 }
 
 export interface ReadSession {

@@ -81,6 +81,8 @@ async function assertClean(ctx: core.Ctx): Promise<void> {
     'doctor is clean',
   );
   assert.equal(doc.index.mismatches, 0);
+  // index.md is part of every write's intent: after recovery it matches the records exactly
+  assert.ok(!doc.issues.some((i) => i.code === 'index_md_stale'), 'index.md is current');
 }
 
 interface Scenario {
@@ -306,6 +308,37 @@ const scenarios: Scenario[] = [
       );
     },
   },
+  {
+    name: 'inbox discard (preview_token + confirm, 2 of 3 entries)',
+    setup: async (ctx) => {
+      for (const t of ['one', 'two', 'three'])
+        await core.propose(ctx, { text: `idea ${t}`, request_id: `setup-ib-${t}` });
+    },
+    call: async (ctx) => {
+      const list = (await core.inbox(ctx)) as { entries: Array<{ id: string; text: string }> };
+      const entry_ids = list.entries.filter((e) => !e.text.includes('three')).map((e) => e.id);
+      assert.equal(entry_ids.length, 2);
+      const pre = (await core.inbox(ctx, {
+        action: 'discard',
+        entry_ids,
+      })) as core.Preview<unknown>;
+      return {
+        fn: 'inbox',
+        input: {
+          action: 'discard',
+          entry_ids,
+          confirm: true,
+          preview_token: pre.preview_token,
+          request_id: REQ,
+        },
+      };
+    },
+    verify: async (ctx) => {
+      const list = (await core.inbox(ctx)) as { total: number; entries: Array<{ text: string }> };
+      assert.equal(list.total, 1);
+      assert.match(list.entries[0]?.text ?? '', /idea three/);
+    },
+  },
 ];
 
 /** Kill at the n-th hit of fp; returns false when the call finished without reaching it. */
@@ -364,7 +397,7 @@ describe('recovery rules', () => {
     ]);
     assert.equal(other.code, 0, other.stderr);
     assert.equal(existsSync(join(ctx.root, '.mwf/mwf.local.intent.json')), false);
-    const state = readFileSync(join(ctx.root, '.mwf/state.toml'), 'utf8');
+    const state = readFileSync(join(ctx.root, '.mwf/dedup.local.toml'), 'utf8');
     assert.match(state, new RegExp(`\\[dedup\\.${REQ}\\]`));
     const retry = await runChild(ctx, [call]);
     assert.equal((retry.results[0] as Record<string, unknown>)['deduped'], true);

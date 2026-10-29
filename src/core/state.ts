@@ -21,15 +21,17 @@ export interface SessionEntry {
   updated: string;
 }
 
+/** state.toml: session mapping only (the request_id dedup table lives in dedup.local.toml). */
 export interface State {
   schema: number;
   sessions: Record<string, SessionEntry>;
-  dedup: Record<string, DedupEntry>;
 }
 
 export function emptyState(): State {
-  return { schema: 1, sessions: {}, dedup: {} };
+  return { schema: 1, sessions: {} };
 }
+
+export type DedupTable = Record<string, DedupEntry>;
 
 export function parseState(text: string | null): State {
   if (text === null || !text.trim()) return emptyState();
@@ -38,16 +40,45 @@ export function parseState(text: string | null): State {
   for (const [key, value] of Object.entries(raw.sessions ?? {})) {
     state.sessions[key] = { ...(value as SessionEntry) };
   }
-  for (const [key, value] of Object.entries(raw.dedup ?? {})) {
-    const e = value as DedupEntry;
-    state.dedup[key] = {
+  return state;
+}
+
+/** Parse dedup.local.toml. Throws on malformed TOML; callers decide how to degrade. */
+export function parseDedup(text: string | null): DedupTable {
+  const table: DedupTable = {};
+  if (text === null || !text.trim()) return table;
+  const raw = TOML.parse(text) as unknown as { dedup?: Record<string, DedupEntry> };
+  for (const [key, e] of Object.entries(raw.dedup ?? {})) {
+    table[key] = {
       at: Number(e.at),
       op: String(e.op),
       fingerprint: String(e.fingerprint),
       result: String(e.result),
     };
   }
-  return state;
+  return table;
+}
+
+/**
+ * The dedup table is a local cache of recently executed request_ids: if the file is unreadable it
+ * is treated as empty (doctor reports it; the next write replaces it) rather than blocking writes.
+ */
+export function readDedup(layout: Layout): DedupTable {
+  try {
+    return parseDedup(readTextIfExists(layout.dedup));
+  } catch {
+    return {};
+  }
+}
+
+export function stringifyDedup(table: DedupTable): string {
+  const dedup: Record<string, unknown> = {};
+  for (const key of Object.keys(table).sort()) dedup[key] = table[key];
+  return TOML.stringify({ schema: 1, dedup } as unknown as TOML.JsonMap);
+}
+
+export function writeDedup(layout: Layout, table: DedupTable): void {
+  atomicWrite(layout.dedup, stringifyDedup(table));
 }
 
 export function readState(layout: Layout): State {
@@ -64,9 +95,7 @@ export function stringifyState(state: State): string {
       updated: s.updated,
     };
   }
-  const dedup: Record<string, unknown> = {};
-  for (const key of Object.keys(state.dedup).sort()) dedup[key] = state.dedup[key];
-  return TOML.stringify({ schema: state.schema, sessions, dedup } as unknown as TOML.JsonMap);
+  return TOML.stringify({ schema: state.schema, sessions } as unknown as TOML.JsonMap);
 }
 
 export function writeState(layout: Layout, state: State): void {
@@ -74,20 +103,18 @@ export function writeState(layout: Layout, state: State): void {
 }
 
 /** Drop expired entries (24h) and enforce the 1000-entry cap (oldest first). */
-export function pruneDedup(state: State, now: number): void {
-  for (const [key, entry] of Object.entries(state.dedup)) {
-    if (now - entry.at > DEDUP_RETENTION_MS) delete state.dedup[key];
+export function pruneDedup(table: DedupTable, now: number): void {
+  for (const [key, entry] of Object.entries(table)) {
+    if (now - entry.at > DEDUP_RETENTION_MS) delete table[key];
   }
-  const keys = Object.keys(state.dedup);
+  const keys = Object.keys(table);
   if (keys.length > DEDUP_MAX_ENTRIES) {
     keys
       .sort(
-        (a, b) =>
-          (state.dedup[a] as DedupEntry).at - (state.dedup[b] as DedupEntry).at ||
-          a.localeCompare(b),
+        (a, b) => (table[a] as DedupEntry).at - (table[b] as DedupEntry).at || a.localeCompare(b),
       )
       .slice(0, keys.length - DEDUP_MAX_ENTRIES)
-      .forEach((key) => delete state.dedup[key]);
+      .forEach((key) => delete table[key]);
   }
 }
 
