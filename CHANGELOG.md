@@ -4,10 +4,14 @@
 
 ### 破坏性变更 / Breaking
 
-- 从零重写，不复用也不迁移 0.x 代码、`.mwf/` 数据或集成回执。新的分层目录为 `src/core`、`src/cli`、`src/mcp`、`src/hooks`；本阶段只实现 `src/core`（其余为占位）。
-- Rewritten from scratch: no 0.x code, data or receipt migration. Layered layout `src/core`, `src/cli`, `src/mcp`, `src/hooks`; only `core` is implemented so far.
+- 从零重写，不复用也不迁移 0.x 代码、`.mwf/` 数据或集成回执。新的分层目录为 `src/core`、`src/cli`、`src/mcp`、`src/hooks`；本阶段实现 `src/core` 与 `src/cli`（`src/mcp`、`src/hooks` 为占位）。
+- Rewritten from scratch: no 0.x code, data or receipt migration. Layered layout `src/core`, `src/cli`, `src/mcp`, `src/hooks`; `core` and `cli` are implemented so far.
 
 ### 新增 / Added
+
+- PR2 CLI 层 / CLI layer：`src/cli` 为每个命令提供一个结构化函数（init、bootstrap、recall、get、add、propose、edit、handoff、status、doctor、inbox、compact、reindex、forget、restore、purge；MCP 层日后映射为 `mwf_<name>`），输入按 JSON Schema 子集校验（拒绝未知字段），自 `cwd` 向上查找项目，返回 `{ok,data}` / `{ok:false,error:{code,message,details}}`，永不抛出；`mwf` 可执行文件（`src/bin`，只分发）仅开放只读的 `status` / `recall` / `doctor`（`--json`、`--cwd`；退出码 0 成功、1 失败或 doctor 报错、2 用法错误），写操作只走 MCP；`hook` / `mcp` / `install` / `uninstall` / `update` 不在本次构建内。`tests/layers.test.ts` 强制各层只依赖紧邻的下一层。`package.json` 新增 `bin` 与 `./cli` 导出。
+- Locking / recovery (Aegis L1–L4)：① doctor 报告“向前滚动时因文件已变化而跳过删除”（`rollforward_skipped`，记录在机器本地的 `.mwf/recovery.local.json`，30 天过期；文件消失后不再报告）；② doctor 报告锁被活着的持有者持有过久（`lock_held_long`，`lockHeldWarnMs` 默认 120 秒；锁里新增只在获取时写入的 `acquired`）；③ 记录并文档化“同主机名、不同 pid 命名空间”的容器可能误回收对方的锁：锁里记录 `pidns`（Linux `/proc/self/ns/pid`），命名空间不同的持有者按异主机处理（仅按心跳超时回收）；无法读取命名空间时（无 /proc、旧版锁）该风险仍在，见 readme「Locking」；④ 心跳发现锁已丢失时中止写入：写入在 intent 之前、每个目标之前、索引同步与 dedup 登记之前复核锁，丢失则以新错误码 `LOCK_LOST` 终止，不再写任何文件，残留 intent 由下一个持锁者恢复；定时心跳与 `beat()` 也会发现并终止。
+- Aegis L1–L4 (English): doctor reports roll-forwards that skipped a changed file and locks held too long; the same-hostname / different-pid-namespace hazard is documented and mitigated where `/proc` allows; a write whose lock was lost is aborted with `LOCK_LOST`.
 
 - 设计决定落地（core 跟进）：① request_id 去重表移到机器本地的 `.mwf/dedup.local.toml`（被 `.mwf/*.local.*` 忽略，不入库；损坏时视为空并由 doctor 警告），`state.toml` 只保留 session 映射；② `runWrite` 内置秘密扫描，写入新引入疑似秘密（API key、令牌、私钥、JWT、带口令 URL、`key = 随机值`）时以 `SECRET_DETECTED` 拒绝，不落任何文件，错误只带规则/路径/行号和打码样本；只统计新引入的匹配，已有内容仍可 forget/purge/编辑其他字段；③ `inbox discard` 与 forget/compact/purge 一致，需 preview_token + confirm（`edit` 仍非破坏性，仅哈希前置条件）；④ 每次改动记录/handoff 的写入都在同一把锁、同一 intent（先写 index.md）内更新 `index.md`。
 - 恢复修复：index.md 是每个计划的第一个写入，崩溃后被丢弃的 intent 可能让它列出从未落盘的记录；现在恢复（任何非 none 的 intent 路径，含损坏的 intent）会在删除 intent 之前按磁盘上的记录重建 index.md，并且读操作在遇到“写入者已死”的遗留 intent 时不再走免锁快路径，而是先恢复；活着的写入者的 intent 不受影响。protocol.md 注明秘密扫描基于模式、并不穷尽（如 `DB_PASS=...`）。
