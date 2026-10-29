@@ -3,10 +3,17 @@
   "version": "1.0.0-alpha.0",
   "description": "Project-local file memory (v1 rewrite): layered core, CLI, MCP and hooks",
   "type": "module",
+  "bin": {
+    "mwf": "./dist/bin/mwf.js"
+  },
   "exports": {
     "./core": {
       "types": "./dist/core/index.d.ts",
       "default": "./dist/core/index.js"
+    },
+    "./cli": {
+      "types": "./dist/cli/index.d.ts",
+      "default": "./dist/cli/index.js"
     }
   },
   "files": [

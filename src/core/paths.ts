@@ -39,6 +39,8 @@ export interface Layout {
   state: string;
   /** request_id dedup table; machine-local (gitignored by `.mwf/*.local.*`). */
   dedup: string;
+  /** Roll-forward removals that were skipped because the file had changed (machine-local). */
+  recovery: string;
   hostLocal: string;
   trash: string;
   lock: string;
@@ -61,6 +63,7 @@ export function layoutOf(root: string): Layout {
     db: join(mwf, 'index.db'),
     state: join(mwf, 'state.toml'),
     dedup: join(mwf, 'dedup.local.toml'),
+    recovery: join(mwf, 'recovery.local.json'),
     hostLocal: join(mwf, 'host.local.toml'),
     trash: join(mwf, 'trash'),
     lock: join(mwf, 'mwf.local.lock'),

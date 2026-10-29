@@ -20,8 +20,9 @@ import {
 } from './db.ts';
 import { invalid, MwfError } from './errors.ts';
 import { failpoint } from './failpoint.ts';
+import { recordSkipped, type SkippedRemoval } from './recovery.ts';
 import { atomicWrite, readBytesIfExists, removeDurable, removeTempFiles } from './fsx.ts';
-import { acquireLock, beat, inspectLock } from './lock.ts';
+import { acquireLock, assertLockHeld, beat, inspectLock } from './lock.ts';
 import { REQUEST_ID_RE, type Layout } from './paths.ts';
 import { buildIndexMd } from './indexmd.ts';
 import { loadAll } from './load.ts';
@@ -124,14 +125,28 @@ function recoverIntent(layout: Layout, now: number): 'none' | 'completed' | 'dis
   // still hold the planned content). Without this a half-finished forget/compact/purge could
   // never be retried (the preview_token / NOT_FOUND checks no longer see the original state).
   const writes = intent.targets.filter((t) => t.hash !== null);
+  const skipped: SkippedRemoval[] = [];
   if (writes.every(matches)) {
     for (const t of intent.targets) {
       if (t.hash !== null || matches(t)) continue;
-      if (t.prior !== undefined && fileHash(layout, t.path) === t.prior) {
+      const found = fileHash(layout, t.path);
+      if (t.prior !== undefined && found === t.prior) {
         removeDurable(abs(layout, t.path));
+      } else if (t.prior !== undefined) {
+        // The file changed after the removal was planned: keep it, and make doctor say so (L1).
+        skipped.push({
+          at: now,
+          request_id: intent.request_id,
+          op: intent.op,
+          path: t.path,
+          expected: t.prior,
+          found,
+        });
       }
     }
   }
+  // Recorded BEFORE the intent goes away, so a crash here repeats the whole recovery.
+  recordSkipped(layout, now, skipped);
   // index.md is written FIRST in every plan, so a discarded (or otherwise interrupted) intent can
   // leave it describing records that never landed (or missing ones that did). Rebuild it from the
   // records actually on disk BEFORE the intent is removed: if we crash in here the intent is still
@@ -278,18 +293,26 @@ export async function runWrite<R extends object>(
       result: plan.result,
     };
     if (plan.targets.length) {
+      // L4: a lock that was reclaimed from under us (long pause, clock jump, foreign-host
+      // staleness) must stop the write before anything touches disk. Checked again before every
+      // target and before the index sync / dedup registration; the remains of an aborted write are
+      // an intent, which the next lock holder recovers.
+      assertLockHeld();
       atomicWrite(layout.intent, JSON.stringify(intent));
       failpoint('write:intent');
       for (const target of plan.targets) {
+        assertLockHeld();
         beat();
         if (target.content === null) removeDurable(abs(layout, target.path));
         else atomicWrite(abs(layout, target.path), target.content);
         failpoint('write:target');
       }
+      assertLockHeld();
       if (plan.rebuild) rebuildIndex(db, layout);
       else syncIndex(db, layout);
       failpoint('write:indexed');
     }
+    assertLockHeld();
     registerDedup(layout, now, intent);
     failpoint('write:dedup');
     if (plan.targets.length) removeDurable(layout.intent);

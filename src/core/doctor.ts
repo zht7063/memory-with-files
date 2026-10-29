@@ -1,5 +1,7 @@
 import { existsSync } from 'node:fs';
-import { requireInitialized, nowOf, staleOf, type Ctx } from './context.ts';
+import { hostname } from 'node:os';
+import { join } from 'node:path';
+import { requireInitialized, nowOf, staleOf, heldWarnOf, type Ctx } from './context.ts';
 import { openIndexReadOnly } from './db.ts';
 import { findTempFiles, readTextIfExists } from './fsx.ts';
 import { buildIndexMd } from './indexmd.ts';
@@ -9,6 +11,7 @@ import { inspectLock } from './lock.ts';
 import { TRASH_NEAR_DAYS, TRASH_RETENTION_DAYS } from './paths.ts';
 import { parseInbox } from './inbox.ts';
 import { readHost, trashSummary, type TrashSummary } from './read.ts';
+import { readSkipped } from './recovery.ts';
 import { parseDedup, parseState } from './state.ts';
 import { DAY_MS, isoTime } from './util.ts';
 
@@ -96,11 +99,15 @@ export async function doctor(ctx: Ctx): Promise<DoctorResult> {
   }
   const lock = inspectLock(layout, { staleMs: staleOf(ctx), now: ctx.now ?? Date.now });
   if (lock.held && lock.foreign) {
-    // Another hostname: we cannot check its pid, so only the stale timeout protects/reclaims it.
+    // Another hostname (or pid namespace): we cannot check its pid, so only the stale timeout
+    // protects/reclaims it.
+    const sameName = lock.holder?.host === hostname();
     add(
       'warn',
       'foreign_host_lock',
-      `lock is held by host "${lock.holder?.host ?? '?'}" (pid ${lock.holder?.pid ?? '?'}), not this host; ` +
+      `lock is held by host "${lock.holder?.host ?? '?'}" (pid ${lock.holder?.pid ?? '?'}), ` +
+        (sameName ? 'in another pid namespace' : 'not this host') +
+        '; ' +
         (lock.stale
           ? 'its heartbeat is older than the stale age, so the next writer will reclaim it'
           : 'it is respected until its heartbeat goes stale'),
@@ -114,12 +121,37 @@ export async function doctor(ctx: Ctx): Promise<DoctorResult> {
       '.mwf/mwf.local.lock',
     );
   }
+  const heldFor =
+    lock.held && !lock.stale && lock.holder?.acquired !== undefined
+      ? now - lock.holder.acquired
+      : null;
+  if (heldFor !== null && heldFor > heldWarnOf(ctx)) {
+    add(
+      'warn',
+      'lock_held_long',
+      `lock has been held for ${Math.round(heldFor / 1000)}s by pid ${lock.holder?.pid ?? '?'} on "${lock.holder?.host ?? '?'}" ` +
+        `(warn after ${Math.round(heldWarnOf(ctx) / 1000)}s); a stuck or paused writer blocks every other writer`,
+      '.mwf/mwf.local.lock',
+    );
+  }
   if (existsSync(layout.intent)) {
     add(
       'warn',
       'pending_intent',
       'a write intent was left by an interrupted writer (recovered by the next lock holder)',
       '.mwf/mwf.local.intent.json',
+    );
+  }
+
+  // L1: roll-forwards that left a changed file in place instead of removing it. Entries whose file
+  // is gone by now are resolved and not reported; the rest age out after 30 days.
+  for (const skip of readSkipped(layout)) {
+    if (!existsSync(join(layout.mwf, ...skip.path.split('/')))) continue;
+    add(
+      'warn',
+      'rollforward_skipped',
+      `recovery of an interrupted ${skip.op} (request ${skip.request_id}) did not remove ${skip.path}: it changed after the removal was planned, so it was kept; review it and delete it by hand if it is no longer wanted`,
+      `.mwf/${skip.path}`,
     );
   }
 

@@ -234,7 +234,7 @@ describe('recall', () => {
     assert.equal((await core.recall(ctx, { query: '检索' })).hits[0]?.id, a.id); // 2-char term
   });
 
-  it('filters by scope: unscoped records are general, scoped ones must match', async () => {
+  it('filters by scope: only records whose scope matches; general records are not returned', async () => {
     const ctx = await project();
     const general = await core.add(ctx, {
       type: 'preference',
@@ -254,13 +254,166 @@ describe('recall', () => {
       scope: { paths: ['src/cli/**'], tools: ['mwf'] },
     });
     const ids = (r: core.RecallResult): string[] => r.hits.map((h) => h.id);
+    // no scope query: everything, general records included
+    assert.deepEqual(new Set(ids(await core.recall(ctx))), new Set([core1.id, cli.id, general.id]));
+    assert.deepEqual(
+      new Set(ids(await core.recall(ctx, { scope: {} }))),
+      new Set([core1.id, cli.id, general.id]),
+    );
     const forCore = await core.recall(ctx, { scope: { paths: ['src/core/lock.ts'] } });
-    assert.deepEqual(ids(forCore), [core1.id, general.id]); // scoped match ranks first
+    assert.deepEqual(ids(forCore), [core1.id]);
     const forCli = await core.recall(ctx, { scope: { paths: ['src/cli/a/b.ts'], tools: ['MWF'] } });
-    assert.deepEqual(new Set(ids(forCli)), new Set([cli.id, general.id]));
-    // a record is excluded only when the query supplies a dimension it constrains and nothing matches
+    assert.deepEqual(ids(forCli), [cli.id]);
+    // a queried dimension the record declares must match; one it does not declare does not count
     const none = await core.recall(ctx, { scope: { tools: ['git'] } });
-    assert.deepEqual(new Set(ids(none)), new Set([core1.id, general.id]));
+    assert.deepEqual(ids(none), []);
+    const mismatch = await core.recall(ctx, {
+      scope: { paths: ['src/core/x.ts'], tools: ['mwf'] },
+    });
+    assert.deepEqual(
+      ids(mismatch),
+      [core1.id],
+      'cli is excluded by paths, core1 declares only paths',
+    );
+    const onlyTool = await core.recall(ctx, { scope: { tools: ['mwf'] } });
+    assert.deepEqual(ids(onlyTool), [cli.id]);
+    // the scope filter also applies to a text search, and ranks better matches first
+    const both = await core.add(ctx, {
+      type: 'preference',
+      title: 'core tool pref',
+      body: 'core and tool',
+      scope: { paths: ['src/core/'], tools: ['mwf'] },
+    });
+    const ranked = await core.recall(ctx, { scope: { paths: ['src/core/a.ts'], tools: ['mwf'] } });
+    assert.deepEqual(ids(ranked), [both.id, core1.id]);
+    const searched = await core.recall(ctx, {
+      query: 'always applies',
+      scope: { paths: ['src/core/a.ts'] },
+    });
+    assert.deepEqual(ids(searched), []);
+  });
+
+  it('applies the scope filter before the candidate cap (a later match is not lost)', async () => {
+    const ctx = await project();
+    // 230 general records first (older), then the one scoped match (newest)
+    for (let i = 0; i < 230; i++) {
+      await core.add(ctx, {
+        type: 'knowledge',
+        title: `general note ${i}`,
+        body: `shared marker text ${i}`,
+        request_id: `bulk-${i}`,
+      });
+    }
+    const target = await core.add(ctx, {
+      type: 'knowledge',
+      title: 'scoped note',
+      body: 'shared marker text scoped',
+      scope: { paths: ['src/target/'] },
+    });
+    const other = await core.add(ctx, {
+      type: 'knowledge',
+      title: 'other scoped note',
+      body: 'shared marker text other',
+      scope: { paths: ['src/elsewhere/'] },
+    });
+    const ids = (r: core.RecallResult): string[] => r.hits.map((h) => h.id);
+    // without a query (list path) and with one (search path), the match is found
+    const listed = await core.recall(ctx, { scope: { paths: ['src/target/a.ts'] }, limit: 50 });
+    assert.deepEqual(ids(listed), [target.id]);
+    assert.equal(listed.total_matched, 1);
+    const searched = await core.recall(ctx, {
+      query: 'shared marker text',
+      scope: { paths: ['src/target/a.ts'] },
+      limit: 50,
+    });
+    assert.deepEqual(ids(searched), [target.id]);
+    assert.equal(searched.total_matched, 1);
+    // short (two-character) terms take the LIKE path
+    const short = await core.recall(ctx, { query: 'sc', scope: { paths: ['src/target/'] } });
+    assert.deepEqual(ids(short), [target.id]);
+    // unscoped recall is still capped at 200 candidates
+    const unscoped = await core.recall(ctx, { query: 'shared marker text', limit: 50 });
+    assert.ok(unscoped.total_matched <= 200, `capped, got ${unscoped.total_matched}`);
+    assert.ok(!ids(await core.recall(ctx, { scope: { paths: ['nowhere/'] } })).includes(other.id));
+  });
+
+  it('handoffs are not scope-filtered; records still are', async () => {
+    const ctx = await project();
+    const inScope = await core.add(ctx, {
+      type: 'knowledge',
+      title: 'migration in scope',
+      body: 'migration steps',
+      scope: { paths: ['src/db/'] },
+    });
+    await core.add(ctx, {
+      type: 'knowledge',
+      title: 'migration elsewhere',
+      body: 'migration steps',
+      scope: { paths: ['src/ui/'] },
+    });
+    await core.add(ctx, { type: 'knowledge', title: 'migration general', body: 'migration steps' });
+    await core.handoff(ctx, {
+      action: 'save',
+      task: 'db-migration',
+      content: 'migration progress notes',
+    });
+    await core.handoff(ctx, {
+      action: 'save',
+      task: 'old-migration',
+      content: 'migration finished long ago',
+      status: 'done',
+    });
+    const scope = { paths: ['src/db/schema.ts'] };
+
+    const withHandoffs = await core.recall(ctx, {
+      query: 'migration',
+      scope,
+      include_handoffs: true,
+    });
+    const kindsAndIds = withHandoffs.hits.map((h) => `${h.kind}:${h.id}`);
+    // the in-scope record ranks first; the active handoff is returned despite the scope
+    assert.deepEqual(kindsAndIds, [`record:${inScope.id}`, 'handoff:db-migration']);
+    assert.equal(withHandoffs.total_matched, 2);
+
+    // without include_handoffs the same query returns only the matching record
+    const records = await core.recall(ctx, { query: 'migration', scope });
+    assert.deepEqual(
+      records.hits.map((h) => h.id),
+      [inScope.id],
+    );
+    // no scope at all: every record and the handoff
+    const unscoped = await core.recall(ctx, { query: 'migration', include_handoffs: true });
+    assert.equal(unscoped.hits.length, 4);
+    // a scope that matches no record still returns the handoff, and only it
+    const noRecords = await core.recall(ctx, {
+      query: 'migration',
+      scope: { tools: ['nothing'] },
+      include_handoffs: true,
+    });
+    assert.deepEqual(
+      noRecords.hits.map((h) => `${h.kind}:${h.id}`),
+      ['handoff:db-migration'],
+    );
+    // handoffs still obey status and the text query
+    const all = await core.recall(ctx, {
+      query: 'migration',
+      scope: { tools: ['nothing'] },
+      include_handoffs: true,
+      status: 'all',
+    });
+    assert.deepEqual(all.hits.map((h) => h.id).sort(), ['db-migration', 'old-migration']);
+    const other = await core.recall(ctx, {
+      query: 'unrelatedterm',
+      scope,
+      include_handoffs: true,
+    });
+    assert.deepEqual(other.hits, []);
+    // list path (no query)
+    const listed = await core.recall(ctx, { scope, include_handoffs: true });
+    assert.deepEqual(listed.hits.map((h) => `${h.kind}:${h.id}`).sort(), [
+      'handoff:db-migration',
+      `record:${inScope.id}`,
+    ]);
   });
 
   it('is bounded by limit and max_chars', async () => {
