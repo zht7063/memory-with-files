@@ -293,6 +293,50 @@ describe('recall', () => {
     assert.deepEqual(ids(searched), []);
   });
 
+  it('applies the scope filter before the candidate cap (a later match is not lost)', async () => {
+    const ctx = await project();
+    // 230 general records first (older), then the one scoped match (newest)
+    for (let i = 0; i < 230; i++) {
+      await core.add(ctx, {
+        type: 'knowledge',
+        title: `general note ${i}`,
+        body: `shared marker text ${i}`,
+        request_id: `bulk-${i}`,
+      });
+    }
+    const target = await core.add(ctx, {
+      type: 'knowledge',
+      title: 'scoped note',
+      body: 'shared marker text scoped',
+      scope: { paths: ['src/target/'] },
+    });
+    const other = await core.add(ctx, {
+      type: 'knowledge',
+      title: 'other scoped note',
+      body: 'shared marker text other',
+      scope: { paths: ['src/elsewhere/'] },
+    });
+    const ids = (r: core.RecallResult): string[] => r.hits.map((h) => h.id);
+    // without a query (list path) and with one (search path), the match is found
+    const listed = await core.recall(ctx, { scope: { paths: ['src/target/a.ts'] }, limit: 50 });
+    assert.deepEqual(ids(listed), [target.id]);
+    assert.equal(listed.total_matched, 1);
+    const searched = await core.recall(ctx, {
+      query: 'shared marker text',
+      scope: { paths: ['src/target/a.ts'] },
+      limit: 50,
+    });
+    assert.deepEqual(ids(searched), [target.id]);
+    assert.equal(searched.total_matched, 1);
+    // short (two-character) terms take the LIKE path
+    const short = await core.recall(ctx, { query: 'sc', scope: { paths: ['src/target/'] } });
+    assert.deepEqual(ids(short), [target.id]);
+    // unscoped recall is still capped at 200 candidates
+    const unscoped = await core.recall(ctx, { query: 'shared marker text', limit: 50 });
+    assert.ok(unscoped.total_matched <= 200, `capped, got ${unscoped.total_matched}`);
+    assert.ok(!ids(await core.recall(ctx, { scope: { paths: ['nowhere/'] } })).includes(other.id));
+  });
+
   it('is bounded by limit and max_chars', async () => {
     const ctx = await project();
     for (let i = 0; i < 12; i++)

@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import * as cli from '../src/cli/index.ts';
-import { main, type Io } from '../src/cli/main.ts';
+import { main, MAX_INPUT_BYTES, type Io } from '../src/cli/main.ts';
+import { readLimited, StdinTooLarge } from '../src/cli/stdin.ts';
 import { validate, type ObjectSchema } from '../src/cli/schema.ts';
 import { withLock } from '../src/core/write.ts';
 import { project, runChild, tmpDir } from './helpers/util.ts';
@@ -894,5 +895,82 @@ describe('mwf add and handoff from the shell', () => {
     );
     assert.equal(secret.status, 1);
     assert.doesNotMatch(secret.stdout + secret.stderr, new RegExp(FAKE_SECRET));
+  });
+});
+
+describe('stdin is limited while it streams', () => {
+  it('readLimited returns small input, and stops reading as soon as the limit is passed', async () => {
+    async function* chunks(parts: string[], seen: { n: number }): AsyncGenerator<Buffer> {
+      for (const part of parts) {
+        seen.n++;
+        yield Buffer.from(part);
+      }
+    }
+    const ok = { n: 0 };
+    assert.equal(await readLimited(chunks(['héllo ', 'wörld'], ok), 100), 'héllo wörld');
+    // multi-byte characters are counted as bytes: 'é' is 2 bytes
+    await assert.rejects(readLimited(chunks(['éééé'], { n: 0 }), 7), StdinTooLarge);
+    assert.equal(await readLimited(chunks(['éééé'], { n: 0 }), 8), 'éééé');
+
+    const seen = { n: 0 };
+    const big = Array.from({ length: 1000 }, () => 'x'.repeat(1000));
+    await assert.rejects(readLimited(chunks(big, seen), 2500), StdinTooLarge);
+    assert.equal(seen.n, 3, 'stopped at the chunk that crossed the limit, not after all 1000');
+    const produced = { closed: false };
+    const endless = (async function* () {
+      try {
+        for (;;) yield Buffer.from('y'.repeat(4096));
+      } finally {
+        produced.closed = true;
+      }
+    })();
+    await assert.rejects(readLimited(endless, 10_000), StdinTooLarge);
+    assert.equal(produced.closed, true, 'the source stream is released');
+  });
+
+  it('main: an over-limit stdin is a usage error (exit 2) and nothing is written', async () => {
+    const ctx = await project();
+    const sink = io(ctx.root);
+    sink.stdin = async (maxBytes) => {
+      assert.equal(maxBytes, MAX_INPUT_BYTES);
+      throw new StdinTooLarge(maxBytes);
+    };
+    const code = await main(['add', '--type', 'task', '--title', 't', '--body-file', '-'], sink);
+    assert.equal(code, 2);
+    assert.match(sink.err, /standard input is larger than 1000000 bytes/);
+    const status = JSON.parse((await sh(['status', '--json'], ctx.root)).out);
+    assert.equal(status.data.records.task.active, 0);
+  });
+
+  it('the executable refuses a huge stdin without buffering it', async () => {
+    const ctx = await project();
+    const file = join(ctx.root, 'huge.bin');
+    writeFileSync(file, Buffer.alloc(8_000_000, 120)); // 8 MB of "x"
+    const bin = new URL('../src/bin/mwf.ts', import.meta.url).pathname;
+    const fd = openSync(file, 'r');
+    try {
+      const r = spawnSync(
+        process.execPath,
+        [
+          '--experimental-strip-types',
+          '--no-warnings',
+          bin,
+          'add',
+          '--type',
+          'task',
+          '--title',
+          't',
+          '--body-file',
+          '-',
+        ],
+        { cwd: ctx.root, encoding: 'utf8', stdio: [fd, 'pipe', 'pipe'] },
+      );
+      assert.equal(r.status, 2, r.stderr);
+      assert.match(r.stderr, /standard input is larger than 1000000 bytes/);
+    } finally {
+      closeSync(fd);
+    }
+    const status = JSON.parse((await sh(['status', '--json'], ctx.root)).out);
+    assert.equal(status.data.records.task.active, 0);
   });
 });

@@ -11,6 +11,7 @@ import {
 } from '../core/index.ts';
 import { findCommand, run, SHELL_COMMANDS, toError, type CliResult } from './index.ts';
 import { renderAdd, renderDoctor, renderHandoff, renderRecall, renderStatus } from './render.ts';
+import { StdinTooLarge } from './stdin.ts';
 
 /** Exit codes: 0 ok, 1 the command ran and failed (or doctor found errors), 2 usage error. */
 export const EXIT_OK = 0;
@@ -21,8 +22,11 @@ export interface Io {
   stdout: (text: string) => void;
   stderr: (text: string) => void;
   cwd: string;
-  /** Read all of standard input as UTF-8 (used by `--body-file -` and `--content-file -`). */
-  stdin?: () => Promise<string>;
+  /**
+   * Read standard input as UTF-8 (used by `--body-file -` and `--content-file -`). It must give
+   * up with `StdinTooLarge` as soon as more than `maxBytes` bytes have arrived.
+   */
+  stdin?: (maxBytes: number) => Promise<string>;
 }
 
 /** Largest body read from a file or stdin; core's own limit (50 000 characters) is stricter. */
@@ -163,7 +167,13 @@ async function textInput(
   }
   if (file === '-') {
     if (!io.stdin) throw new Usage(`--${flag}-file -: standard input is not available`);
-    const text = await io.stdin();
+    let text: string;
+    try {
+      text = await io.stdin(MAX_INPUT_BYTES);
+    } catch (error) {
+      if (error instanceof StdinTooLarge) throw new Usage(error.message);
+      throw error;
+    }
     if (Buffer.byteLength(text, 'utf8') > MAX_INPUT_BYTES) {
       throw new Usage(`standard input is larger than ${MAX_INPUT_BYTES} bytes`);
     }

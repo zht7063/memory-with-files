@@ -3,7 +3,7 @@
 //   cli   -> ../core/index.ts (the public core API, never core internals)
 //   mcp   -> ../cli/index.ts
 //   hooks -> ../mcp/index.ts
-//   bin   -> ../cli/main.ts (dispatch only; hook / mcp are lazy-loaded layers added later)
+//   bin   -> ../cli/main.ts, ../cli/stdin.ts (dispatch only; hook / mcp are lazy-loaded layers added later)
 import assert from 'node:assert/strict';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -46,8 +46,8 @@ describe('layering', () => {
     check('hooks', (s) => s.startsWith('node:') || sibling(s) || s === '../mcp/index.ts');
   });
 
-  it('the bin is a dispatcher: it imports only the cli entry', () => {
-    check('bin', (s) => s.startsWith('node:') || s === '../cli/main.ts');
+  it('the bin is a dispatcher: it imports only the cli command line and its stdin reader', () => {
+    check('bin', (s) => s.startsWith('node:') || s === '../cli/main.ts' || s === '../cli/stdin.ts');
   });
 
   it('the checker really sees imports (self-test)', () => {

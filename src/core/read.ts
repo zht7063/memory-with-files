@@ -9,7 +9,14 @@ import { readConfig } from './init.ts';
 import { parseInbox } from './inbox.ts';
 import { inspectLock } from './lock.ts';
 import { RECORD_TYPES, TRASH_NEAR_DAYS, TRASH_RETENTION_DAYS, type RecordType } from './paths.ts';
-import { normalizeScope, scopeMatch, validateType, type Scope, type Status } from './records.ts';
+import {
+  normalizeScope,
+  SCOPE_KEYS,
+  scopeMatch,
+  validateType,
+  type Scope,
+  type Status,
+} from './records.ts';
 import { diffIndex, scanFiles } from './db.ts';
 import { staleOf } from './context.ts';
 import { withIndexRead } from './write.ts';
@@ -181,6 +188,11 @@ function clampInt(
   return v;
 }
 
+/** Candidates ranked per kind before the limit / max_chars budget is applied. */
+const MAX_CANDIDATES = 200;
+/** Effectively unbounded: used when a scope filter has to see every candidate first. */
+const ALL_CANDIDATES = 1_000_000;
+
 export async function recall(ctx: Ctx, input: RecallInput = {}): Promise<RecallResult> {
   if (input.task !== undefined) {
     return {
@@ -209,16 +221,23 @@ export async function recall(ctx: Ctx, input: RecallInput = {}): Promise<RecallR
       : ['record'];
     type Scored = { node: NodeRow; rank: number; hits: number };
     const scored: Scored[] = [];
+    // A scope query filters before anything is cut: fetch every candidate, keep the matching ones
+    // and only then cap at MAX_CANDIDATES, so a match is never lost behind 200 non-matching hits.
+    const scoped = SCOPE_KEYS.some((key) => scope[key]?.length);
     for (const kind of kinds) {
       const filter = { kind, status: statusFilter, types: kind === 'record' ? types : undefined };
+      const fetchLimit = scoped ? ALL_CANDIDATES : MAX_CANDIDATES;
       const found = terms.length
-        ? searchNodes(db, terms, filter, 200)
+        ? searchNodes(db, terms, filter, fetchLimit)
         : listNodes(db, filter)
-            .slice(0, 200)
+            .slice(0, fetchLimit)
             .map((node, i) => ({ node, rank: i }));
+      let kept = 0;
       for (const { node, rank } of found) {
         const m = scopeMatch(node.scope, scope);
-        if (m.ok) scored.push({ node, rank, hits: m.hits });
+        if (!m.ok) continue;
+        if (kept++ >= MAX_CANDIDATES) break;
+        scored.push({ node, rank, hits: m.hits });
       }
     }
     scored.sort(
