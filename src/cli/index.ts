@@ -9,6 +9,7 @@ export { shellCommandFor } from './shellcmd.ts';
 export type { Access, CliEnv, Command } from './commands.ts';
 export type { ObjectSchema, Schema } from './schema.ts';
 export { toError } from './result.ts';
+export { MWF_VERSION } from '../core/index.ts';
 export type { CliError, CliResult } from './result.ts';
 
 /**

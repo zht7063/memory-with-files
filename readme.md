@@ -2,19 +2,19 @@
 
 Project memory for coding agents, stored as plain Markdown files under `.mwf/` in your repository. Files are the source of truth; `index.db` (SQLite, FTS5) is a derived, rebuildable cache.
 
-> **Status: `v1` integration branch, PR2 (CLI layer).** MWF 1.0 is a ground-up rewrite. `src/core` and `src/cli` are implemented; `src/mcp` and `src/hooks` are placeholders. The 0.x line lives on `main`.
+> **Status: `v1` integration branch, PR3 (MCP layer).** MWF 1.0 is a ground-up rewrite. `src/core`, `src/cli` and `src/mcp` are implemented; `src/hooks` is a placeholder. The 0.x line lives on `main`.
 
 ## Layout
 
 ```
 src/core    # file store, index, locking, all operations
-src/cli     # structured command functions + the shell command line (this PR)
-src/mcp     # MCP server (planned)
+src/cli     # structured command functions + the shell command line
+src/mcp     # MCP tools + the stdio server (`mwf mcp`) (this PR)
 src/hooks   # host hooks (planned)
 src/bin     # the `mwf` executable: dispatch only
 ```
 
-Each layer imports only the one beneath it (`cli` -> `core`, later `mcp` -> `cli`, `hooks` -> `mcp`); `tests/layers.test.ts` enforces it.
+Each layer imports only the one beneath it (`cli` -> `core`, `mcp` -> `cli`, `hooks` -> `mcp`); `tests/layers.test.ts` enforces it.
 
 ```
 .mwf/
@@ -24,7 +24,7 @@ Each layer imports only the one beneath it (`cli` -> `core`, later `mcp` -> `cli
   index.db  state.toml (sessions)  dedup.local.toml  host.local.toml  trash/  mwf.local.lock
 ```
 
-`init` has two git modes. `track` commits `.mwf/` and writes exactly three `.gitignore` lines (`.mwf/trash/`, `.mwf/index.db-*`, `.mwf/*.local.*`); `local` adds `.mwf/` to `.gitignore`. Nothing else is written outside `.mwf/`.
+`init` only works at the root of a git repository: the directory where it is run must hold `.git/`; in a subdirectory of a repository, or with no `.git` at all, it refuses, says why and writes nothing. Every other command (and the MCP server) finds the project by walking up from its working directory to the `.mwf/` that `init` created. `init` has two git modes. `track` commits `.mwf/` and writes exactly three `.gitignore` lines (`.mwf/trash/`, `.mwf/index.db-*`, `.mwf/*.local.*`); `local` adds `.mwf/` to `.gitignore`. Nothing else is written outside `.mwf/`.
 
 ## Core API
 
@@ -48,7 +48,7 @@ Write-path rules (all enforced inside the one `runWrite`, under the project lock
 
 ## CLI layer
 
-`src/cli` has one structured function per command (`init`, `bootstrap`, `recall`, `get`, `add`, `propose`, `edit`, `handoff`, `status`, `doctor`, `inbox`, `compact`, `reindex`, `forget`, `restore`, `purge`); the MCP layer will expose each as `mwf_<name>`. A function validates its input against a JSON-Schema description (unknown fields are rejected), finds the project by walking up from `cwd`, calls core and returns `{ ok: true, data }` or `{ ok: false, error: { code, message, details } }`. It never throws.
+`src/cli` has one structured function per command (`init`, `bootstrap`, `recall`, `get`, `add`, `propose`, `edit`, `handoff`, `status`, `doctor`, `inbox`, `compact`, `reindex`, `forget`, `restore`, `purge`); the MCP layer exposes each as `mwf_<name>`. A function validates its input against a JSON-Schema description (unknown fields are rejected), finds the project by walking up from `cwd`, calls core and returns `{ ok: true, data }` or `{ ok: false, error: { code, message, details } }`. It never throws.
 
 ```ts
 import { add, forget } from '@zht7063/mwf/cli';
@@ -59,7 +59,7 @@ const preview = await forget({ ids: [id] }, env); // preview only
 await forget({ ids: [id], confirm: true, preview_token: preview.data.preview_token }, env);
 ```
 
-The `mwf` executable exposes `status`, `recall`, `doctor` and two write commands, `add` and `handoff`. Every other write (`edit`, `propose`, `inbox`, `forget`, `restore`, `purge`, `compact`, `reindex`, `init`) is only an MCP tool. The executable is dispatch only; the command line itself lives in `src/cli/main.ts`.
+The `mwf` executable exposes `status`, `recall`, `doctor`, the writes `add` and `handoff`, `inbox list|accept`, and the destructive `forget`, `purge`, `compact` and `inbox discard` (two steps, below). `init`, `edit`, `propose`, `restore` and `reindex` are only MCP tools. The executable is dispatch only; the command line itself lives in `src/cli/main.ts`, and `mwf mcp` starts the MCP server (`src/mcp/server.ts`).
 
 ```
 mwf status [--json] [--cwd dir]
@@ -71,7 +71,13 @@ mwf add --type T --title "…" (--body "…" | --body-file path|-) [--scope key=
 mwf handoff read [--task name] [--status active|done|all] [--json]
 mwf handoff save --task name (--content "…" | --content-file path|-) [--summary line]
         [--base-version n] [--status active|done] [--request-id id] [--wait-ms n] [--json]
+mwf inbox [list [--limit n]]
+mwf inbox accept --entry-id id --type T --title "…" [--body "…"] [--scope key=value]...
+mwf forget --id id... [--reason "…"]                 # preview: prints what would move + a preview_token
+mwf forget --id id... --confirm --preview-token T    # executes (same for purge --id…, compact [--type T], inbox discard --entry-id…)
 ```
+
+**Destructive commands take two steps, and only the shell can take the second.** Without `--confirm` they change nothing: they print what would change and a `preview_token`. `--confirm --preview-token <token>` executes; the token is hashed from the affected content and verified again under the project lock, so anything edited since the preview is refused (`PREVIEW_MISMATCH`). `--confirm` without `--preview-token` is refused (`CONFIRM_REQUIRES_TOKEN`) and deletes nothing. The MCP tools of the same names only preview and never execute (see below).
 
 `add` and `handoff save` call the same core functions as the MCP tools, so nothing about the write path differs: the one `runWrite` under the project lock, the secret scan (a body that looks like a credential is refused with `SECRET_DETECTED`, exit 1, nothing written, the value never printed), the `request_id` idempotency, and for `handoff save` the version check (a stale `--base-version` appends a "并行更新" section and reports `conflict`, it never overwrites). Long text: `--body-file -` / `--content-file -` read standard input (refused on an interactive terminal; at most 1 MB, counted while it streams so a huge pipe is refused with exit 2 as soon as it passes the limit; core then limits a body to 50 000 characters); a file path is relative to the shell's directory, while `--cwd` only selects the project. Prefer the file forms over `--body` for anything sensitive-adjacent, because arguments show up in shell history and process lists. `--json` prints the structured result envelope for every command.
 
@@ -83,7 +89,18 @@ The shell always sends a `request_id` (generated as `cli-<uuid>` unless you pass
 
 A project is created through the MCP tool `mwf_init` (or `mwf install`, once available); the shell has no `init` command, and the not-initialized error says so.
 
-Exit codes: `0` ok, `1` the command failed (including a refused write) or `doctor` found errors, `2` usage error or invalid input. `hook`, `mcp` and the lifecycle commands (`install`, `uninstall`, `update`) are not part of this build.
+## MCP server
+
+`mwf mcp` serves MCP over stdio (`@modelcontextprotocol/server` 2.4.0, exact pin). Configure the host to start `mwf` with the argument `mcp` in the project directory, e.g. for Codex `[mcp_servers.mwf]` with `command = "mwf"` and `args = ["mcp"]`; `--host <name>` names the host for registration (default: the client's own name) and `--cwd <dir>` overrides the working directory.
+
+- **Tools:** one `mwf_<command>` per CLI command (16). Schemas and descriptions come from the CLI; no tool takes a project path. Every result is text (the JSON envelope) plus `structuredContent`; a failure sets `isError` and carries `code`, `message`, `details`, `retryable` and a `hint`.
+- **Read-only tools** (`mwf_bootstrap`, `mwf_recall`, `mwf_get`, `mwf_status`, `mwf_doctor`) do not change memory content; all but `mwf_doctor` may take the lock and write `.mwf/` (recovery, index refresh), and their descriptions say so.
+- **Destructive tools only preview.** `mwf_forget`, `mwf_purge`, `mwf_compact` and `mwf_inbox` with `action: "discard"` reject `confirm` / `preview_token`. They return the preview, its `preview_token` and `execute_with`, the exact shell command the user runs. The agent shows the preview to the user; the user executes.
+- **Exactly once:** `request_id` is generated by the CLI layer for every write (shell and MCP alike) and reported on failure; repeat the call with the same id after `LOCK_LOST`, `LOCK_TIMEOUT` or `INTERNAL`. Writes within a server run one at a time.
+- **Killed mid-write:** the server does not trap SIGTERM; the lock and intent it leaves are recovered by the next process.
+- **Host registration:** after the first tool call the server records the host in `host.local.toml` (channel `mcp`).
+
+Exit codes: `0` ok, `1` the command failed (including a refused write) or `doctor` found errors, `2` usage error or invalid input. `hook` and the lifecycle commands (`install`, `uninstall`, `update`) are not part of this build.
 
 ## Locking
 
