@@ -1,574 +1,720 @@
-import test from "node:test";
-import assert from "node:assert/strict";
-import fs from "node:fs";
-import path from "node:path";
-import os from "node:os";
-import { spawn } from "node:child_process";
-import { fileURLToPath } from "node:url";
-import { lifecycle } from "../dist/lifecycle/index.js";
-import { execute as rawExecute } from "../dist/core.js";
-import { execute } from "./contracts.ts";
-import type { TestContext } from "node:test";
-import { z } from "zod";
+import assert from 'node:assert/strict';
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { describe, it } from 'node:test';
+import * as core from '../src/core/index.ts';
+import { dumpIndex, openIndexReadOnly } from '../src/core/db.ts';
+import { layoutOf } from '../src/core/paths.ts';
+import { project, tmpDir } from './helpers/util.ts';
 
-const cli = fileURLToPath(new URL("../dist/cli.js", import.meta.url));
-const core = fileURLToPath(new URL("../dist/core.js", import.meta.url));
-const legacyFixture = fileURLToPath(
-  new URL("./fixtures/legacy-schema-1/", import.meta.url),
-);
-function legacyProject(t: TestContext) {
-  const root = temp(t);
-  fs.cpSync(path.join(legacyFixture, "project"), root, { recursive: true });
-  return root;
-}
-const temp = (t: TestContext) => {
-  const p = fs.realpathSync(
-    fs.mkdtempSync(path.join(os.tmpdir(), "mwf-test-")),
+const DAY = 24 * 60 * 60 * 1000;
+
+async function rejects(p: Promise<unknown> | (() => unknown), code: string): Promise<void> {
+  await assert.rejects(
+    typeof p === 'function' ? Promise.resolve().then(p) : p,
+    (e: { code?: string }) => {
+      assert.equal(e.code, code);
+      return true;
+    },
   );
-  t.after(() => fs.rmSync(p, { recursive: true, force: true }));
-  return p;
-};
-const init = (root: string) =>
-  execute("init", { project_root: root, git_mode: "track" });
-const add = (root: string, overrides: Record<string, unknown> = {}) =>
-  execute("add", {
-    project_root: root,
-    type: "preference",
-    title: "Use clear names",
-    summary: "Keep names clear",
-    body: "## Guidance\n\nUse clear names.",
-    ...overrides,
+}
+
+describe('init and git modes', () => {
+  it('track mode writes exactly the three .gitignore lines and nothing else outside .mwf/', async () => {
+    const root = tmpDir();
+    const res = await core.init({ root }, { git_mode: 'track' });
+    assert.equal(res.created, true);
+    assert.equal(
+      readFileSync(join(root, '.gitignore'), 'utf8'),
+      '.mwf/trash/\n.mwf/index.db-*\n.mwf/*.local.*\n',
+    );
+    assert.deepEqual(readdirSync(root).sort(), ['.gitignore', '.mwf']);
+    assert.equal(existsSync(join(root, 'AGENTS.md')), false);
   });
-function child(args: string[]) {
-  return new Promise<{
-    code: number | null;
-    signal: NodeJS.Signals | null;
-    out: string;
-    err: string;
-  }>((resolve) => {
-    const p = spawn(process.execPath, args, {
-      stdio: ["ignore", "pipe", "pipe"],
+
+  it('local mode adds only .mwf/ to .gitignore', async () => {
+    const root = tmpDir();
+    await core.init({ root }, { git_mode: 'local' });
+    assert.equal(readFileSync(join(root, '.gitignore'), 'utf8'), '.mwf/\n');
+    assert.deepEqual(readdirSync(root).sort(), ['.gitignore', '.mwf']);
+  });
+
+  it('preserves existing .gitignore content, appends missing lines, and is idempotent', async () => {
+    const root = tmpDir();
+    writeFileSync(join(root, '.gitignore'), 'node_modules/\n.mwf/trash/');
+    await core.init({ root }, { git_mode: 'track' });
+    assert.equal(
+      readFileSync(join(root, '.gitignore'), 'utf8'),
+      'node_modules/\n.mwf/trash/\n.mwf/index.db-*\n.mwf/*.local.*\n',
+    );
+    const again = await core.init({ root }, { git_mode: 'track' });
+    assert.equal(again.created, false);
+    assert.deepEqual(again.gitignore_added, []);
+    assert.equal(
+      readFileSync(join(root, '.gitignore'), 'utf8')
+        .split('\n')
+        .filter((l) => l === '.mwf/trash/').length,
+      1,
+    );
+  });
+
+  it('refuses to switch git mode after init', async () => {
+    const ctx = await project('track');
+    await rejects(core.init(ctx, { git_mode: 'local' }), 'GIT_MODE_CONFLICT');
+  });
+
+  it('creates the documented .mwf/ layout', async () => {
+    const ctx = await project();
+    const mwf = join(ctx.root, '.mwf');
+    for (const p of [
+      'config.toml',
+      'protocol.md',
+      'index.md',
+      'inbox.md',
+      'index.db',
+      'state.toml',
+      'handoff',
+      'memory/preferences',
+      'memory/decisions',
+      'memory/incidents',
+      'memory/tasks',
+      'memory/knowledge',
+    ])
+      assert.ok(existsSync(join(mwf, p)), p);
+    // the lock is released after init
+    assert.equal(existsSync(join(mwf, 'mwf.local.lock')), false);
+  });
+
+  it('operations fail with NOT_INITIALIZED outside a project', async () => {
+    await rejects(core.status({ root: tmpDir() }), 'NOT_INITIALIZED');
+    assert.equal(core.findProjectRoot(tmpDir()), null);
+  });
+
+  it('findProjectRoot walks up to the nearest .mwf', async () => {
+    const ctx = await project();
+    const sub = join(ctx.root, 'a', 'b');
+    mkdirSync(sub, { recursive: true });
+    assert.equal(core.findProjectRoot(sub), ctx.root);
+  });
+});
+
+describe('records', () => {
+  it('add / get round-trip with scope, frontmatter file on disk', async () => {
+    const ctx = await project();
+    const r = await core.add(ctx, {
+      type: 'decision',
+      title: 'Use SQLite',
+      body: 'FTS5 index.',
+      scope: { paths: ['src/core'], keywords: ['index'] },
     });
-    let out = "",
-      err = "";
-    p.stdout.on("data", (d) => (out += d));
-    p.stderr.on("data", (d) => (err += d));
-    p.on("close", (code, signal) => resolve({ code, signal, out, err }));
+    assert.match(r.id, /^dec_[a-z2-7]{10}$/);
+    const got = core.get(ctx, { id: r.id });
+    assert.equal(got.title, 'Use SQLite');
+    assert.deepEqual(got.scope, { paths: ['src/core'], keywords: ['index'] });
+    assert.equal(got.hash, r.hash);
+    const file = readFileSync(join(ctx.root, '.mwf/memory/decisions', `${r.id}.md`), 'utf8');
+    assert.match(file, /^---\nid: dec_/);
+    assert.match(file, /status: active/);
   });
-}
 
-test("status and initialization preview leave an unconnected project untouched", (t) => {
-  const root = temp(t);
-  assert.equal(
-    execute("status", { project_root: root }).data.initialized,
-    false,
-  );
-  assert.equal(
-    execute("init", { project_root: root, git_mode: "track", dry_run: true })
-      .data.preview,
-    true,
-  );
-  assert.deepEqual(fs.readdirSync(root), []);
-  assert.throws(
-    () => execute("bootstrap", { project_root: root }),
-    /not connected/,
-  );
-  assert.deepEqual(fs.readdirSync(root), []);
-});
-test("init preserves user text and is idempotent; local privacy and schema are enforced", (t) => {
-  const root = temp(t);
-  fs.writeFileSync(path.join(root, "AGENTS.md"), "# User rules\nKeep these.\n");
-  fs.writeFileSync(
-    path.join(root, "CLAUDE.md"),
-    "# User Claude rules\r\nKeep these too.\r\n",
-  );
-  const rules = ["AGENTS.md", "CLAUDE.md"].map(
-    (file) => [file, fs.readFileSync(path.join(root, file))] as const,
-  );
-  fs.writeFileSync(path.join(root, ".gitignore"), "build/\n");
-  init(root);
-  assert.match(
-    fs.readFileSync(path.join(root, "AGENTS.md"), "utf8"),
-    /Keep these/,
-  );
-  assert.deepEqual(init(root).changed_files, []);
-  assert.equal(execute("doctor", { project_root: root }).ok, true);
-  execute("init", { project_root: root, git_mode: "ignore" });
-  assert.match(
-    fs.readFileSync(path.join(root, ".gitignore"), "utf8"),
-    /^\.mwf\/local\/$/m,
-  );
-  const config = path.join(root, ".mwf/config.json");
-  const c = JSON.parse(fs.readFileSync(config, "utf8"));
-  c.schema_version = 99;
-  fs.writeFileSync(config, JSON.stringify(c));
-  const agents = fs.readFileSync(path.join(root, "AGENTS.md"), "utf8");
-  assert.throws(() => init(root), /newer/);
-  assert.equal(fs.readFileSync(path.join(root, "AGENTS.md"), "utf8"), agents);
-  assert.throws(() => add(root), /newer/);
-  for (const [file, bytes] of rules)
-    assert.deepEqual(fs.readFileSync(path.join(root, file)), bytes);
-});
-test("initialization ignores unrelated malformed AGENTS markers", (t) => {
-  const root = temp(t);
-  fs.writeFileSync(
-    path.join(root, "AGENTS.md"),
-    "<!-- memory-with-files:end -->\n<!-- memory-with-files:start -->",
-  );
-  init(root);
-  assert.equal(fs.existsSync(path.join(root, ".mwf/config.json")), true);
-});
-test("record recall preserves scoped incident boundaries and candidates are marked", (t) => {
-  const root = temp(t);
-  init(root);
-  const incident = add(root, {
-    type: "incident",
-    status: "resolved",
-    title: "Preserve embedded DOCX objects",
-    summary: "Use LibreOffice when Pandoc loses embedded objects",
-    body: "## Applicability\nDOCX embedded objects; Pandoc remains valid for text-only files.\n\n## Invalid when\nConverter upgrade changes behavior.",
-    scope: {
-      file_types: [".docx"],
-      tools: ["pandoc", "libreoffice"],
-      operations: ["conversion"],
-      keywords: ["embedded objects"],
-    },
+  it('supports all five types in their directories', async () => {
+    const ctx = await project();
+    const dirs = {
+      preference: 'preferences',
+      decision: 'decisions',
+      incident: 'incidents',
+      task: 'tasks',
+      knowledge: 'knowledge',
+    } as const;
+    for (const type of core.RECORD_TYPES) {
+      const r = await core.add(ctx, { type, title: `t ${type}`, body: 'body text' });
+      assert.ok(existsSync(join(ctx.root, '.mwf/memory', dirs[type], `${r.id}.md`)));
+    }
   });
-  assert.deepEqual(
-    execute("recall", { project_root: root, file_type: [".docx"] }).data
-      .entries,
-    [],
-  );
-  const matches = execute("recall", {
-    project_root: root,
-    file_type: [".docx"],
-    operation: ["conversion"],
-  }).data.entries;
-  assert.equal(matches[0].id, incident.data.id);
-  assert.ok(matches[0].boundaries);
-  assert.match(matches[0].boundaries.applicability, /Pandoc remains valid/);
-  const proposed = execute("propose", {
-    project_root: root,
-    type: "preference",
-    title: "Possible policy",
-    summary: "Scope is not confirmed",
-    scope: { tools: ["pandoc"] },
-  });
-  assert.equal(proposed.data.status, "candidate");
-  assert.equal(execute("doctor", { project_root: root }).ok, true);
-  assert.throws(
-    () =>
-      execute("update", {
-        project_root: root,
-        id: proposed.data.id,
-        status: "stable",
-        apply: true,
-      }),
-    /Promotion requires/,
-  );
-  execute("update", {
-    project_root: root,
-    id: proposed.data.id,
-    status: "stable",
-    body: "## Guidance\nConfirmed conversion scope.",
-    apply: true,
-  });
-  assert.equal(execute("doctor", { project_root: root }).ok, true);
-});
-test("strict schemas reject unknown input, missing bodies and secrets in routing too", (t) => {
-  const root = temp(t);
-  init(root);
-  assert.throws(
-    () =>
-      execute("add", {
-        project_root: root,
-        type: "preference",
-        title: "x",
-        summary: "y",
-      }),
-    /body/,
-  );
-  assert.throws(
-    () =>
-      add(root, {
-        scope: { tools: ["api_key=sk-abcdefghijklmnopqrstuvwxyz123456"] },
-      }),
-    /credential/,
-  );
-  assert.throws(() => add(root, { surprise: "ignored?" }), /Unrecognized/);
-});
-test("inbox redaction never echoes a credential and handoff is structured", (t) => {
-  const root = temp(t);
-  init(root);
-  const file = path.join(root, ".mwf/inbox.md");
-  const secret = "api_key=sk-abcdefghijklmnopqrstuvwxyz123456";
-  fs.writeFileSync(
-    file,
-    fs.readFileSync(file, "utf8").replace("- [ ]", "- [ ] " + secret),
-  );
-  assert.equal(execute("doctor", { project_root: root }).ok, false);
-  assert.doesNotMatch(
-    JSON.stringify(execute("process-inbox", { project_root: root })),
-    /abcdefghijklmnopqrstuvwxyz/,
-  );
-  assert.throws(
-    () =>
-      execute("process-inbox", {
-        project_root: root,
-        item: 1,
-        outcome: "Rejected",
-        apply: true,
-      }),
-    /redact/,
-  );
-  execute("process-inbox", {
-    project_root: root,
-    item: 1,
-    outcome: "Rejected",
-    redact: true,
-    apply: true,
-  });
-  assert.doesNotMatch(
-    fs.readFileSync(file, "utf8"),
-    /abcdefghijklmnopqrstuvwxyz/,
-  );
-  execute("handoff", {
-    project_root: root,
-    action: "save",
-    task_id: "migration",
-    expected_revision: 0,
-    request_id: "handoff",
-    data: {
-      goal: "Migrate MWF",
-      next_action: "Test installed package",
-      completed: ["Core implemented"],
-    },
-  });
-  assert.match(
-    execute("bootstrap", { project_root: root, task_id: "migration" }).data
-      .handoff!.next_action,
-    /Test installed package/,
-  );
-  assert.equal(execute("doctor", { project_root: root }).ok, true);
-});
-test("compaction preserves scope/evidence and forgetting previews by default", (t) => {
-  const root = temp(t);
-  init(root);
-  const a = add(root, { scope: { tools: ["ts"], operations: ["build"] } });
-  const b = add(root, {
-    title: "Use clear names also",
-    scope: { tools: ["ts"], operations: ["build"], paths: ["src/**"] },
-    body: "## Additional evidence\nA concrete verified example.",
-  });
-  assert.ok(
-    execute("duplicates", { project_root: root, threshold: 0.2 }).data.length,
-  );
-  execute("compact", {
-    project_root: root,
-    canonical: a.data.id,
-    duplicate: b.data.id,
-  });
-  assert.ok(fs.existsSync(path.join(root, b.data.path)));
-  execute("compact", {
-    project_root: root,
-    canonical: a.data.id,
-    duplicate: b.data.id,
-    apply: true,
-  });
-  const merged = fs.readFileSync(path.join(root, a.data.path), "utf8");
-  assert.match(merged, /src\/\*\*/);
-  assert.match(merged, /concrete verified/);
-  const next = add(root, { title: "Another memory" });
-  assert.notEqual(next.data.id, b.data.id);
-  execute("forget", { project_root: root, id: a.data.id });
-  assert.ok(fs.existsSync(path.join(root, a.data.path)));
-  execute("forget", { project_root: root, id: a.data.id, apply: true });
-  assert.equal(fs.existsSync(path.join(root, a.data.path)), false);
-  assert.equal(execute("doctor", { project_root: root }).ok, true);
-});
-test("persistent idempotency replays same write and rejects changed input", (t) => {
-  const root = temp(t);
-  init(root);
-  const first = add(root, { request_id: "same-request" });
-  assert.equal(add(root, { request_id: "same-request" }).replayed, true);
-  assert.equal(
-    add(root, { request_id: "same-request" }).data.id,
-    first.data.id,
-  );
-  assert.throws(
-    () => add(root, { request_id: "same-request", title: "Different" }),
-    /different input/,
-  );
-});
-test("concurrent processes with different titles allocate unique IDs and a complete index", async (t) => {
-  const root = temp(t);
-  init(root);
-  const results = await Promise.all(
-    Array.from({ length: 12 }, (_, i) =>
-      child([
-        cli,
-        "add",
-        "--input",
-        JSON.stringify({
-          project_root: root,
-          type: "preference",
-          title: "Concurrent " + i,
-          summary: "Separate memory " + i,
-          body: "Distinct evidence " + i,
-          request_id: "parallel-" + i,
-        }),
-      ]),
-    ),
-  );
-  for (const r of results) assert.equal(r.code, 0, r.err);
-  const ids = results.map((r) => JSON.parse(r.out).data.id);
-  assert.equal(new Set(ids).size, 12);
-  assert.equal(execute("doctor", { project_root: root }).ok, true);
-});
-test("killed writer releases lock and next call recovers durable journal and receipt", async (t) => {
-  const root = temp(t);
-  init(root);
-  const args = {
-    project_root: root,
-    type: "preference",
-    title: "Recovered write",
-    summary: "Recover once",
-    body: "## Evidence\nPersistent transaction",
-    request_id: "crash-write",
-  };
-  const script = `import {execute} from ${JSON.stringify("file://" + core)}; execute('add',${JSON.stringify(args)},{fault(stage){if(stage==='applied:0')process.kill(process.pid,'SIGKILL')}});`;
-  const crashed = await child(["--input-type=module", "-e", script]);
-  assert.equal(crashed.signal, "SIGKILL");
-  const replay = execute("add", args);
-  assert.equal(replay.replayed, true);
-  assert.equal(execute("doctor", { project_root: root }).ok, true);
-  assert.equal(
-    fs.existsSync(path.join(root, ".mwf/local/transaction.json")),
-    false,
-  );
-});
-test("recovery refuses an external edit instead of overwriting it", (t) => {
-  const root = temp(t);
-  init(root);
-  assert.throws(
-    () =>
-      execute(
-        "add",
-        {
-          project_root: root,
-          type: "preference",
-          title: "Conflict",
-          summary: "Conflict test",
-          body: "Original intended body",
-        },
-        {
-          fault(stage) {
-            if (stage === "prepared") throw Error("injected interruption");
-          },
-        },
-      ),
-    /injected/,
-  );
-  const journal = JSON.parse(
-    fs.readFileSync(path.join(root, ".mwf/local/transaction.json"), "utf8"),
-  );
-  const file = journal.changes[0].path;
-  fs.writeFileSync(path.join(root, file), "User replacement");
-  assert.throws(
-    () => execute("status", { project_root: root }),
-    /External edit/,
-  );
-  assert.equal(
-    fs.readFileSync(path.join(root, file), "utf8"),
-    "User replacement",
-  );
-});
-test("symlink boundaries protect records, local lock and root-owned configuration", (t) => {
-  const root = temp(t),
-    outside = temp(t);
-  fs.symlinkSync(outside, path.join(root, ".mwf"));
-  assert.throws(() => init(root), /Symlinks/);
-  assert.deepEqual(fs.readdirSync(outside), []);
-  fs.unlinkSync(path.join(root, ".mwf"));
-  init(root);
-  fs.symlinkSync(
-    path.join(outside, "missing.md"),
-    path.join(root, ".mwf/preferences/dangling.md"),
-  );
-  assert.throws(() => execute("recall", { project_root: root }), /Symlinks/);
-});
-test("migration keeps recoverable backup and forget clears MWF-owned snapshots", (t) => {
-  const root = temp(t);
-  init(root);
-  const a = add(root);
-  const f = path.join(root, ".mwf/config.json"),
-    c = JSON.parse(fs.readFileSync(f, "utf8"));
-  c.schema_version = 0;
-  fs.writeFileSync(f, JSON.stringify(c));
-  assert.equal(
-    execute("migrate", { project_root: root }).data.migration_required,
-    true,
-  );
-  const result = execute("migrate", {
-    project_root: root,
-    git_mode: "track",
-    apply: true,
-  });
-  assert.ok(result.data.backup);
-  assert.ok(fs.existsSync(path.join(root, result.data.backup)));
-  execute("forget", { project_root: root, id: a.data.id, apply: true });
-  assert.equal(fs.existsSync(path.join(root, result.data.backup)), false);
-});
-test("legacy schema-1 golden files preserve scoped recall", (t) => {
-  const root = legacyProject(t);
-  const expected = JSON.parse(
-    fs.readFileSync(path.join(legacyFixture, "recall.json"), "utf8"),
-  );
-  const query = {
-    project_root: root,
-    query: "embedded objects",
-    path: "reports/a.docx",
-    file_type: [".docx"],
-    operation: ["conversion"],
-  };
-  const recall = () =>
-    execute("recall", query).data.entries.map(
-      ({ content_hash, complete, boundaries, ...rest }) => ({
-        ...rest,
-        incident_boundaries: boundaries,
-      }),
+
+  it('validates input', async () => {
+    const ctx = await project();
+    await rejects(
+      core.add(ctx, { type: 'nope' as never, title: 't', body: 'b' }),
+      'INVALID_ARGUMENT',
     );
-  assert.deepEqual(recall(), expected);
-  assert.deepEqual(
-    execute("recall", { project_root: root, file_type: [".docx"] }).data
-      .entries,
-    [],
-  );
-  init(root);
-  assert.deepEqual(recall(), expected);
+    await rejects(
+      core.add(ctx, { type: 'task', title: 'multi\nline', body: 'b' }),
+      'INVALID_ARGUMENT',
+    );
+    await rejects(
+      core.add(ctx, { type: 'task', title: 't', body: 'b', scope: { bogus: ['x'] } as never }),
+      'INVALID_ARGUMENT',
+    );
+    await rejects(
+      core.add(ctx, { type: 'task', title: 't', body: 'b', request_id: 'bad id!' }),
+      'INVALID_ARGUMENT',
+    );
+    await rejects(() => core.get(ctx, { id: '../../etc/passwd' }), 'INVALID_ARGUMENT');
+    await rejects(() => core.get(ctx, { id: 'dec_aaaaaaaaaa' }), 'NOT_FOUND');
+  });
+
+  it('edit needs a matching content hash (checked inside the lock) and keeps unknown frontmatter', async () => {
+    const ctx = await project();
+    const r = await core.add(ctx, { type: 'knowledge', title: 'K', body: 'one' });
+    const path = join(ctx.root, '.mwf/memory/knowledge', `${r.id}.md`);
+    writeFileSync(path, readFileSync(path, 'utf8').replace('\n---\n', '\nowner: me\n---\n'));
+    const fresh = core.get(ctx, { id: r.id });
+    await rejects(
+      core.edit(ctx, { id: r.id, expected_hash: r.hash, body: 'two' }),
+      'HASH_MISMATCH',
+    );
+    const ok = await core.edit(ctx, {
+      id: r.id,
+      expected_hash: fresh.hash,
+      body: 'two',
+      status: 'done',
+    });
+    assert.equal(ok.changed, true);
+    const after = core.get(ctx, { id: r.id });
+    assert.equal(after.body, 'two');
+    assert.equal(after.status, 'done');
+    assert.match(readFileSync(path, 'utf8'), /owner: me/);
+    const noop = await core.edit(ctx, { id: r.id, expected_hash: after.hash, body: 'two' });
+    assert.equal(noop.changed, false);
+    await rejects(core.edit(ctx, { id: r.id, body: 'x' } as never), 'INVALID_ARGUMENT');
+  });
+
+  it('flags similar active records on add', async () => {
+    const ctx = await project();
+    const a = await core.add(ctx, { type: 'preference', title: 'Use  Tabs', body: 'a' });
+    const b = await core.add(ctx, { type: 'preference', title: 'use tabs', body: 'b' });
+    assert.deepEqual(b.similar, [a.id]);
+  });
+
+  it('hand-edited files win: recall reflects the file, not a stale index', async () => {
+    const ctx = await project();
+    const r = await core.add(ctx, {
+      type: 'knowledge',
+      title: 'Edited by hand',
+      body: 'original text alpha',
+    });
+    const path = join(ctx.root, '.mwf/memory/knowledge', `${r.id}.md`);
+    writeFileSync(
+      path,
+      readFileSync(path, 'utf8').replace('original text alpha', 'rewritten beta gamma'),
+    );
+    const hit = await core.recall(ctx, { query: 'beta gamma' });
+    assert.equal(hit.hits[0]?.id, r.id);
+    const miss = await core.recall(ctx, { query: 'alpha' });
+    assert.equal(miss.hits.length, 0);
+    assert.equal((await core.status(ctx)).index.in_sync, true);
+  });
 });
 
-test("0.1 project: UNSUPPORTED_LEGACY_INSTALL on mutation, migrate, attach and doctor; nothing changes", (t) => {
-  const root = legacyProject(t);
-  const snap = () =>
-    Object.fromEntries(
-      (fs.readdirSync(root, { recursive: true }) as string[])
-        .filter(
-          (f) =>
-            fs.statSync(path.join(root, f)).isFile() &&
-            !f.startsWith(".mwf/local/runtime.sqlite"),
-        )
-        .map((f) => [f, fs.readFileSync(path.join(root, f), "utf8")]),
+describe('recall', () => {
+  it('searches English and CJK text, active by default, include-all on request', async () => {
+    const ctx = await project();
+    const a = await core.add(ctx, {
+      type: 'decision',
+      title: '索引使用 SQLite',
+      body: '全文检索采用 FTS5 trigram 分词',
+    });
+    const b = await core.add(ctx, {
+      type: 'incident',
+      title: 'Lock bug',
+      body: 'stale lock file blocked writers',
+      status: 'done',
+    });
+    assert.equal((await core.recall(ctx, { query: '全文检索' })).hits[0]?.id, a.id);
+    assert.equal((await core.recall(ctx, { query: 'sqlite' })).hits[0]?.id, a.id);
+    assert.equal((await core.recall(ctx, { query: 'stale lock' })).hits.length, 0);
+    const all = await core.recall(ctx, { query: 'stale lock', status: 'all' });
+    assert.equal(all.hits[0]?.id, b.id);
+    assert.equal(
+      (await core.recall(ctx, { query: 'stale lock', status: 'done' })).hits[0]?.id,
+      b.id,
     );
-  const before = snap();
-  assert.equal(
-    execute("status", { project_root: root }).data.runtime_owner,
-    "legacy",
-  );
-  const unsupported = (e: { code?: string; message?: string }) =>
-    e.code === "UNSUPPORTED_LEGACY_INSTALL" && /0\.2\.x/.test(e.message ?? "");
-  assert.throws(() => add(root), unsupported);
-  assert.throws(
-    () => execute("migrate", { project_root: root, apply: true }),
-    unsupported,
-  );
-  assert.throws(
-    () =>
-      execute("migrate", {
-        project_root: root,
-        from: "0.1",
-        apply: true,
-        legacy_stopped: true,
-      }),
-    unsupported,
-  );
-  for (const harness of ["pi", "codex"])
-    assert.throws(
-      () =>
-        lifecycle("attach", {
-          project_root: root,
-          harness,
-          plugin_root: process.cwd(),
-          apply: true,
-        }),
-      unsupported,
-    );
-  const doctor = execute("doctor", { project_root: root });
-  assert.equal(doctor.ok, false);
-  assert.ok(
-    (doctor.data as { errors: string[] }).errors.includes(
-      "UNSUPPORTED_LEGACY_INSTALL",
-    ),
-  );
-  assert.deepEqual(snap(), before);
+    assert.equal((await core.recall(ctx, { query: 'ab' })).hits.length, 0);
+    assert.equal((await core.recall(ctx, { query: '检索' })).hits[0]?.id, a.id); // 2-char term
+  });
+
+  it('filters by scope: unscoped records are general, scoped ones must match', async () => {
+    const ctx = await project();
+    const general = await core.add(ctx, {
+      type: 'preference',
+      title: 'general pref',
+      body: 'always applies',
+    });
+    const core1 = await core.add(ctx, {
+      type: 'preference',
+      title: 'core pref',
+      body: 'core only',
+      scope: { paths: ['src/core/'] },
+    });
+    const cli = await core.add(ctx, {
+      type: 'preference',
+      title: 'cli pref',
+      body: 'cli only',
+      scope: { paths: ['src/cli/**'], tools: ['mwf'] },
+    });
+    const ids = (r: core.RecallResult): string[] => r.hits.map((h) => h.id);
+    const forCore = await core.recall(ctx, { scope: { paths: ['src/core/lock.ts'] } });
+    assert.deepEqual(ids(forCore), [core1.id, general.id]); // scoped match ranks first
+    const forCli = await core.recall(ctx, { scope: { paths: ['src/cli/a/b.ts'], tools: ['MWF'] } });
+    assert.deepEqual(new Set(ids(forCli)), new Set([cli.id, general.id]));
+    // a record is excluded only when the query supplies a dimension it constrains and nothing matches
+    const none = await core.recall(ctx, { scope: { tools: ['git'] } });
+    assert.deepEqual(new Set(ids(none)), new Set([core1.id, general.id]));
+  });
+
+  it('is bounded by limit and max_chars', async () => {
+    const ctx = await project();
+    for (let i = 0; i < 12; i++)
+      await core.add(ctx, {
+        type: 'knowledge',
+        title: `note ${i}`,
+        body: `common keyword ${'x'.repeat(300)}`,
+      });
+    const limited = await core.recall(ctx, { query: 'common keyword', limit: 5 });
+    assert.equal(limited.hits.length, 5);
+    assert.equal(limited.truncated, true);
+    assert.equal(limited.total_matched, 12);
+    const small = await core.recall(ctx, { query: 'common keyword', limit: 50, max_chars: 600 });
+    assert.ok(small.hits.length >= 1 && small.hits.length < 12);
+    assert.equal(small.truncated, true);
+    assert.ok(small.hits.every((h) => h.snippet.length <= 160));
+    await rejects(core.recall(ctx, { limit: 1000 }), 'INVALID_ARGUMENT');
+  });
+
+  it('reads handoffs by task', async () => {
+    const ctx = await project();
+    await core.handoff(ctx, {
+      action: 'save',
+      task: 'task-a',
+      content: 'done: 1\nnext: 2',
+      summary: 'one liner',
+    });
+    const r = await core.recall(ctx, { task: 'task-a' });
+    assert.equal(r.handoff?.version, 1);
+    assert.match(r.handoff?.body ?? '', /next: 2/);
+    await rejects(core.recall(ctx, { task: 'missing' }), 'NOT_FOUND');
+    await rejects(core.recall(ctx, { task: '../x' }), 'INVALID_ARGUMENT');
+  });
 });
-test("every multi-file commit boundary recovers to one consistent result", (t) => {
-  for (const stage of [
-    "prepared",
-    "applied:0",
-    "applied:1",
-    "applied:2",
-    "before-cleanup",
-  ]) {
-    const root = temp(t);
-    init(root);
-    const args = {
-      project_root: root,
-      type: "preference",
-      title: "Boundary " + stage,
-      summary: "Boundary recovery",
-      body: "## Evidence\nCommit boundary test.",
-      request_id: "boundary",
+
+type Save = core.HandoffSaveResult & { request_id: string; deduped: boolean };
+const save = (ctx: core.Ctx, input: Record<string, unknown>): Promise<Save> =>
+  core.handoff(ctx, { action: 'save', ...input } as never) as Promise<Save>;
+
+describe('handoff', () => {
+  it('saves with version check; conflicts append 「并行更新」 and never overwrite', async () => {
+    const ctx = await project();
+    const v1 = await save(ctx, { task: 't1', content: 'first body', summary: 's' });
+    assert.equal(v1.version, 1);
+    assert.equal(v1.conflict, false);
+    const v2 = await save(ctx, { task: 't1', content: 'second body', base_version: 1 });
+    assert.equal(v2.version, 2);
+    assert.equal(v2.conflict, false);
+    // a second session still on base 1
+    const v3 = await save(ctx, { task: 't1', content: 'parallel body', base_version: 1 });
+    assert.equal(v3.conflict, true);
+    assert.equal(v3.version, 3);
+    const read = core.readHandoffFile(ctx, 't1');
+    assert.match(read.body, /second body/);
+    assert.match(read.body, /## 并行更新/);
+    assert.match(read.body, /parallel body/);
+    assert.equal(read.summary, 's');
+    // no base_version on an existing handoff is also a conflict (never a blind overwrite)
+    const v4 = await save(ctx, { task: 't1', content: 'blind' });
+    assert.equal(v4.conflict, true);
+    assert.match(core.readHandoffFile(ctx, 't1').body, /parallel body/);
+  });
+
+  it('marks done, and done handoffs leave the default index', async () => {
+    const ctx = await project();
+    await core.handoff(ctx, { action: 'save', task: 'a', content: 'x', summary: 'sa' });
+    await core.handoff(ctx, { action: 'save', task: 'b', content: 'y', summary: 'sb' });
+    const done = await save(ctx, { task: 'a', content: 'x done', base_version: 1, status: 'done' });
+    assert.equal(done.status, 'done');
+    const list = await core.handoff(ctx, { action: 'read' });
+    assert.ok('items' in list);
+    assert.deepEqual(
+      list.items.map((i) => i.task),
+      ['b'],
+    );
+    const all = await core.handoff(ctx, { action: 'read', status: 'all' });
+    assert.ok('items' in all && all.items.length === 2);
+  });
+
+  it('rejects unsafe task names', async () => {
+    const ctx = await project();
+    for (const task of ['../evil', 'a/b', '.hidden', '', 'x'.repeat(81)]) {
+      await rejects(core.handoff(ctx, { action: 'save', task, content: 'c' }), 'INVALID_ARGUMENT');
+    }
+    await core.handoff(ctx, { action: 'save', task: '修复-bug_1.2', content: 'ok' });
+  });
+});
+
+describe('bootstrap', () => {
+  it('lists memory index + open handoff index; full text only when exactly one is open', async () => {
+    const ctx = await project();
+    await core.add(ctx, { type: 'decision', title: 'D1', body: 'b' });
+    await core.add(ctx, { type: 'preference', title: 'P1', body: 'b' });
+    let b = await core.bootstrap(ctx);
+    assert.equal(b.memory.counts.decision, 1);
+    assert.equal(b.memory.entries.length, 2);
+    assert.deepEqual(b.handoffs.open, []);
+    assert.equal(b.handoffs.full, null);
+    await core.handoff(ctx, {
+      action: 'save',
+      task: 'one',
+      content: 'full text here',
+      summary: 'wip',
+    });
+    b = await core.bootstrap(ctx);
+    assert.equal(b.handoffs.open.length, 1);
+    assert.match(b.handoffs.full?.body ?? '', /full text here/);
+    await core.handoff(ctx, { action: 'save', task: 'two', content: 'other' });
+    b = await core.bootstrap(ctx);
+    assert.equal(b.handoffs.open.length, 2);
+    assert.equal(b.handoffs.full, null);
+    assert.ok(b.handoffs.open.every((h) => h.updated && 'summary' in h));
+    const small = await core.bootstrap(ctx, { max_entries: 1 });
+    assert.equal(small.memory.truncated, true);
+  });
+});
+
+describe('inbox', () => {
+  it('propose appends to inbox.md; accept turns an entry into a record; discard needs preview/confirm', async () => {
+    const ctx = await project();
+    const p1 = await core.propose(ctx, { text: 'maybe prefer pnpm?', source: 'agent' });
+    const p2 = await core.propose(ctx, { text: 'line one\n## ib_aaaaaaaaaa | x | y\nline three' });
+    assert.equal(p2.inbox_entries, 2);
+    const list = await core.inbox(ctx);
+    assert.ok('entries' in list);
+    assert.equal(list.total, 2);
+    assert.match(list.entries[1]?.text ?? '', /line three/);
+
+    const acc = await core.inbox(ctx, {
+      action: 'accept',
+      entry_id: p1.entry_id,
+      type: 'preference',
+      title: 'Prefer pnpm',
+    });
+    assert.ok('id' in acc);
+    assert.equal(core.get(ctx, { id: acc.id }).body, 'maybe prefer pnpm?');
+    assert.equal(((await core.inbox(ctx)) as { total: number }).total, 1);
+
+    const pre = (await core.inbox(ctx, {
+      action: 'discard',
+      entry_ids: [p2.entry_id],
+    })) as core.Preview<unknown>;
+    assert.equal(pre.preview, true);
+    assert.equal(((await core.inbox(ctx)) as { total: number }).total, 1);
+    await core.inbox(ctx, {
+      action: 'discard',
+      entry_ids: [p2.entry_id],
+      confirm: true,
+      preview_token: pre.preview_token,
+    });
+    assert.equal(((await core.inbox(ctx)) as { total: number }).total, 0);
+  });
+});
+
+describe('destructive operations: preview_token', () => {
+  it('forget: preview by default; confirm needs a matching token; recomputed inside the lock', async () => {
+    const ctx = await project();
+    const r = await core.add(ctx, { type: 'incident', title: 'Oops', body: 'details' });
+    const pre = (await core.forget(ctx, { ids: [r.id] })) as core.Preview<{ id: string }>;
+    assert.equal(pre.preview, true);
+    assert.deepEqual(
+      pre.affected.map((a) => a.id),
+      [r.id],
+    );
+    assert.equal(core.get(ctx, { id: r.id }).id, r.id); // preview changed nothing
+
+    await rejects(
+      core.forget(ctx, { ids: [r.id], confirm: true }) as Promise<unknown>,
+      'CONFIRM_REQUIRES_TOKEN',
+    );
+    await rejects(
+      core.forget(ctx, {
+        ids: [r.id],
+        confirm: true,
+        preview_token: 'deadbeef',
+      }) as Promise<unknown>,
+      'PREVIEW_MISMATCH',
+    );
+    assert.equal(core.get(ctx, { id: r.id }).id, r.id);
+
+    // content changes between preview and confirm -> token no longer matches
+    const cur = core.get(ctx, { id: r.id });
+    await core.edit(ctx, { id: r.id, expected_hash: cur.hash, body: 'changed after preview' });
+    await rejects(
+      core.forget(ctx, {
+        ids: [r.id],
+        confirm: true,
+        preview_token: pre.preview_token,
+      }) as Promise<unknown>,
+      'PREVIEW_MISMATCH',
+    );
+    assert.equal(core.get(ctx, { id: r.id }).body, 'changed after preview');
+
+    const pre2 = (await core.forget(ctx, { ids: [r.id] })) as core.Preview<unknown>;
+    assert.notEqual(pre2.preview_token, pre.preview_token);
+    const done = await core.forget(ctx, {
+      ids: [r.id],
+      confirm: true,
+      preview_token: pre2.preview_token,
+    });
+    assert.equal((done as { preview: boolean }).preview, false);
+    await rejects(() => core.get(ctx, { id: r.id }), 'NOT_FOUND');
+    const trash = (await core.restore(ctx)) as { entries: Array<{ id: string }> };
+    assert.deepEqual(
+      trash.entries.map((e) => e.id),
+      [r.id],
+    );
+  });
+
+  it('forget a record that does not exist fails; the token of another operation is rejected', async () => {
+    const ctx = await project();
+    const a = await core.add(ctx, { type: 'task', title: 'A', body: 'a' });
+    const b = await core.add(ctx, { type: 'task', title: 'B', body: 'b' });
+    await rejects(core.forget(ctx, { ids: ['task_aaaaaaaaaa'] }) as Promise<unknown>, 'NOT_FOUND');
+    const preA = (await core.forget(ctx, { ids: [a.id] })) as core.Preview<unknown>;
+    await rejects(
+      core.forget(ctx, {
+        ids: [b.id],
+        confirm: true,
+        preview_token: preA.preview_token,
+      }) as Promise<unknown>,
+      'PREVIEW_MISMATCH',
+    );
+  });
+
+  it('restore is non-destructive: lists, restores, and reports a conflict without overwriting', async () => {
+    const ctx = await project();
+    const r = await core.add(ctx, { type: 'knowledge', title: 'Keep me', body: 'original' });
+    const pre = (await core.forget(ctx, { ids: [r.id] })) as core.Preview<unknown>;
+    await core.forget(ctx, { ids: [r.id], confirm: true, preview_token: pre.preview_token });
+    // someone recreates the path before the restore
+    const path = join(ctx.root, '.mwf/memory/knowledge', `${r.id}.md`);
+    writeFileSync(
+      path,
+      '---\nid: ' +
+        r.id +
+        '\ntype: knowledge\ntitle: "squatter"\nstatus: active\nscope: {}\ncreated: x\nupdated: x\n---\n\nsquatter\n',
+    );
+    const res = (await core.restore(ctx, { id: r.id })) as {
+      restored: boolean;
+      conflict?: { existing_hash: string };
     };
-    assert.throws(
-      () =>
-        execute("add", args, {
-          fault(actual) {
-            if (actual === stage) throw Error("fault " + stage);
-          },
-        }),
-      /fault/,
+    assert.equal(res.restored, false);
+    assert.ok(res.conflict);
+    assert.match(readFileSync(path, 'utf8'), /squatter/);
+    assert.equal(((await core.restore(ctx)) as { entries: unknown[] }).entries.length, 1); // still in trash
+    // free the path and restore for real
+    const { rmSync } = await import('node:fs');
+    rmSync(path);
+    const ok = (await core.restore(ctx, { id: r.id })) as { restored: boolean };
+    assert.equal(ok.restored, true);
+    assert.equal(core.get(ctx, { id: r.id }).body, 'original');
+    assert.equal(((await core.restore(ctx)) as { entries: unknown[] }).entries.length, 0);
+    await rejects(core.restore(ctx, { id: r.id }), 'NOT_FOUND');
+  });
+
+  it('trash expiry: bootstrap note, doctor lists near/expired, purge previews then deletes only on a matching token', async () => {
+    let t = Date.parse('2026-01-01T00:00:00Z');
+    const ctx = await project('track', { now: () => t });
+    const a = await core.add(ctx, { type: 'incident', title: 'Old', body: 'x' });
+    const pre = (await core.forget(ctx, { ids: [a.id] })) as core.Preview<unknown>;
+    await core.forget(ctx, { ids: [a.id], confirm: true, preview_token: pre.preview_token });
+    t += 10 * DAY;
+    const b = await core.add(ctx, { type: 'incident', title: 'Newer', body: 'y' });
+    const pre2 = (await core.forget(ctx, { ids: [b.id] })) as core.Preview<unknown>;
+    await core.forget(ctx, { ids: [b.id], confirm: true, preview_token: pre2.preview_token });
+
+    assert.equal((await core.bootstrap(ctx)).trash.note, null);
+    t = Date.parse('2026-01-01T00:00:00Z') + 26 * DAY; // a: 26 days (near)
+    let boot = await core.bootstrap(ctx);
+    assert.equal(boot.trash.near, 1);
+    assert.match(boot.trash.note ?? '', /临近过期/);
+    t = Date.parse('2026-01-01T00:00:00Z') + 31 * DAY; // a: 31 days (expired), b: 21
+    boot = await core.bootstrap(ctx);
+    assert.equal(boot.trash.expired, 1);
+    assert.match(boot.trash.note ?? '', /已过期/);
+    const doc = await core.doctor(ctx);
+    assert.ok(doc.issues.some((i) => i.code === 'trash_expired'));
+    assert.deepEqual(
+      doc.trash.items.map((i) => i.state),
+      ['expired'],
     );
-    const recovered = execute("add", args);
-    assert.equal(recovered.replayed, true, stage);
-    assert.equal(execute("doctor", { project_root: root }).ok, true, stage);
+
+    const prev = (await core.purge(ctx)) as core.Preview<{ id: string }>;
+    assert.deepEqual(
+      prev.affected.map((x) => x.id),
+      [a.id],
+    ); // only the expired one
+    await rejects(core.purge(ctx, { confirm: true }) as Promise<unknown>, 'CONFIRM_REQUIRES_TOKEN');
+    await rejects(
+      core.purge(ctx, { confirm: true, preview_token: 'nope' }) as Promise<unknown>,
+      'PREVIEW_MISMATCH',
+    );
+    assert.equal(((await core.restore(ctx)) as { entries: unknown[] }).entries.length, 2);
+    await core.purge(ctx, { confirm: true, preview_token: prev.preview_token });
+    const left = (await core.restore(ctx)) as { entries: Array<{ id: string }> };
+    assert.deepEqual(
+      left.entries.map((e) => e.id),
+      [b.id],
+    );
+  });
+
+  it('compact merges exact duplicates into the oldest (scopes unioned), previews first', async () => {
+    let t = Date.parse('2026-02-01T00:00:00Z');
+    const ctx = await project('track', { now: () => (t += 1000) });
+    const k = await core.add(ctx, {
+      type: 'knowledge',
+      title: 'Same',
+      body: 'identical body',
+      scope: { paths: ['a/'] },
+    });
+    const d = await core.add(ctx, {
+      type: 'knowledge',
+      title: 'same',
+      body: 'identical   body',
+      scope: { paths: ['b/'] },
+    });
+    const other = await core.add(ctx, { type: 'knowledge', title: 'Same', body: 'different body' });
+    const pre = (await core.compact(ctx)) as core.Preview<{ keep: string; merge: string[] }>;
+    assert.equal(pre.affected.length, 1);
+    assert.equal(pre.affected[0]?.keep, k.id);
+    assert.deepEqual(pre.affected[0]?.merge, [d.id]);
+    assert.equal(core.get(ctx, { id: d.id }).id, d.id);
+    await rejects(
+      core.compact(ctx, { confirm: true, preview_token: 'x' }) as Promise<unknown>,
+      'PREVIEW_MISMATCH',
+    );
+    await core.compact(ctx, { confirm: true, preview_token: pre.preview_token });
+    assert.deepEqual(core.get(ctx, { id: k.id }).scope, { paths: ['a/', 'b/'] });
+    await rejects(() => core.get(ctx, { id: d.id }), 'NOT_FOUND');
+    assert.equal(core.get(ctx, { id: other.id }).id, other.id);
+    const trash = (await core.restore(ctx)) as { entries: Array<{ id: string; reason: string }> };
+    assert.deepEqual(
+      trash.entries.map((e) => e.id),
+      [d.id],
+    );
+    assert.match(trash.entries[0]?.reason ?? '', /merged into/);
+  });
+});
+
+describe('reindex, doctor and the index as a derived artefact', () => {
+  async function populate(ctx: core.Ctx): Promise<void> {
+    const a = await core.add(ctx, {
+      type: 'decision',
+      title: 'D',
+      body: 'decision body',
+      scope: { phases: ['design'] },
+    });
+    const b = await core.add(ctx, { type: 'preference', title: '偏好', body: '中文正文 内容' });
+    await core.add(ctx, { type: 'incident', title: 'I', body: 'incident' });
+    await core.handoff(ctx, {
+      action: 'save',
+      task: 'ho',
+      content: 'handoff text',
+      summary: 'sum',
+    });
+    await core.edit(ctx, { id: a.id, expected_hash: a.hash, status: 'done' });
+    const pre = (await core.forget(ctx, { ids: [b.id] })) as core.Preview<unknown>;
+    await core.forget(ctx, { ids: [b.id], confirm: true, preview_token: pre.preview_token });
+    await core.propose(ctx, { text: 'inbox note' });
   }
+
+  function dump(ctx: core.Ctx): unknown {
+    const db = openIndexReadOnly(layoutOf(ctx.root));
+    assert.ok(db);
+    try {
+      return dumpIndex(db);
+    } finally {
+      db.close();
+    }
+  }
+
+  it('incrementally maintained index equals a rebuilt one; index.md is deterministic', async () => {
+    const ctx = await project();
+    await populate(ctx);
+    const incremental = JSON.stringify(dump(ctx));
+    await core.reindex(ctx);
+    const rebuilt = JSON.stringify(dump(ctx));
+    assert.equal(rebuilt, incremental);
+    const md1 = readFileSync(join(ctx.root, '.mwf/index.md'), 'utf8');
+    await core.reindex(ctx);
+    assert.equal(readFileSync(join(ctx.root, '.mwf/index.md'), 'utf8'), md1);
+    assert.match(md1, /## Handoff/);
+    // delete the index entirely: reindex (and even plain reads) rebuild from the records
+    const { rmSync } = await import('node:fs');
+    rmSync(join(ctx.root, '.mwf/index.db'));
+    for (const f of readdirSync(join(ctx.root, '.mwf')).filter((f) => f.startsWith('index.db-')))
+      rmSync(join(ctx.root, '.mwf', f));
+    assert.equal(
+      (await core.recall(ctx, { query: 'handoff text', include_handoffs: true })).hits.length,
+      1,
+    );
+    assert.equal(JSON.stringify(dump(ctx)), incremental);
+  });
+
+  it('a corrupt (e.g. merge-conflicted) index.db is quarantined and rebuilt from records', async () => {
+    const ctx = await project();
+    await populate(ctx);
+    const before = JSON.stringify(dump(ctx));
+    writeFileSync(
+      join(ctx.root, '.mwf/index.db'),
+      '<<<<<<< ours\nnot a database\n=======\n>>>>>>> theirs\n',
+    );
+    for (const f of readdirSync(join(ctx.root, '.mwf')).filter((f) => f.startsWith('index.db-'))) {
+      (await import('node:fs')).rmSync(join(ctx.root, '.mwf', f));
+    }
+    const d = await core.doctor(ctx);
+    assert.ok(d.issues.some((i) => i.code === 'index_unusable'));
+    await core.reindex(ctx);
+    assert.equal(JSON.stringify(dump(ctx)), before);
+    assert.ok(readdirSync(join(ctx.root, '.mwf')).some((f) => f.startsWith('index.db-corrupt-')));
+    assert.equal((await core.doctor(ctx)).ok, true);
+  });
+
+  it('doctor reports temp leftovers, pending intents, mismatches and invalid records (read-only)', async () => {
+    const ctx = await project();
+    const r = await core.add(ctx, { type: 'knowledge', title: 'K', body: 'b' });
+    const mwf = join(ctx.root, '.mwf');
+    writeFileSync(join(mwf, 'memory/knowledge/.tmp-123-abcd-x.md'), 'partial');
+    writeFileSync(join(mwf, 'memory/knowledge/kn_bbbbbbbbbb.md'), 'not a record');
+    const file = join(mwf, 'memory/knowledge', `${r.id}.md`);
+    writeFileSync(file, readFileSync(file, 'utf8') + '\nhand edit\n');
+    const d = await core.doctor(ctx);
+    const codes = d.issues.map((i) => i.code);
+    assert.ok(codes.includes('temp_leftover'));
+    assert.ok(codes.includes('invalid_record'));
+    assert.ok(codes.includes('index_hash_mismatch'));
+    assert.equal(d.ok, false);
+    assert.equal(d.temp_files.length, 1);
+    assert.ok(existsSync(join(mwf, 'memory/knowledge/.tmp-123-abcd-x.md'))); // doctor never repairs
+    // the next lock holder cleans the temp file and refreshes the index
+    await core.add(ctx, { type: 'knowledge', title: 'K2', body: 'b2' });
+    assert.equal(existsSync(join(mwf, 'memory/knowledge/.tmp-123-abcd-x.md')), false);
+    const after = await core.doctor(ctx);
+    assert.equal(after.index.mismatches, 0);
+  });
 });
 
-test("retrying a forgotten add cannot resurrect it or expose its old title", (t) => {
-  const root = temp(t);
-  init(root);
-  const args = { request_id: "remember-once", title: "Private subject name" };
-  const first = add(root, args);
-  execute("forget", {
-    project_root: root,
-    id: first.data.id,
-    apply: true,
-    request_id: "forget-once",
+describe('host confirmation and session mapping', () => {
+  it('confirmHost writes host.local.toml (gitignored name) once; sessions live in state.toml', async () => {
+    const ctx = await project();
+    const a = await core.confirmHost(ctx, { host: 'codex', channel: 'hook' });
+    assert.equal(a.changed, true);
+    assert.equal((await core.confirmHost(ctx, { host: 'codex', channel: 'hook' })).changed, false);
+    assert.match(readFileSync(join(ctx.root, '.mwf/host.local.toml'), 'utf8'), /\[hosts\.codex\]/);
+    assert.deepEqual(Object.keys((await core.status(ctx)).host), ['codex']);
+    await core.setSession(ctx, {
+      session_id: 's1',
+      handoff: 'task-x',
+      injected: ['dec_aaaaaaaaaa'],
+    });
+    assert.deepEqual(core.getSession(ctx, 's1')?.injected, ['dec_aaaaaaaaaa']);
+    assert.match(readFileSync(join(ctx.root, '.mwf/state.toml'), 'utf8'), /\[sessions\.s1\]/);
   });
-  const replay = rawExecute("add", {
-    project_root: root,
-    type: "preference",
-    summary: "Keep names clear",
-    body: "## Guidance\n\nUse clear names.",
-    ...args,
-  });
-  assert.equal(replay.replayed, true);
-  assert.equal(replay.ok, false);
-  assert.equal(
-    z.object({ forgotten: z.literal(true) }).parse(replay.data).forgotten,
-    true,
-  );
-  assert.doesNotMatch(JSON.stringify(replay), /Private subject name/);
-  assert.equal(fs.existsSync(path.join(root, first.data.path)), false);
-});
-
-test("recovery removes orphaned atomic-write temp files before forgetting", (t) => {
-  const root = temp(t);
-  init(root);
-  const a = add(root);
-  const orphan = a.data.path + ".mwf-tmp-12345678-1234-1234-1234-123456789abc";
-  fs.writeFileSync(path.join(root, orphan), "Hidden copy of body");
-  execute("forget", { project_root: root, id: a.data.id, apply: true });
-  assert.equal(fs.existsSync(path.join(root, orphan)), false);
 });

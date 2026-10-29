@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.0.0-alpha.0 (unreleased, `v1` integration branch)
+
+### 破坏性变更 / Breaking
+
+- 从零重写，不复用也不迁移 0.x 代码、`.mwf/` 数据或集成回执。新的分层目录为 `src/core`、`src/cli`、`src/mcp`、`src/hooks`；本阶段只实现 `src/core`（其余为占位）。
+- Rewritten from scratch: no 0.x code, data or receipt migration. Layered layout `src/core`, `src/cli`, `src/mcp`, `src/hooks`; only `core` is implemented so far.
+
+### 新增 / Added
+
+- `src/core`：`.mwf/` 布局（config.toml、protocol.md、index.md、inbox.md、handoff/、memory/<五类>/、index.db、state.toml、host.local.toml、trash/）、init（git 模式 track/local）、bootstrap、recall、get、add、propose、edit（内容哈希前置条件）、handoff read/save（版本检查，冲突追加「并行更新」段）、status、doctor、inbox、compact、reindex、forget/restore/purge（30 天回收站）。
+- 并发与崩溃安全：同目录临时文件 + fsync + rename + fsync 目录；O_EXCL 锁（pid/host/time，死 pid 或超过 30 秒回收）；request_id 幂等（intent → 原子写 → 登记 dedup → 删 intent，下次加锁恢复遗留 intent）；forget/purge/compact 预览 + preview_token 确认。
+- Tests: multi-process writes, kill -9 at every failpoint, dedup, reindex equivalence, lock timeout / stale reclaim, reader-during-write, preview_token, gitignore modes.
+
 ## 0.4.0
 
 ### 新增
