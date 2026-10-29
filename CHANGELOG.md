@@ -10,6 +10,7 @@
 ### 新增 / Added
 
 - 设计决定落地（core 跟进）：① request_id 去重表移到机器本地的 `.mwf/dedup.local.toml`（被 `.mwf/*.local.*` 忽略，不入库；损坏时视为空并由 doctor 警告），`state.toml` 只保留 session 映射；② `runWrite` 内置秘密扫描，写入新引入疑似秘密（API key、令牌、私钥、JWT、带口令 URL、`key = 随机值`）时以 `SECRET_DETECTED` 拒绝，不落任何文件，错误只带规则/路径/行号和打码样本；只统计新引入的匹配，已有内容仍可 forget/purge/编辑其他字段；③ `inbox discard` 与 forget/compact/purge 一致，需 preview_token + confirm（`edit` 仍非破坏性，仅哈希前置条件）；④ 每次改动记录/handoff 的写入都在同一把锁、同一 intent（先写 index.md）内更新 `index.md`。
+- 恢复修复：index.md 是每个计划的第一个写入，崩溃后被丢弃的 intent 可能让它列出从未落盘的记录；现在恢复（任何非 none 的 intent 路径，含损坏的 intent）会在删除 intent 之前按磁盘上的记录重建 index.md，并且读操作在遇到“写入者已死”的遗留 intent 时不再走免锁快路径，而是先恢复；活着的写入者的 intent 不受影响。protocol.md 注明秘密扫描基于模式、并不穷尽（如 `DB_PASS=...`）。
 - Decisions landed (core follow-up): dedup table moved to machine-local `.mwf/dedup.local.toml`; secret scanning inside `runWrite` (`SECRET_DETECTED`, only newly introduced matches); `inbox discard` needs preview_token + confirm; `index.md` is refreshed by every record/handoff write inside the same lock/intent/recovery flow.
 
 - `src/core`：`.mwf/` 布局（config.toml、protocol.md、index.md、inbox.md、handoff/、memory/<五类>/、index.db、state.toml、host.local.toml、trash/）、init（git 模式 track/local）、bootstrap、recall、get、add、propose、edit（内容哈希前置条件）、handoff read/save（版本检查，冲突追加「并行更新」段）、status、doctor、inbox、compact、reindex、forget/restore/purge（30 天回收站）。

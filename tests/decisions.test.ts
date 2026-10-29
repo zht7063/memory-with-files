@@ -195,6 +195,29 @@ describe('secret scanning (inside runWrite)', () => {
     assert.equal(pp.preview, true);
   });
 
+  it('restore of a record that contains a secret stays rejected (nothing is restored)', async () => {
+    const ctx = await project();
+    const secret = SECRETS['github-token'] as string;
+    const rec = await core.add(ctx, { type: 'incident', title: 'Leak', body: 'clean body' });
+    const path = mwfFile(ctx, `memory/incidents/${rec.id}.md`);
+    writeFileSync(path, readFileSync(path, 'utf8').replace('clean body', `leaked ${secret}`));
+    const pre = (await core.forget(ctx, { ids: [rec.id] })) as core.Preview<unknown>;
+    await core.forget(ctx, { ids: [rec.id], confirm: true, preview_token: pre.preview_token });
+    await rejects(core.restore(ctx, { id: rec.id }), 'SECRET_DETECTED');
+    assert.equal(existsSync(path), false);
+    assert.equal(readdirSync(mwfFile(ctx, 'trash')).filter((f) => f.endsWith('.md')).length, 1);
+  });
+
+  it('the scan is pattern-based, not exhaustive: DB_PASS=... (no key/secret/token-style name) is not caught', async () => {
+    const ctx = await project();
+    const r = await core.add(ctx, {
+      type: 'knowledge',
+      title: 'Not caught',
+      body: j('DB_PASS=', MIXED, 'x9'),
+    });
+    assert.ok(r.id);
+  });
+
   it('a rejected write registers nothing: the same request_id can be retried with clean content', async () => {
     const ctx = await project();
     await rejects(
@@ -407,11 +430,166 @@ describe('index.md is updated by every write', () => {
   });
 });
 
+describe('index.md after a crash with NO retry (recovery repairs it)', () => {
+  const FAILPOINTS = [
+    'lock:created',
+    'lock:written',
+    'lock:held',
+    'atomic:temp-synced',
+    'atomic:renamed',
+    'write:intent',
+    'write:target',
+    'write:indexed',
+    'write:dedup',
+    'write:done',
+  ];
+  const REC = { waitMs: 5000, lockStaleMs: 300 };
+  const fresh = (ctx: core.Ctx): string => buildIndexMd(loadAll(layoutOf(ctx.root)));
+
+  interface Case {
+    name: string;
+    setup?: (ctx: core.Ctx) => Promise<void>;
+    call: (ctx: core.Ctx) => Promise<{ fn: string; input: unknown }>;
+  }
+  const cases: Case[] = [
+    {
+      name: 'add',
+      call: async () => ({
+        fn: 'add',
+        input: { type: 'decision', title: 'Crash add', body: 'b', request_id: 'r-add' },
+      }),
+    },
+    {
+      name: 'edit (title change)',
+      setup: async (ctx) => {
+        await core.add(ctx, { type: 'task', title: 'Before', body: 'b', request_id: 'seed' });
+      },
+      call: async (ctx) => {
+        const hit = (await core.recall(ctx, { query: 'Before', status: 'all' })).hits[0] as {
+          id: string;
+        };
+        const rec = core.get(ctx, { id: hit.id });
+        return {
+          fn: 'edit',
+          input: { id: rec.id, expected_hash: rec.hash, title: 'After', request_id: 'r-edit' },
+        };
+      },
+    },
+    {
+      name: 'handoff save',
+      call: async () => ({
+        fn: 'handoff',
+        input: {
+          action: 'save',
+          task: 'crash-task',
+          content: 'c',
+          summary: 'crash summary',
+          request_id: 'r-ho',
+        },
+      }),
+    },
+    {
+      name: 'forget (2 records: trash + index + removals)',
+      setup: async (ctx) => {
+        await core.add(ctx, { type: 'task', title: 'Gone one', body: 'a', request_id: 's1' });
+        await core.add(ctx, { type: 'task', title: 'Gone two', body: 'b', request_id: 's2' });
+      },
+      call: async (ctx) => {
+        const ids = (await core.recall(ctx, { query: 'Gone', status: 'all' })).hits.map(
+          (h) => (h as { id: string }).id,
+        );
+        assert.equal(ids.length, 2);
+        const pre = (await core.forget(ctx, { ids })) as core.Preview<unknown>;
+        return {
+          fn: 'forget',
+          input: { ids, confirm: true, preview_token: pre.preview_token, request_id: 'r-fg' },
+        };
+      },
+    },
+  ];
+
+  for (const c of cases) {
+    for (const fp of FAILPOINTS) {
+      it(`${c.name} @ ${fp}: a plain read repairs index.md; doctor is clean`, async () => {
+        let hits = 0;
+        for (let n = 1; n <= 12; n++) {
+          const ctx = await project();
+          await c.setup?.(ctx);
+          const call = await c.call(ctx);
+          const killed = await runChild(ctx, [call], { MWF_FAILPOINT: `${fp}@${n}` });
+          if (killed.signal !== 'SIGKILL') {
+            assert.equal(killed.code, 0, killed.stderr);
+            break;
+          }
+          hits++;
+          // NO retry. A plain read (any later process) must leave index.md describing exactly the
+          // records on disk, whether the crashed write was rolled forward or discarded.
+          const rctx = { ...ctx, ...REC };
+          await core.recall(rctx, { query: 'x' });
+          assert.equal(
+            read(ctx, 'index.md'),
+            fresh(ctx),
+            `${fp}@${n}: index.md == records on disk`,
+          );
+          assert.equal(existsSync(mwfFile(ctx, 'mwf.local.intent.json')), false, `${fp}@${n}`);
+          const issues = (await core.doctor(rctx)).issues.filter(
+            (i) => i.code === 'index_md_stale' || i.level === 'error',
+          );
+          assert.deepEqual(issues, [], `${fp}@${n}: doctor`);
+        }
+        assert.ok(hits >= 1, `failpoint ${fp} was never reached`);
+      });
+    }
+  }
+
+  it('regression: index.md written, record never landed -> index.md no longer lists it after a read', async () => {
+    const ctx = await project();
+    const call = {
+      fn: 'add',
+      input: { type: 'decision', title: 'Phantom entry', body: 'b', request_id: 'r-ph' },
+    };
+    // index.md is the first target of the plan; the kill at the 2nd atomic rename of the write
+    // happens right after it landed and before the record file does
+    const killed = await runChild(ctx, [call], { MWF_FAILPOINT: 'write:target@1' });
+    assert.equal(killed.signal, 'SIGKILL');
+    assert.match(read(ctx, 'index.md'), /Phantom entry/, 'precondition: index.md ahead of records');
+    assert.equal(loadAll(layoutOf(ctx.root)).records.length, 0);
+    // doctor is read-only: it reports, it does not repair
+    assert.ok(
+      (await core.doctor({ ...ctx, ...REC })).issues.some((i) => i.code === 'index_md_stale'),
+    );
+    await core.recall({ ...ctx, ...REC }, { query: 'x' });
+    assert.doesNotMatch(read(ctx, 'index.md'), /Phantom entry/);
+    assert.equal(read(ctx, 'index.md'), fresh(ctx));
+  });
+
+  it('a live writer is not disturbed: its intent is left alone by readers', async () => {
+    const ctx = await project();
+    const rec = await core.add(ctx, { type: 'task', title: 'Live', body: 'b' });
+    // fake an active writer: live lock held by this very process + an intent
+    const layout = layoutOf(ctx.root);
+    const { acquireLock } = await import('../src/core/lock.ts');
+    const h = await acquireLock(layout, { waitMs: 1000 });
+    writeFileSync(layout.intent, JSON.stringify({ request_id: 'x', targets: [] }));
+    const before = read(ctx, 'index.md');
+    const t0 = Date.now();
+    const res = await core.recall({ ...ctx, waitMs: 100 }, { query: 'Live' });
+    assert.ok(Date.now() - t0 < 1000, 'the read did not wait for the live writer');
+    assert.equal(res.hits.length, 1);
+    assert.equal(read(ctx, 'index.md'), before);
+    assert.equal(existsSync(layout.intent), true, "the live writer's intent was not removed");
+    h.release();
+    assert.ok(rec.id);
+  });
+});
+
 describe('docs and layout', () => {
   it('protocol.md states the secret rule and that inbox discard needs confirmation', async () => {
     const ctx = await project();
     const text = read(ctx, 'protocol.md');
     assert.match(text, /SECRET_DETECTED/);
     assert.match(text, /inbox discard/);
+    assert.match(text, /不穷尽/);
+    assert.match(text, /DB_PASS/);
   });
 });

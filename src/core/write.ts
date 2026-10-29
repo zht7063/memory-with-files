@@ -21,7 +21,7 @@ import {
 import { invalid, MwfError } from './errors.ts';
 import { failpoint } from './failpoint.ts';
 import { atomicWrite, readBytesIfExists, removeDurable, removeTempFiles } from './fsx.ts';
-import { acquireLock, beat } from './lock.ts';
+import { acquireLock, beat, inspectLock } from './lock.ts';
 import { REQUEST_ID_RE, type Layout } from './paths.ts';
 import { buildIndexMd } from './indexmd.ts';
 import { loadAll } from './load.ts';
@@ -111,6 +111,7 @@ function recoverIntent(layout: Layout, now: number): 'none' | 'completed' | 'dis
   const intent = readIntent(layout);
   if (!intent) {
     if (readBytesIfExists(layout.intent) !== null) {
+      repairIndexMd(layout);
       removeDurable(layout.intent);
       return 'discarded';
     }
@@ -131,6 +132,11 @@ function recoverIntent(layout: Layout, now: number): 'none' | 'completed' | 'dis
       }
     }
   }
+  // index.md is written FIRST in every plan, so a discarded (or otherwise interrupted) intent can
+  // leave it describing records that never landed (or missing ones that did). Rebuild it from the
+  // records actually on disk BEFORE the intent is removed: if we crash in here the intent is still
+  // there and the next lock holder simply repeats this.
+  repairIndexMd(layout);
   if (intent.targets.every(matches)) {
     registerDedup(layout, now, intent);
     removeDurable(layout.intent);
@@ -138,6 +144,12 @@ function recoverIntent(layout: Layout, now: number): 'none' | 'completed' | 'dis
   }
   removeDurable(layout.intent);
   return 'discarded';
+}
+
+/** Rewrite index.md from the record files on disk if it differs (no-op when current). */
+function repairIndexMd(layout: Layout): void {
+  const content = buildIndexMd(loadAll(layout));
+  if (readFileText(layout, 'index.md') !== content) atomicWrite(layout.indexMd, content);
 }
 
 export interface LockedSession {
@@ -296,6 +308,12 @@ function planIndexMd(layout: Layout, targets: Target[]): Target | null {
   return readFileText(layout, 'index.md') === content ? null : { path: 'index.md', content };
 }
 
+function pendingDeadIntent(ctx: Ctx, layout: Layout): boolean {
+  if (readBytesIfExists(layout.intent) === null) return false;
+  const lock = inspectLock(layout, { staleMs: staleOf(ctx), now: ctx.now ?? Date.now });
+  return !lock.held || lock.stale;
+}
+
 export interface ReadSession {
   db: DatabaseSync;
   layout: Layout;
@@ -314,7 +332,10 @@ export async function withIndexRead<T>(
 ): Promise<T> {
   const layout = requireInitialized(ctx);
   const warnings: string[] = [];
-  const ro = openIndexReadOnly(layout);
+  // A leftover intent (its writer died: nobody holds the lock) must be recovered, which also repairs
+  // index.md, even when index.db happens to be in step with the files; so skip the lock-free fast
+  // path in that case. A live writer's intent is left alone (its lock is held).
+  const ro = pendingDeadIntent(ctx, layout) ? null : openIndexReadOnly(layout);
   if (ro) {
     let fresh = false;
     try {
