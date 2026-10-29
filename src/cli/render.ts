@@ -8,6 +8,8 @@ import type {
   StatusResult,
 } from '../core/index.ts';
 
+import { shellCommandFor } from './shellcmd.ts';
+
 /** Plain-text renderings for the shell commands (`--json` prints the structured result instead). */
 
 export function renderStatus(s: StatusResult): string {
@@ -124,4 +126,31 @@ export function renderHandoff(
   }
   lines.push(`request_id: ${r.request_id}`);
   return lines.join('\n');
+}
+
+/** forget / purge / compact / inbox: a preview (nothing changed), or what the execution did. */
+export function renderMaintenance(
+  name: string,
+  input: Record<string, unknown>,
+  data: unknown,
+): string {
+  const d = (data ?? {}) as Record<string, unknown>;
+  if (d['preview'] === true) {
+    const affected = Array.isArray(d['affected'])
+      ? (d['affected'] as Array<Record<string, unknown>>)
+      : [];
+    const lines = [
+      `preview of ${String(d['op'] ?? name)}: nothing was changed; ${affected.length} affected`,
+    ];
+    for (const item of affected) {
+      const { hash: _hash, ...rest } = item;
+      lines.push(`  - ${JSON.stringify(rest)}`);
+    }
+    const token = String(d['preview_token'] ?? '');
+    lines.push(`preview_token: ${token}`);
+    const command = shellCommandFor(name, input, token);
+    if (command) lines.push(`to execute: ${command}`);
+    return lines.join('\n');
+  }
+  return JSON.stringify(d, null, 2);
 }

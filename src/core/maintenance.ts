@@ -52,7 +52,7 @@ export interface Preview<A> {
 }
 
 const PREVIEW_NOTE =
-  '仅预览，未改动任何文件。向用户说明数量、标题、类型与原因并获得同意后，带 confirm: true 与 preview_token 重新调用。';
+  '仅预览，未改动任何文件。向用户说明数量、标题、类型与原因并获得同意后，再带 confirm 与 preview_token 执行。';
 
 export function previewToken(op: string, objects: unknown): string {
   return sha256(canonicalJson({ op, objects })).slice(0, 32);

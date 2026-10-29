@@ -5,7 +5,7 @@ import { describe, it } from 'node:test';
 import * as core from '../src/core/index.ts';
 import { dumpIndex, openIndexReadOnly } from '../src/core/db.ts';
 import { layoutOf } from '../src/core/paths.ts';
-import { project, tmpDir } from './helpers/util.ts';
+import { gitRepo, project, tmpDir } from './helpers/util.ts';
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -21,26 +21,26 @@ async function rejects(p: Promise<unknown> | (() => unknown), code: string): Pro
 
 describe('init and git modes', () => {
   it('track mode writes exactly the three .gitignore lines and nothing else outside .mwf/', async () => {
-    const root = tmpDir();
+    const root = gitRepo();
     const res = await core.init({ root }, { git_mode: 'track' });
     assert.equal(res.created, true);
     assert.equal(
       readFileSync(join(root, '.gitignore'), 'utf8'),
       '.mwf/trash/\n.mwf/index.db-*\n.mwf/*.local.*\n',
     );
-    assert.deepEqual(readdirSync(root).sort(), ['.gitignore', '.mwf']);
+    assert.deepEqual(readdirSync(root).sort(), ['.git', '.gitignore', '.mwf']);
     assert.equal(existsSync(join(root, 'AGENTS.md')), false);
   });
 
   it('local mode adds only .mwf/ to .gitignore', async () => {
-    const root = tmpDir();
+    const root = gitRepo();
     await core.init({ root }, { git_mode: 'local' });
     assert.equal(readFileSync(join(root, '.gitignore'), 'utf8'), '.mwf/\n');
-    assert.deepEqual(readdirSync(root).sort(), ['.gitignore', '.mwf']);
+    assert.deepEqual(readdirSync(root).sort(), ['.git', '.gitignore', '.mwf']);
   });
 
   it('preserves existing .gitignore content, appends missing lines, and is idempotent', async () => {
-    const root = tmpDir();
+    const root = gitRepo();
     writeFileSync(join(root, '.gitignore'), 'node_modules/\n.mwf/trash/');
     await core.init({ root }, { git_mode: 'track' });
     assert.equal(
@@ -61,6 +61,48 @@ describe('init and git modes', () => {
   it('refuses to switch git mode after init', async () => {
     const ctx = await project('track');
     await rejects(core.init(ctx, { git_mode: 'local' }), 'GIT_MODE_CONFLICT');
+  });
+
+  describe('init only runs at a git repository root', () => {
+    it('works where .git/ is, and also where .git is a file (worktree / submodule)', async () => {
+      const root = tmpDir();
+      writeFileSync(join(root, '.git'), 'gitdir: /elsewhere/.git/worktrees/x\n');
+      assert.equal((await core.init({ root }, { git_mode: 'track' })).created, true);
+      const plain = gitRepo();
+      assert.equal((await core.init({ root: plain }, { git_mode: 'local' })).created, true);
+    });
+
+    it('refuses a subdirectory of a repository, names the repo root, and writes nothing', async () => {
+      const repo = gitRepo();
+      const sub = join(repo, 'packages', 'a');
+      mkdirSync(sub, { recursive: true });
+      const before = readdirSync(repo).sort();
+      await assert.rejects(core.init({ root: sub }, { git_mode: 'track' }), (e: any) => {
+        assert.equal(e.code, 'NOT_GIT_ROOT');
+        assert.match(e.message, /not its root/);
+        assert.equal(e.details.git_root, repo);
+        return true;
+      });
+      assert.deepEqual(readdirSync(sub), []);
+      assert.deepEqual(readdirSync(repo).sort(), before);
+      assert.equal(existsSync(join(repo, '.gitignore')), false);
+    });
+
+    it('refuses a directory with no .git anywhere above it, and writes nothing', async () => {
+      const root = tmpDir();
+      await assert.rejects(core.init({ root }, { git_mode: 'local' }), (e: any) => {
+        assert.equal(e.code, 'NOT_GIT_ROOT');
+        assert.match(e.message, /no \.git/);
+        return true;
+      });
+      assert.deepEqual(readdirSync(root), []);
+    });
+
+    it('refuses a missing directory without creating it', async () => {
+      const root = join(tmpDir(), 'not-there');
+      await rejects(core.init({ root }, { git_mode: 'track' }), 'NOT_GIT_ROOT');
+      assert.equal(existsSync(root), false);
+    });
   });
 
   it('creates the documented .mwf/ layout', async () => {

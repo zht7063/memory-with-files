@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseArgs, type ParseArgsOptionsConfig } from 'node:util';
@@ -10,7 +9,14 @@ import {
   type StatusResult,
 } from '../core/index.ts';
 import { findCommand, run, SHELL_COMMANDS, toError, type CliResult } from './index.ts';
-import { renderAdd, renderDoctor, renderHandoff, renderRecall, renderStatus } from './render.ts';
+import {
+  renderAdd,
+  renderDoctor,
+  renderHandoff,
+  renderMaintenance,
+  renderRecall,
+  renderStatus,
+} from './render.ts';
 import { StdinTooLarge } from './stdin.ts';
 
 /** Exit codes: 0 ok, 1 the command ran and failed (or doctor found errors), 2 usage error. */
@@ -42,6 +48,10 @@ Commands:
   doctor               consistency report (exit 1 when it finds errors)
   add                  write a confirmed memory record
   handoff read|save    list / read, or save, a per-task handoff
+  forget               move records to trash (preview; --confirm --preview-token executes)
+  purge                permanently delete trash entries (same two steps)
+  compact              merge exact duplicate records (same two steps)
+  inbox [list|accept|discard]  list inbox entries, accept one, or discard (discard: two steps)
 
 Options (all commands):
   --json               print the structured result as JSON
@@ -80,9 +90,26 @@ A write prints its request_id. If it fails with LOCK_LOST or LOCK_TIMEOUT, run i
 same --request-id: it is applied exactly once, whatever state the first attempt left behind.
 A failed write also prints its request_id (in --json: error.details.request_id).
 
-Every other write (edit, propose, inbox, forget, restore, purge, compact, reindex, init) is only
-available as an MCP tool, and so is creating a project: use the MCP tool mwf_init, or
-\`mwf install\` when available. There is no init command in the shell.
+Destructive commands (forget, purge, compact, inbox discard) take two steps, and only the shell
+can take the second one: the MCP tools of the same names only preview.
+  1. Without --confirm they change nothing: they print what would change and a preview_token.
+  2. --confirm --preview-token <token> executes. The token is checked again under the project
+     lock against the current content, so anything edited since the preview is refused
+     (PREVIEW_MISMATCH). --confirm without --preview-token is refused (CONFIRM_REQUIRES_TOKEN)
+     and deletes nothing.
+
+forget  --id <id> (repeatable, required) [--reason <text>]
+purge   [--id <id> (repeatable; default: every expired trash entry)]
+compact [--type <type> (repeatable)]
+inbox   list [--limit <n>]
+inbox   accept --entry-id <id> --type <type> --title <text> [--body <text> | --body-file <path|->]
+               [--scope <key=value>]
+inbox   discard --entry-id <id> (repeatable, required)
+  each of them also takes: --confirm --preview-token <token> --request-id <id> --wait-ms <n>
+
+Every other write (init, edit, propose, reindex, restore) is only available as an MCP tool, and
+so is creating a project: use the MCP tool mwf_init (it only works at the root of a git
+repository), or \`mwf install\` when available. There is no init command in the shell.
 
 Note: "read-only" means status, recall and doctor never change memory, not that they never write
 files. status and recall may take the project lock and write under .mwf/: they recover a leftover
@@ -96,7 +123,7 @@ Exit codes: 0 ok, 1 the command failed (or doctor found errors), 2 usage error o
 /** Commands that exist in the design but are not part of this build. */
 const LATER: Record<string, string> = {
   hook: 'the hooks layer is not part of this build yet',
-  mcp: 'the MCP layer is not part of this build yet',
+  mcp: 'the MCP server is started by the mwf executable itself (`mwf mcp`), not by this command line',
   install: 'lifecycle commands (install / uninstall / update) are not part of this build yet',
   uninstall: 'lifecycle commands (install / uninstall / update) are not part of this build yet',
   update: 'lifecycle commands (install / uninstall / update) are not part of this build yet',
@@ -194,8 +221,77 @@ async function textInput(
 function writeProps(values: Values, input: Record<string, unknown>): void {
   const wait = number(values['wait-ms'] as string | undefined, '--wait-ms');
   if (wait !== undefined) input['wait_ms'] = wait;
-  // Always send a request_id so a failed write can be repeated with the same one (exactly once).
-  input['request_id'] = (values['request-id'] as string | undefined) ?? `cli-${randomUUID()}`;
+  // run() adds a request_id when none is given and reports it on failure (exactly-once retries).
+  if (values['request-id'] !== undefined) input['request_id'] = values['request-id'];
+}
+
+/** The two-step flags shared by every destructive command. */
+function confirmProps(values: Values, input: Record<string, unknown>): void {
+  if (values['confirm']) input['confirm'] = true;
+  if (values['preview-token'] !== undefined) input['preview_token'] = values['preview-token'];
+  if (!values['confirm'] && values['preview-token'] !== undefined) {
+    throw new Usage('--preview-token only makes sense together with --confirm');
+  }
+  writeProps(values, input);
+}
+
+function forgetInput(values: Values): Record<string, unknown> {
+  const ids = (values['id'] as string[] | undefined) ?? [];
+  if (!ids.length) throw new Usage('forget: --id <id> is required (repeatable)');
+  const input: Record<string, unknown> = { ids };
+  if (values['reason'] !== undefined) input['reason'] = values['reason'];
+  confirmProps(values, input);
+  return input;
+}
+
+function purgeInput(values: Values): Record<string, unknown> {
+  const input: Record<string, unknown> = {};
+  const ids = (values['id'] as string[] | undefined) ?? [];
+  if (ids.length) input['ids'] = ids;
+  confirmProps(values, input);
+  return input;
+}
+
+function compactInput(values: Values): Record<string, unknown> {
+  const input: Record<string, unknown> = {};
+  if (values['type']) input['types'] = values['type'];
+  confirmProps(values, input);
+  return input;
+}
+
+async function inboxInput(
+  action: string | undefined,
+  values: Values,
+  io: Io,
+): Promise<Record<string, unknown>> {
+  const act = action ?? 'list';
+  if (act !== 'list' && act !== 'accept' && act !== 'discard') {
+    throw new Usage('inbox: say list, accept or discard');
+  }
+  const input: Record<string, unknown> = { action: act };
+  const entries = (values['entry-id'] as string[] | undefined) ?? [];
+  if (act === 'list') {
+    const limit = number(values['limit'] as string | undefined, '--limit');
+    if (limit !== undefined) input['limit'] = limit;
+    return input;
+  }
+  if (act === 'discard') {
+    if (!entries.length) throw new Usage('inbox discard: --entry-id <id> is required (repeatable)');
+    input['entry_ids'] = entries;
+    confirmProps(values, input);
+    return input;
+  }
+  if (entries.length !== 1) throw new Usage('inbox accept: give exactly one --entry-id');
+  input['entry_id'] = entries[0];
+  for (const key of ['type', 'title'] as const) {
+    if (values[key] !== undefined) input[key] = values[key];
+  }
+  const body = await textInput(values, io, 'body', false);
+  if (body !== undefined) input['body'] = body;
+  const scope = scopeInput(values);
+  if (scope) input['scope'] = scope;
+  writeProps(values, input);
+  return input;
 }
 
 async function addInput(values: Values, io: Io): Promise<Record<string, unknown>> {
@@ -254,6 +350,12 @@ const WRITE_FLAGS = {
   'wait-ms': { type: 'string' },
 } as const;
 
+const CONFIRM_FLAGS = {
+  confirm: { type: 'boolean' },
+  'preview-token': { type: 'string' },
+  ...WRITE_FLAGS,
+} as const;
+
 function optionsFor(name: string): ParseArgsOptionsConfig {
   switch (name) {
     case 'recall':
@@ -285,6 +387,27 @@ function optionsFor(name: string): ParseArgsOptionsConfig {
         summary: { type: 'string' },
         'base-version': { type: 'string' },
         ...WRITE_FLAGS,
+      } as const;
+    case 'forget':
+      return {
+        id: { type: 'string', multiple: true },
+        reason: { type: 'string' },
+        ...CONFIRM_FLAGS,
+      } as const;
+    case 'purge':
+      return { id: { type: 'string', multiple: true }, ...CONFIRM_FLAGS } as const;
+    case 'compact':
+      return { type: { type: 'string', multiple: true }, ...CONFIRM_FLAGS } as const;
+    case 'inbox':
+      return {
+        'entry-id': { type: 'string', multiple: true },
+        limit: { type: 'string' },
+        type: { type: 'string' },
+        title: { type: 'string' },
+        body: { type: 'string' },
+        'body-file': { type: 'string' },
+        scope: { type: 'string', multiple: true },
+        ...CONFIRM_FLAGS,
       } as const;
     default:
       return {};
@@ -320,7 +443,7 @@ export async function main(argv: readonly string[], io: Io): Promise<number> {
     try {
       parsed = parseArgs({
         args: [...rest],
-        allowPositionals: name === 'recall' || name === 'handoff',
+        allowPositionals: name === 'recall' || name === 'handoff' || name === 'inbox',
         options: {
           json: { type: 'boolean' },
           cwd: { type: 'string' },
@@ -342,21 +465,26 @@ export async function main(argv: readonly string[], io: Io): Promise<number> {
     else if (name === 'handoff') {
       if (parsed.positionals.length > 1) throw new Usage('handoff takes one action: read or save');
       input = await handoffInput(parsed.positionals[0], values, io);
+    } else if (name === 'forget') input = forgetInput(values);
+    else if (name === 'purge') input = purgeInput(values);
+    else if (name === 'compact') input = compactInput(values);
+    else if (name === 'inbox') {
+      if (parsed.positionals.length > 1) throw new Usage('inbox takes one action');
+      input = await inboxInput(parsed.positionals[0], values, io);
     }
     const env = { cwd: resolve(io.cwd, (values['cwd'] as string | undefined) ?? '.') };
     const result: CliResult = await run(name, input, env);
     const code = exitCode(name, result);
-    const requestId = typeof input['request_id'] === 'string' ? input['request_id'] : undefined;
-    if (!result.ok && requestId !== undefined) {
-      result.error.details = { ...result.error.details, request_id: requestId };
-    }
+    const requestId = result.ok
+      ? (result.data as { request_id?: unknown } | null)?.request_id
+      : result.error.details['request_id'];
     if (parsed.values.json) {
       io.stdout(`${JSON.stringify(result, null, 2)}\n`);
       return code;
     }
     if (!result.ok) {
       io.stderr(`mwf: ${result.error.code}: ${result.error.message}\n`);
-      if (requestId !== undefined) {
+      if (typeof requestId === 'string') {
         io.stderr(
           RETRYABLE.has(result.error.code)
             ? `request_id: ${requestId} (repeat the command with --request-id ${requestId}: it is applied exactly once)\n`
@@ -369,7 +497,9 @@ export async function main(argv: readonly string[], io: Io): Promise<number> {
     else if (name === 'recall') io.stdout(`${renderRecall(result.data as RecallResult)}\n`);
     else if (name === 'add') io.stdout(`${renderAdd(result.data as never)}\n`);
     else if (name === 'handoff') io.stdout(`${renderHandoff(result.data as never)}\n`);
-    else io.stdout(`${renderDoctor(result.data as DoctorResult)}\n`);
+    else if (['forget', 'purge', 'compact', 'inbox'].includes(name)) {
+      io.stdout(`${renderMaintenance(name, input, result.data)}\n`);
+    } else io.stdout(`${renderDoctor(result.data as DoctorResult)}\n`);
     return code;
   } catch (error) {
     if (error instanceof Usage) {

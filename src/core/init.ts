@@ -1,4 +1,5 @@
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import TOML from '@iarna/toml';
 import {
   requireInitialized,
@@ -59,6 +60,33 @@ function addGitignoreLines(path: string, lines: readonly string[]): string[] {
 }
 
 /**
+ * The project root is the directory init runs in, and that directory must be the git repository
+ * root: it holds `.git` (a directory, or the file a worktree / submodule has). Refuse otherwise
+ * and write nothing, so a stray init never plants a .mwf/ in a subdirectory, in $HOME or in /tmp.
+ */
+export function requireGitRoot(root: string): void {
+  const dir = resolve(root);
+  if (existsSync(join(dir, '.git'))) return;
+  for (let up = dirname(dir); ; up = dirname(up)) {
+    if (existsSync(join(up, '.git'))) {
+      throw new MwfError(
+        'NOT_GIT_ROOT',
+        `${dir} is inside the git repository at ${up} but is not its root (.git is not here); ` +
+          `run init from ${up}. Nothing was written.`,
+        { root: dir, git_root: up },
+      );
+    }
+    if (dirname(up) === up) break;
+  }
+  throw new MwfError(
+    'NOT_GIT_ROOT',
+    `no .git in ${dir} or any parent: init only works at the root of a git repository ` +
+      '(run `git init` first, or start from the repository root). Nothing was written.',
+    { root: dir },
+  );
+}
+
+/**
  * Create .mwf/ (idempotent). The only file written outside .mwf/ is the project's .gitignore.
  * config.toml is written last, so an interrupted init is simply re-run.
  */
@@ -67,6 +95,7 @@ export async function init(ctx: Ctx, input: InitInput): Promise<InitResult> {
     throw invalid("git_mode must be 'track' or 'local'");
   }
   const layout = layoutFor(ctx);
+  requireGitRoot(layout.root);
   const existing = readConfig(readTextIfExists(layout.config));
   if (existing && existing.git_mode !== input.git_mode) {
     throw new MwfError(
