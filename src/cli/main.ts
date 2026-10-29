@@ -45,7 +45,14 @@ recall options:
   --limit <n>          max hits (default 8)
   --max-chars <n>      output budget in characters (default 4000)
 
-Writing memory is done through the MCP tools, not from the shell.
+Writing memory is done through the MCP tools, not from the shell. A project is created the same
+way (MCP tool mwf_init, or \`mwf install\` when available); the shell has no init command.
+
+Note: "read-only" means these commands never change memory, not that they never write files.
+status and recall may take the project lock and write under .mwf/: they recover a leftover
+intent from a crashed write (finishing or discarding it, and repairing index.md) and refresh a
+stale index.db. If another writer holds the lock they wait briefly, then answer from the
+existing index with a warning. doctor never takes the lock or writes; it only reports.
 `;
 
 /** Commands that exist in the design but are not part of this build. */

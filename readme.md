@@ -68,6 +68,10 @@ mwf recall [query] [--type t]... [--status active|done|all] [--task name] [--han
 mwf doctor [--json]
 ```
 
+"Read-only" means these commands never change memory, not that they never write files. `status` and `recall` may take the project lock and write under `.mwf/`: they recover a leftover intent from a crashed write (roll it forward or discard it, and repair `index.md`) and refresh a stale `index.db`. If another writer holds the lock they wait briefly (up to 1.5 s), then answer from the existing index with a warning. `doctor` never takes the lock and never writes; it only reports (a leftover intent shows up as a warning).
+
+A project is created through the MCP tool `mwf_init` (or `mwf install`, once available); the shell has no `init` command, and the not-initialized error says so.
+
 Exit codes: `0` ok, `1` the command failed or `doctor` found errors, `2` usage error. `hook`, `mcp` and the lifecycle commands (`install`, `uninstall`, `update`) are not part of this build.
 
 ## Locking

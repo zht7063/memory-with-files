@@ -100,9 +100,12 @@ export function resolveCtx(env: CliEnv, mode: 'existing' | 'init' = 'existing'):
   const cwd = env.cwd ?? process.cwd();
   const found = env.root ?? core.findProjectRoot(cwd);
   if (found === null && mode === 'existing') {
-    throw new core.MwfError('NOT_INITIALIZED', `no .mwf/ found in ${cwd} or any parent; run init`, {
-      cwd,
-    });
+    throw new core.MwfError(
+      'NOT_INITIALIZED',
+      `no .mwf/ found in ${cwd} or any parent; initialize it with the MCP tool mwf_init ` +
+        '(or `mwf install`, when available); the shell has no init command',
+      { cwd },
+    );
   }
   // init inside an already initialised project targets that project (never a nested .mwf/).
   return { ...env.ctx, root: found ?? cwd };

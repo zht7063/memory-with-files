@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import * as cli from '../src/cli/index.ts';
 import { main, type Io } from '../src/cli/main.ts';
 import { validate, type ObjectSchema } from '../src/cli/schema.ts';
-import { project, tmpDir } from './helpers/util.ts';
+import { project, runChild, tmpDir } from './helpers/util.ts';
 
 const FAST = { waitMs: 3000, lockStaleMs: 300 };
 
@@ -369,6 +369,11 @@ describe('mwf command line', () => {
     const notInit = await sh(['status'], empty);
     assert.equal(notInit.code, 1);
     assert.match(notInit.err, /NOT_INITIALIZED/);
+    // the shell has no init: the hint points at the MCP tool / install, never at "run init"
+    assert.match(notInit.err, /MCP tool mwf_init/);
+    assert.match(notInit.err, /`mwf install`/);
+    assert.match(notInit.err, /no init command/);
+    assert.doesNotMatch(notInit.err, /run init/);
     assert.equal(notInit.out, '');
     const json = await sh(['status', '--json'], empty);
     assert.equal(json.code, 1);
@@ -412,6 +417,11 @@ describe('mwf command line', () => {
     assert.match(help.out, /recall/);
     assert.match(help.out, /doctor/);
     assert.doesNotMatch(help.out, /^\s+(hook|mcp)\b/m);
+    // "read-only" is about memory: status / recall may recover a crashed write, doctor never writes
+    assert.match(help.out, /status and recall may take the project lock and write under \.mwf\//);
+    assert.match(help.out, /recover a leftover\s+intent/);
+    assert.match(help.out, /doctor never takes the lock or writes/);
+    assert.match(help.out, /mwf_init/);
     assert.equal((await sh([], ctx.root)).code, 2);
     assert.equal((await sh(['status', '--help'], ctx.root)).code, 0);
     const version = await sh(['--version'], ctx.root);
@@ -435,5 +445,38 @@ describe('mwf command line', () => {
     const usage = run(['nonsense']);
     assert.equal(usage.status, 2);
     assert.match(usage.stderr, /unknown command/);
+  });
+});
+
+describe('CLI read commands and a leftover crash intent', () => {
+  it('doctor only reports it; status and recall recover it (take the lock and write)', async () => {
+    for (const reader of [['status'], ['recall', 'crash']]) {
+      const ctx = await project('track', { waitMs: 5000 });
+      await cli.add({ type: 'decision', title: 'Before crash', body: 'seed' }, { root: ctx.root });
+      const crashed = await runChild(
+        ctx,
+        [{ fn: 'add', input: { type: 'decision', title: 'Crash me', body: 'crash body' } }],
+        { MWF_FAILPOINT: 'write:target@1' },
+      );
+      assert.equal(crashed.signal, 'SIGKILL');
+      const intent = join(ctx.root, '.mwf/mwf.local.intent.json');
+      assert.ok(existsSync(intent), 'the dead writer left an intent');
+
+      const doctor = await sh(['doctor', '--json'], ctx.root);
+      assert.ok(existsSync(intent), 'doctor must not recover');
+      const codes = (JSON.parse(doctor.out).data.issues as Array<{ code: string }>).map(
+        (i) => i.code,
+      );
+      assert.ok(codes.includes('pending_intent'));
+
+      const read = await sh([...reader, '--json'], ctx.root);
+      assert.equal(read.code, 0, read.err);
+      assert.equal(existsSync(intent), false, `${reader[0]} recovered the intent`);
+      const after = await sh(['doctor', '--json'], ctx.root);
+      const codesAfter = (JSON.parse(after.out).data.issues as Array<{ code: string }>).map(
+        (i) => i.code,
+      );
+      assert.equal(codesAfter.includes('pending_intent'), false);
+    }
   });
 });
