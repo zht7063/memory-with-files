@@ -41,12 +41,28 @@ export interface InitResult {
   gitignore_added: string[];
 }
 
-export function readConfig(text: string | null): { git_mode: GitMode; mwf_version: string } | null {
+export interface Config {
+  git_mode: GitMode;
+  mwf_version: string;
+  /** `[hooks] stop = false` turns the end-of-turn (Stop) hook off for this project; default on. */
+  hooks_stop: boolean;
+}
+
+export function readConfig(text: string | null): Config | null {
   if (text === null) return null;
   const raw = TOML.parse(text) as Record<string, unknown>;
   const mode = raw['git_mode'];
   if (mode !== 'track' && mode !== 'local') return null;
-  return { git_mode: mode, mwf_version: String(raw['mwf_version'] ?? '') };
+  const hooks = raw['hooks'];
+  const stop =
+    typeof hooks === 'object' && hooks !== null
+      ? (hooks as Record<string, unknown>)['stop']
+      : undefined;
+  return {
+    git_mode: mode,
+    mwf_version: String(raw['mwf_version'] ?? ''),
+    hooks_stop: stop !== false,
+  };
 }
 
 function addGitignoreLines(path: string, lines: readonly string[]): string[] {

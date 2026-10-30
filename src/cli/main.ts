@@ -134,7 +134,7 @@ Exit codes: 0 ok, 1 the command failed (or doctor found errors), 2 usage error o
 
 /** Commands that exist in the design but are not part of this build. */
 const LATER: Record<string, string> = {
-  hook: 'the hooks layer is not part of this build yet',
+  hook: 'hook events are handled by the mwf executable itself (`mwf hook <event>`, started by the host), not by this command line',
   mcp: 'the MCP server is started by the mwf executable itself (`mwf mcp`), not by this command line',
   install: 'lifecycle commands (install / uninstall / update) are not part of this build yet',
   uninstall: 'lifecycle commands (install / uninstall / update) are not part of this build yet',

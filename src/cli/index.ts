@@ -3,8 +3,8 @@ import { COMMANDS, findCommand, type Access, type CliEnv, type Command } from '.
 import { toError, type CliResult } from './result.ts';
 
 export { COMMANDS, findCommand, resolveCtx } from './commands.ts';
-export { confirmHost } from './host.ts';
-export type { ConfirmHostArgs } from './host.ts';
+export { confirmHost, getSession, setSession } from './host.ts';
+export type { ConfirmHostArgs, GetSessionData, SetSessionArgs } from './host.ts';
 export { shellCommandFor } from './shellcmd.ts';
 export type { Access, CliEnv, Command } from './commands.ts';
 export type { ObjectSchema, Schema } from './schema.ts';

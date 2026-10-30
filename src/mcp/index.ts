@@ -7,3 +7,5 @@ export type {
   ToolAnnotations,
   ToolResult,
 } from './tools.ts';
+export { confirmHost, getSession, setSession } from './host.ts';
+export type { CliEnv, CliResult, ConfirmHostArgs, GetSessionData, SetSessionArgs } from './host.ts';

@@ -2,19 +2,20 @@
 
 Project memory for coding agents, stored as plain Markdown files under `.mwf/` in your repository. Files are the source of truth; `index.db` (SQLite, FTS5) is a derived, rebuildable cache.
 
-> **Status: `v1` integration branch, PR3 (MCP layer).** MWF 1.0 is a ground-up rewrite. `src/core`, `src/cli` and `src/mcp` are implemented; `src/hooks` is a placeholder. The 0.x line lives on `main`.
+> **Status: `v1` integration branch, PR4a (hooks layer).** MWF 1.0 is a ground-up rewrite. `src/core`, `src/cli`, `src/mcp` and `src/hooks` (the hook logic, the Codex adapter and the supervised `mwf hook` command) are implemented; installing the hooks into a host (`mwf install`) and the Pi extension come next. The 0.x line lives on `main`.
 
 ## Layout
 
 ```
 src/core    # file store, index, locking, all operations
 src/cli     # structured command functions + the shell command line
-src/mcp     # MCP tools + the stdio server (`mwf mcp`) (this PR)
-src/hooks   # host hooks (planned)
+src/mcp     # MCP tools + the stdio server (`mwf mcp`)
+src/hooks   # host hooks: SessionStart / UserPromptSubmit / Stop logic, Codex adapter, supervisor (this PR)
+src/skills  # the skill and shortcut-command text: pure data, one source for every host
 src/bin     # the `mwf` executable: dispatch only
 ```
 
-Each layer imports only the one beneath it (`cli` -> `core`, `mcp` -> `cli`, `hooks` -> `mcp`); `tests/layers.test.ts` enforces it.
+Each layer imports only the one beneath it (`cli` -> `core`, `mcp` -> `cli`, `hooks` -> `mcp` plus the pure-text `skills`); `tests/layers.test.ts` enforces it.
 
 ```
 .mwf/
@@ -102,7 +103,19 @@ A project is created through the MCP tool `mwf_init` (or `mwf install`, once ava
 - **Killed mid-write:** the server does not trap SIGTERM; the lock and intent it leaves are recovered by the next process.
 - **Host registration:** after the first tool call the server records the host in `host.local.toml` (channel `mcp`).
 
-Exit codes: `0` ok, `1` the command failed (including a refused write) or `doctor` found errors, `2` usage error or invalid input. `hook` and the lifecycle commands (`install`, `uninstall`, `update`) are not part of this build.
+Exit codes: `0` ok, `1` the command failed (including a refused write) or `doctor` found errors, `2` usage error or invalid input. The lifecycle commands (`install`, `uninstall`, `update`) are not part of this build; `mwf hook <event>` is started by the host (see Hooks).
+
+## Hooks
+
+`mwf hook <session-start|prompt|stop>` is what a host runs as a command hook (Codex; Pi gets an in-process extension later). It reads the host's JSON event on stdin, prints one JSON line, and **always exits 0**; it needs no terminal and never confirms anything (hooks only call `mwf_bootstrap`, `mwf_recall`, `mwf_status` and write the host / session bookkeeping through the normal write path). Install and uninstall are not in this build: nothing here edits any host configuration.
+
+- **SessionStart** injects the short resident entry text plus a fenced overview of the memory (`mwf_bootstrap`) and registers the host. After a compaction it does nothing. Inside a git repository that has no `.mwf/` it prints one line suggesting `/mwf init`; elsewhere nothing.
+- **UserPromptSubmit** runs `mwf_recall` on the prompt and injects a fenced list of what matched, at most once per record per session (the ids are kept in `state.toml`). Short or unmatched prompts do nothing.
+- **Stop** asks the agent once per turn to save what is worth keeping (`mwf-save`, `mwf-handoff`). It allows the stop, with no continuation, unless the host reports `stop_hook_active: false` **and** an atomic claim of the turn in `.mwf/state.toml` succeeds (the claim goes through the lock and `runWrite`, so it cannot race another write); if either cannot be read, or the lock is busy, it lets the host stop. `[hooks] stop = false` in `.mwf/config.toml` turns it off for a project.
+- **Injected text is data.** It is wrapped in `<<<MWF-DATA-<random>` … `MWF-DATA-<random>>>>` lines with a new random 96-bit marker per invocation; control and bidi characters and any text that looks like a marker are removed from the data, and the data is capped (8000 characters at session start, 4000 per prompt) with an explicit `[mwf: truncated, N more characters were left out; use mwf_recall for the rest.]` line outside the fence.
+- **One time budget.** Lock waits (200 ms each, at most 4) < 2.5 s soft limit (no optional write after it) < 4 s supervisor deadline < 5 s host timeout, for all three events. A supervisor process runs the real work in a child and SIGKILLs it at the deadline, because synchronous file and SQLite work cannot be interrupted by a timer; the worker prints its answer before any bookkeeping, so a kill after the answer still delivers it. When the lock is busy a read serves the existing index (flagged as possibly stale) instead of waiting. On failure SessionStart / UserPromptSubmit print one `systemMessage` ("run `mwf doctor`"); Stop prints `{}`.
+
+`import … from '@zht7063/mwf/hooks'` exposes the handlers and the Codex adapter for tests and for the generated Pi extension.
 
 ## Locking
 
