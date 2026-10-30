@@ -1,6 +1,7 @@
 /**
  * The shell command line that executes a previewed destructive operation. The MCP tools only
- * preview; they hand this command back so the user (or the host's shell approval) can run it.
+ * preview; they hand this command back for the user to run in their own interactive terminal (the
+ * shell refuses `--confirm` unless stdin and stdout are both terminals).
  * The flags here are the ones src/cli/main.ts parses.
  */
 

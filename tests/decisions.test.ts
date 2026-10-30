@@ -592,4 +592,13 @@ describe('docs and layout', () => {
     assert.match(text, /不穷尽/);
     assert.match(text, /DB_PASS/);
   });
+
+  it('protocol.md says only the user confirms, in a terminal, and names the known limitation', async () => {
+    const ctx = await project();
+    const text = read(ctx, 'protocol.md');
+    assert.match(text, /用户本人在自己的交互式终端/);
+    assert.match(text, /CONFIRM_REQUIRES_TTY/);
+    assert.match(text, /伪终端/);
+    assert.doesNotMatch(text, /审批/);
+  });
 });

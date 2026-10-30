@@ -332,18 +332,64 @@ describe('destructive tools only preview', () => {
     assert.equal(await active(env), 1, 'the duplicate record is untouched by compact');
   });
 
-  it('the printed command executes it from the shell, and only there', async () => {
+  it('the printed command is refused when run from a pipe or an agent shell, and deletes nothing', async () => {
     const { env, root, id } = await seeded();
     const preview = data(
       await callTool('mwf_forget', { ids: [id], reason: 'it is "old"; $(rm -rf x)' }, env),
     );
     const bin = mwfOnPath();
-    const ran = shell(preview['execute_with'], root, bin);
-    assert.equal(ran.status, 0, ran.stderr);
-    assert.equal(await active(env), 0);
+    for (const command of [
+      preview['execute_with'],
+      `echo y | ${preview['execute_with']}`,
+      `${preview['execute_with']} < /dev/null`,
+    ]) {
+      const ran = shell(command, root, bin);
+      assert.equal(ran.status, 1, ran.stdout + ran.stderr);
+      assert.match(ran.stderr, /CONFIRM_REQUIRES_TTY/);
+      assert.equal(await active(env), 1, 'still there');
+    }
     assert.equal(existsSync(join(root, 'x')), false);
     const trash = data(await callTool('mwf_restore', {}, env));
-    assert.equal((trash['entries'] as unknown[]).length, 1);
+    assert.equal((trash['entries'] as unknown[]).length, 0);
+  });
+
+  it(
+    'the printed command executes it in a terminal, and only there',
+    {
+      skip: spawnSync('script', ['--version'], { encoding: 'utf8' }).status !== 0,
+    },
+    async () => {
+      const { env, root, id } = await seeded();
+      const preview = data(
+        await callTool('mwf_forget', { ids: [id], reason: 'it is "old"; $(rm -rf x)' }, env),
+      );
+      const bin = mwfOnPath();
+      // `script` gives the command a pseudo terminal, which is what a person's terminal is
+      const ran = spawnSync('script', ['-qec', preview['execute_with'], '/dev/null'], {
+        cwd: root,
+        encoding: 'utf8',
+        input: '',
+        env: { ...process.env, PATH: `${bin}:${process.env['PATH']}` },
+      });
+      assert.equal(ran.status, 0, ran.stdout + ran.stderr);
+      assert.equal(await active(env), 0);
+      assert.equal(existsSync(join(root, 'x')), false);
+      const trash = data(await callTool('mwf_restore', {}, env));
+      assert.equal((trash['entries'] as unknown[]).length, 1);
+    },
+  );
+
+  it('the notes tell the user to run it in their own terminal; nothing offers host approval', async () => {
+    const { env, id } = await seeded();
+    const preview = data(await callTool('mwf_forget', { ids: [id] }, env));
+    assert.match(preview['note'], /themselves in their own terminal/);
+    assert.match(preview['note'], /do not run it from your shell/);
+    assert.doesNotMatch(preview['note'], /approve/i);
+    for (const name of ['mwf_forget', 'mwf_purge', 'mwf_compact', 'mwf_inbox']) {
+      const description = TOOLS.find((t) => t.name === name)!.description;
+      assert.match(description, /own terminal/, name);
+      assert.doesNotMatch(description, /approv/i, name);
+    }
   });
 });
 
@@ -420,6 +466,21 @@ describe('mwf mcp over stdio', () => {
       const bad = await call(s.client, 'mwf_get', { id: 7 });
       assert.equal(bad.isError, true);
       assert.match(bad.content[0]!.text, /^INVALID_ARGUMENT: /);
+      // a non-numeric wait_ms is rejected by the schema, not coerced or clamped
+      for (const wait_ms of ['abc', '5', null, {}, [1]]) {
+        const worse = await call(s.client, 'mwf_add', {
+          type: 'knowledge',
+          title: 'W',
+          body: 'w',
+          wait_ms,
+        });
+        assert.equal(worse.isError, true, JSON.stringify(wait_ms));
+        assert.match(
+          worse.content[0]!.text,
+          /^INVALID_ARGUMENT: .*wait_ms/,
+          JSON.stringify(wait_ms),
+        );
+      }
     } finally {
       await s.client.close();
     }

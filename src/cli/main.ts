@@ -33,6 +33,13 @@ export interface Io {
    * up with `StdinTooLarge` as soon as more than `maxBytes` bytes have arrived.
    */
   stdin?: (maxBytes: number) => Promise<string>;
+  /**
+   * Whether standard input and standard output are terminals. Only `src/bin/mwf.ts` sets it, from
+   * `process.stdin.isTTY` / `process.stdout.isTTY`; tests pass it as a plain argument. There is
+   * deliberately no environment variable or flag that overrides it. Absent means "not a terminal",
+   * so a destructive `--confirm` is refused (CONFIRM_REQUIRES_TTY).
+   */
+  tty?: { stdin: boolean; stdout: boolean };
 }
 
 /** Largest body read from a file or stdin; core's own limit (50 000 characters) is stricter. */
@@ -97,6 +104,11 @@ can take the second one: the MCP tools of the same names only preview.
      lock against the current content, so anything edited since the preview is refused
      (PREVIEW_MISMATCH). --confirm without --preview-token is refused (CONFIRM_REQUIRES_TOKEN)
      and deletes nothing.
+  Only you, in an interactive terminal, can run step 2: --confirm needs both standard input and
+  standard output to be a terminal (TTY), otherwise it is refused (CONFIRM_REQUIRES_TTY) and
+  deletes nothing. A pipe, a redirect, a script or an agent's shell tool cannot confirm. (This
+  stops an agent running it by accident; it does not stop one that deliberately opens a pseudo
+  terminal, for example with \`script\`.) Previews work anywhere.
 
 forget  --id <id> (repeatable, required) [--reason <text>]
 purge   [--id <id> (repeatable; default: every expired trash entry)]
@@ -414,6 +426,36 @@ function optionsFor(name: string): ParseArgsOptionsConfig {
   }
 }
 
+/**
+ * A destructive `--confirm` runs only for a person at an interactive terminal: standard input AND
+ * standard output must both be terminals. The check sits in the shell, before anything reaches
+ * core, so a refused run never takes the lock or reads memory. Previews have no `confirm` and are
+ * unaffected.
+ */
+function confirmNeedsTerminal(input: Record<string, unknown>, io: Io): boolean {
+  return input['confirm'] === true && !(io.tty?.stdin === true && io.tty?.stdout === true);
+}
+
+function ttyRefusal(io: Io): CliResult {
+  const stdin = io.tty?.stdin === true;
+  const stdout = io.tty?.stdout === true;
+  const lacking = [!stdin ? 'standard input' : '', !stdout ? 'standard output' : ''].filter(
+    Boolean,
+  );
+  return {
+    ok: false,
+    error: {
+      code: 'CONFIRM_REQUIRES_TTY',
+      message:
+        `--confirm only runs for you, in an interactive terminal: ${lacking.join(' and ')} ` +
+        `${lacking.length > 1 ? 'are' : 'is'} not a terminal. Nothing was changed. ` +
+        'Run this command yourself in a terminal, without pipes or redirects; ' +
+        'an agent, a script or a pipe cannot confirm it.',
+      details: { stdin_tty: stdin, stdout_tty: stdout },
+    },
+  };
+}
+
 /** The failures worth repeating with the same request_id. */
 const RETRYABLE = new Set(['LOCK_LOST', 'LOCK_TIMEOUT', 'INTERNAL']);
 
@@ -473,7 +515,9 @@ export async function main(argv: readonly string[], io: Io): Promise<number> {
       input = await inboxInput(parsed.positionals[0], values, io);
     }
     const env = { cwd: resolve(io.cwd, (values['cwd'] as string | undefined) ?? '.') };
-    const result: CliResult = await run(name, input, env);
+    const result: CliResult = confirmNeedsTerminal(input, io)
+      ? ttyRefusal(io)
+      : await run(name, input, env);
     const code = exitCode(name, result);
     const requestId = result.ok
       ? (result.data as { request_id?: unknown } | null)?.request_id

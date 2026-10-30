@@ -78,17 +78,17 @@ const DESCRIPTION: Record<string, string> = {
   doctor: ' Never takes the lock and never writes.',
   forget:
     ' PREVIEW ONLY through MCP: nothing is changed. Returns what would be moved, a preview_token and' +
-    ' the shell command (`execute_with`) the user runs to execute it. Tell the user the count,' +
-    ' titles, types and why; never run it yourself without their agreement.',
+    ' the shell command (`execute_with`) that only the user can run, in their own terminal. Tell the' +
+    ' user the count, titles, types and why; do not run it yourself.',
   purge:
     ' PREVIEW ONLY through MCP: nothing is deleted. Returns what would be removed for good, a' +
-    ' preview_token and the shell command (`execute_with`) the user runs to execute it.',
+    ' preview_token and the shell command (`execute_with`) the user runs in their own terminal.',
   compact:
     ' PREVIEW ONLY through MCP: nothing is merged. Returns the duplicate groups, a preview_token and' +
-    ' the shell command (`execute_with`) the user runs to execute it.',
+    ' the shell command (`execute_with`) the user runs in their own terminal.',
   inbox:
     ' list and accept work here; discard is PREVIEW ONLY through MCP (returns a preview_token and the' +
-    ' shell command `execute_with` the user runs).',
+    ' shell command `execute_with` the user runs in their own terminal).',
 };
 
 function describe(command: Command): string {
@@ -228,8 +228,9 @@ function withExecution(
   const execute = shellCommandFor(command.name, args, data.preview_token, cwd);
   const note =
     'Nothing was changed: this tool only previews. Tell the user what would change (count, ' +
-    'titles, types, reason). If they agree, they run `execute_with` in a terminal (or approve it in ' +
-    'the host shell). Do not run it without their agreement.';
+    'titles, types, reason). If they agree, the user runs `execute_with` themselves in their own ' +
+    'terminal: it refuses to run unless typed in an interactive terminal, so do not run it from ' +
+    'your shell and do not try to get around that.';
   return { ...data, note, ...(execute ? { execute_with: execute } : {}) };
 }
 
@@ -271,7 +272,7 @@ export async function callTool(
           code: 'INVALID_ARGUMENT',
           message:
             `${name} only previews; it does not take ${key}. Executing is shell-only: show the ` +
-            'user the preview, and they run the `execute_with` command it returned.',
+            'user the preview; they run the `execute_with` command it returned in their own terminal.',
           details: { argument: key },
         });
       }

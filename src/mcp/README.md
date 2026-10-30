@@ -18,7 +18,9 @@ Rules (tests in `tests/mcp.test.ts`):
 - **Destructive tools only preview.** `mwf_forget`, `mwf_purge`, `mwf_compact` and
   `mwf_inbox` `discard` neither advertise nor accept `confirm` / `preview_token`; they return the
   preview, its `preview_token` and `execute_with`, the shell command the user runs
-  (`mwf forget --id … --confirm --preview-token …`). Only the shell executes.
+  (`mwf forget --id … --confirm --preview-token …`). Only the shell executes, and only for the user in
+  their own interactive terminal: the shell refuses `--confirm` unless stdin and stdout are both TTYs
+  (`CONFIRM_REQUIRES_TTY`), so the note tells the agent to hand the command to the user.
 - **No project path.** The project is looked up from the server's working directory (or `--cwd`)
   upwards to the `.mwf/` created by `init`; `init` itself only works at the root of a git repository.
 - **Exactly once.** `request_id` is generated in `cli.run`; a replay with the same id and arguments
