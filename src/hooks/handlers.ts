@@ -25,6 +25,8 @@ import { FAILURE_NOTICE, UNINITIALIZED_NOTICE } from './messages.ts';
  *  - it needs no terminal and never calls anything that executes a destructive operation;
  *  - locks are waited for only HOOK_LOCK_WAIT_MS: a busy lock means "read the existing index" for a
  *    read and "give up" for a write;
+ *  - SessionStart `resume` skips the overview only when the stored hash of the last injected
+ *    overview equals the current one; anything unknown injects (fail toward injecting);
  *  - optional bookkeeping writes are returned as `after`, to run once the answer has been sent.
  */
 
@@ -155,7 +157,7 @@ export async function sessionStart(
       r,
     );
     const parts = [r(ENTRY), '', block.text];
-    const trashNote = data['trash']?.note;
+    const trashNote: unknown = data['trash']?.note;
     if (typeof trashNote === 'string' && trashNote) parts.push('', r(oneLine(trashNote, 200)));
     const warnings: unknown[] = Array.isArray(data['warnings']) ? data['warnings'] : [];
     for (const w of warnings.slice(0, 3))
@@ -163,6 +165,27 @@ export async function sessionStart(
 
     const session = validSession(hc);
     const startsFresh = input.source !== 'resume';
+    // Hash of everything content-bearing in what would be injected (not the nonce, not our fixed
+    // text): memory counts and entries, handoffs, trash note, warnings.
+    const overview = createHash('sha256')
+      .update(JSON.stringify([lines, trashNote ?? null, warnings.slice(0, 3).map(String)]))
+      .digest('hex')
+      .slice(0, 32);
+    if (!startsFresh && session !== null) {
+      // Resume: the host's transcript already holds the overview. Skip only when the stored hash
+      // is readable and equal; a missing or unreadable state.toml, a missing hash, an old hash or
+      // any failure injects again (never skips on doubt).
+      const known = resultOf(await getSession(session, env));
+      const stored = known.ok ? known.data['session']?.overview : undefined;
+      if (typeof stored === 'string' && stored === overview) {
+        return {
+          after: async () => {
+            if (!withinSoftBudget(hc)) return;
+            await confirmHost({ host: hc.host, channel: 'hook' }, env).catch(() => undefined);
+          },
+        };
+      }
+    }
     const handoffTask = open.length === 1 ? open[0]!.task : undefined;
     return {
       inject: parts.join('\n'),
@@ -174,6 +197,7 @@ export async function sessionStart(
           {
             session_id: session,
             ...(startsFresh ? { injected: [] } : {}),
+            overview,
             ...(handoffTask !== undefined && TASK_NAME_RE.test(handoffTask)
               ? { handoff: handoffTask }
               : {}),

@@ -24,7 +24,13 @@ export async function confirmHost(args: ConfirmHostArgs, env: CliEnv = {}): Prom
 
 export interface GetSessionData {
   /** Null when the session has no entry yet. */
-  session: { handoff?: string; injected?: string[]; stop_turn?: string; updated: string } | null;
+  session: {
+    handoff?: string;
+    injected?: string[];
+    stop_turn?: string;
+    overview?: string;
+    updated: string;
+  } | null;
 }
 
 /**
@@ -52,6 +58,8 @@ export interface SetSessionArgs {
   stop_turn?: string;
   /** With `stop_turn`: claim atomically; `data.claimed` is false when the turn was already claimed. */
   claim_stop_turn?: boolean;
+  /** Hash of the overview injected at session start (SessionStart skips re-injecting on resume while it matches). */
+  overview?: string;
   request_id?: string;
   /** Lock wait budget in ms; hooks pass a very small one. */
   wait_ms?: number;

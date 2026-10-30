@@ -21,8 +21,10 @@ import {
  *  - Stop output: the default is `hookSpecificOutput.additionalContext` (guidance, no hook-error
  *    notice, same loop protections). `--stop-style block` selects `{decision:"block",reason}`.
  *  - SessionStart `source` is startup | resume | clear | compact | fork; the handler injects for
- *    all but `compact` (no compaction hook, by decision). `resume` injects again (Claude Code
- *    re-runs SessionStart on resume) and keeps the session's already-injected recall list.
+ *    all but `compact` (no compaction hook, by decision). `resume` (Claude Code re-runs
+ *    SessionStart, but its transcript already holds the overview) injects only when the overview
+ *    content changed since the last injection for that session (a hash in state.toml; any doubt
+ *    injects) and keeps the session's already-injected recall list.
  *  - UserPromptSubmit also fires for scheduled tasks and for `/skill args` typed by the user (the
  *    raw line, not the expanded skill): `/mwf…` lines are skipped, their skill calls the tools.
  *  - additionalContext / systemMessage are capped by Claude Code at 10,000 characters each; ours

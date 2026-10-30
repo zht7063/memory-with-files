@@ -20,6 +20,8 @@ export interface SessionEntry {
   injected?: string[];
   /** Stop-hook guard: the turn the Stop hook already continued once (see src/hooks). */
   stop_turn?: string;
+  /** Hash of the memory overview last injected into this session (see src/hooks, SessionStart). */
+  overview?: string;
   updated: string;
 }
 
@@ -91,7 +93,7 @@ export function stringifyState(state: State): string {
   const sessions: Record<string, unknown> = {};
   for (const key of Object.keys(state.sessions).sort()) {
     // Fields this version does not know (written by a newer mwf) are kept as they are.
-    const { handoff, injected, stop_turn, updated, ...unknown } = state.sessions[
+    const { handoff, injected, stop_turn, overview, updated, ...unknown } = state.sessions[
       key
     ] as SessionEntry;
     sessions[key] = {
@@ -99,6 +101,7 @@ export function stringifyState(state: State): string {
       ...(handoff !== undefined ? { handoff } : {}),
       ...(injected ? { injected } : {}),
       ...(stop_turn !== undefined ? { stop_turn } : {}),
+      ...(overview !== undefined ? { overview } : {}),
       updated,
     };
   }

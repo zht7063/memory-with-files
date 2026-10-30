@@ -50,6 +50,8 @@ export interface SessionInput extends WriteInput {
    * this very `stop_turn` nothing is written and the result says `claimed: false`.
    */
   claim_stop_turn?: boolean;
+  /** Hash of the overview injected at session start (lower-case hex, 16 to 64 characters). */
+  overview?: string;
 }
 
 export function getSession(ctx: Ctx, sessionId: string): SessionEntry | null {
@@ -63,6 +65,8 @@ export async function setSession(ctx: Ctx, input: SessionInput) {
     throw invalid('invalid session_id');
   if (input.stop_turn !== undefined && !/^[A-Za-z0-9._:-]{1,128}$/.test(String(input.stop_turn)))
     throw invalid('invalid stop_turn');
+  if (input.overview !== undefined && !/^[a-f0-9]{16,64}$/.test(String(input.overview)))
+    throw invalid('invalid overview hash');
   const injected = input.injected?.map(String).slice(-200);
   return runWrite<{ session_id: string; claimed: boolean }>(
     ctx,
@@ -74,6 +78,7 @@ export async function setSession(ctx: Ctx, input: SessionInput) {
       i: injected,
       t: input.stop_turn,
       c: input.claim_stop_turn === true,
+      o: input.overview,
     },
     (env) => {
       const state = readState(env.layout);
@@ -89,9 +94,11 @@ export async function setSession(ctx: Ctx, input: SessionInput) {
       const handoff = input.handoff ?? prev?.handoff;
       const inj = injected ?? prev?.injected;
       const turn = input.stop_turn ?? prev?.stop_turn;
+      const overview = input.overview ?? prev?.overview;
       if (handoff !== undefined) next.handoff = handoff;
       if (inj !== undefined) next.injected = inj;
       if (turn !== undefined) next.stop_turn = turn;
+      if (overview !== undefined) next.overview = overview;
       state.sessions[input.session_id] = next;
       pruneSessions(state);
       return {
