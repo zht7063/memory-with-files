@@ -162,7 +162,29 @@ export function skillByName(name: string): Skill | undefined {
   return SKILLS.find((s) => s.name === name);
 }
 
-/** A SKILL.md file: frontmatter plus the body. */
-export function renderSkillMd(skill: Skill): string {
-  return `---\nname: ${skill.name}\ndescription: ${JSON.stringify(skill.description)}\n---\n\n${skill.body}`;
+/**
+ * The name `mwf install --harness claude` registers the MCP server under (`claude mcp add-json
+ * --scope user mwf …`). Claude Code exposes a tool as `mcp__<server>__<tool>`, so the texts above
+ * (written with the bare tool names, `mwf_recall`) are rendered per host by `renderForHost`.
+ */
+export const CLAUDE_MCP_SERVER = 'mwf';
+
+/**
+ * Text as a host should read it. Claude Code names MCP tools `mcp__<server>__<tool>`: every bare
+ * `mwf_<tool>` (and the `mwf_*` shorthand) becomes `mcp__mwf__mwf_<tool>`. Other hosts (Codex, Pi)
+ * use the bare names and get the text unchanged. Idempotent; apply it to our own text only, never
+ * to stored memory.
+ */
+export function renderForHost(text: string, host: string | undefined): string {
+  if (host !== 'claude') return text;
+  return text.replace(
+    /(?<![A-Za-z0-9_])mwf_(\*|[a-z][a-z0-9_]*)/g,
+    `mcp__${CLAUDE_MCP_SERVER}__mwf_$1`,
+  );
+}
+
+/** A SKILL.md file: frontmatter plus the body (tool names rendered for `host`, see renderForHost). */
+export function renderSkillMd(skill: Skill, host?: string): string {
+  const r = (text: string): string => renderForHost(text, host);
+  return `---\nname: ${skill.name}\ndescription: ${JSON.stringify(r(skill.description))}\n---\n\n${r(skill.body)}`;
 }

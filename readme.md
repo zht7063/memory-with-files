@@ -2,7 +2,7 @@
 
 Project memory for coding agents, stored as plain Markdown files under `.mwf/` in your repository. Files are the source of truth; `index.db` (SQLite, FTS5) is a derived, rebuildable cache.
 
-> **Status: `v1` integration branch, PR4a (hooks layer).** MWF 1.0 is a ground-up rewrite. `src/core`, `src/cli`, `src/mcp` and `src/hooks` (the hook logic, the Codex adapter and the supervised `mwf hook` command) are implemented; installing the hooks into a host (`mwf install`) and the Pi extension come next. The 0.x line lives on `main`.
+> **Status: `v1` integration branch, PR4a / 4a.1 (hooks layer, Codex and Claude Code adapters).** MWF 1.0 is a ground-up rewrite. `src/core`, `src/cli`, `src/mcp` and `src/hooks` (the hook logic, the Codex and Claude Code adapters and the supervised `mwf hook` command) are implemented; installing the hooks into a host (`mwf install`) and the Pi extension come next. The 0.x line lives on `main`.
 
 ## Layout
 
@@ -10,7 +10,7 @@ Project memory for coding agents, stored as plain Markdown files under `.mwf/` i
 src/core    # file store, index, locking, all operations
 src/cli     # structured command functions + the shell command line
 src/mcp     # MCP tools + the stdio server (`mwf mcp`)
-src/hooks   # host hooks: SessionStart / UserPromptSubmit / Stop logic, Codex adapter, supervisor (this PR)
+src/hooks   # host hooks: SessionStart / UserPromptSubmit / Stop logic, Codex and Claude Code adapters, supervisor
 src/skills  # the skill and shortcut-command text: pure data, one source for every host
 src/bin     # the `mwf` executable: dispatch only
 ```
@@ -34,7 +34,12 @@ import { init, add, recall, handoff, forget } from '@zht7063/mwf/core';
 
 const ctx = { root: process.cwd() };
 await init(ctx, { git_mode: 'track' });
-await add(ctx, { type: 'decision', title: 'Use SQLite', body: '…', scope: { paths: ['src/core/'] } });
+await add(ctx, {
+  type: 'decision',
+  title: 'Use SQLite',
+  body: '…',
+  scope: { paths: ['src/core/'] },
+});
 await recall(ctx, { query: 'sqlite', scope: { paths: ['src/core/db.ts'] } });
 ```
 
@@ -107,7 +112,7 @@ Exit codes: `0` ok, `1` the command failed (including a refused write) or `docto
 
 ## Hooks
 
-`mwf hook <session-start|prompt|stop>` is what a host runs as a command hook (Codex; Pi gets an in-process extension later). It reads the host's JSON event on stdin, prints one JSON line, and **always exits 0**; it needs no terminal and never confirms anything (hooks only call `mwf_bootstrap`, `mwf_recall`, `mwf_status` and write the host / session bookkeeping through the normal write path). Install and uninstall are not in this build: nothing here edits any host configuration.
+`mwf hook <session-start|prompt|stop>` is what a host runs as a command hook (Codex and Claude Code; Pi gets an in-process extension later). It reads the host's JSON event on stdin, prints one JSON line, and **always exits 0**; it needs no terminal and never confirms anything (hooks only call `mwf_bootstrap`, `mwf_recall`, `mwf_status` and write the host / session bookkeeping through the normal write path). Install and uninstall are not in this build: nothing here edits any host configuration.
 
 - **SessionStart** injects the short resident entry text plus a fenced overview of the memory (`mwf_bootstrap`) and registers the host. After a compaction it does nothing. Inside a git repository that has no `.mwf/` it prints one line suggesting `/mwf init`; elsewhere nothing.
 - **UserPromptSubmit** runs `mwf_recall` on the prompt and injects a fenced list of what matched, at most once per record per session (the ids are kept in `state.toml`). Short or unmatched prompts do nothing.
@@ -115,7 +120,21 @@ Exit codes: `0` ok, `1` the command failed (including a refused write) or `docto
 - **Injected text is data.** It is wrapped in `<<<MWF-DATA-<random>` … `MWF-DATA-<random>>>>` lines with a new random 96-bit marker per invocation; control and bidi characters and any text that looks like a marker are removed from the data, and the data is capped (8000 characters at session start, 4000 per prompt) with an explicit `[mwf: truncated, N more characters were left out; use mwf_recall for the rest.]` line outside the fence.
 - **One time budget.** Lock waits (200 ms each, at most 4) < 2.5 s soft limit (no optional write after it) < 4 s supervisor deadline < 5 s host timeout, for all three events. A supervisor process runs the real work in a child and SIGKILLs it at the deadline, because synchronous file and SQLite work cannot be interrupted by a timer; the worker prints its answer before any bookkeeping, so a kill after the answer still delivers it. When the lock is busy a read serves the existing index (flagged as possibly stale) instead of waiting. On failure SessionStart / UserPromptSubmit print one `systemMessage` ("run `mwf doctor`"); Stop prints `{}`.
 
-`import … from '@zht7063/mwf/hooks'` exposes the handlers and the Codex adapter for tests and for the generated Pi extension.
+### Claude Code (`--host claude`)
+
+`mwf hook <event> --host claude` is the Claude Code adapter (PR4a.1: the adapter only; `mwf install --harness claude` and the MCP registration come with the install PR, nothing here writes `~/.claude`). Same handlers, same JSON-on-stdin / one-JSON-line-on-stdout contract, same exit 0. How each difference from Codex is handled (field names from the [Claude Code hooks reference](https://code.claude.com/docs/en/hooks)):
+
+| Claude Code vs Codex                                                                     | handling                                                                                                                                                                                                                     |
+| ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Stop input has no `turn_id`; it has `prompt_id`                                          | the turn key is `prompt_id`, then a hash of `last_assistant_message`, else the stop is allowed                                                                                                                               |
+| `stop_hook_active` (true while Claude is already continuing because of a stop hook)      | unchanged: continue only on exactly `false` **and** the atomic `state.toml` claim; Claude Code's own 8-continuation cap is a third guard                                                                                     |
+| Stop continuation output                                                                 | default `hookSpecificOutput.additionalContext` (guidance, not an error); `--stop-style block` selects `{"decision":"block","reason":…}`                                                                                      |
+| SessionStart `source` is `startup` / `resume` / `clear` / `compact` / `fork`             | `compact`: nothing injected; `startup`, `clear`, `fork` and unknown or missing: inject and reset the recalled-once list; `resume`: the host re-runs SessionStart but its transcript already holds the overview, so nothing is injected unless memory changed since the last injection for that session (a hash of the overview content stored in `state.toml`; a missing or unreadable state, no stored hash, a busy lock when storing it or any other doubt injects again); the recalled-once list is kept |
+| UserPromptSubmit also receives the raw `/skill args` line the user typed                 | `/mwf`, `/mwf-…`, `/mwf:…` lines are skipped (that skill calls the tools itself); other lines are handled as usual                                                                                                           |
+| `additionalContext` / `systemMessage` over 10,000 characters are replaced by a file path | our largest answer is capped below 9,800 characters (the 8000 / 4000 data caps plus fixed text); a test builds the worst case for all three events                                                                           |
+| MCP tools are named `mcp__<server>__<tool>`                                              | our own text names them `mcp__mwf__mwf_recall` etc. for host `claude` (server name `mwf`); stored memory is never rewritten                                                                                                  |
+
+`import … from '@zht7063/mwf/hooks'` exposes the handlers and the Codex and Claude adapters for tests and for the generated Pi extension. `renderSkillMd(skill, 'claude')` from `src/skills` renders the skill files with Claude tool names.
 
 ## Locking
 

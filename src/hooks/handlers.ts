@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { ENTRY, skillByName } from '../skills/index.ts';
+import { ENTRY, renderForHost, skillByName } from '../skills/index.ts';
 import {
   callTool,
   confirmHost,
@@ -25,6 +25,8 @@ import { FAILURE_NOTICE, UNINITIALIZED_NOTICE } from './messages.ts';
  *  - it needs no terminal and never calls anything that executes a destructive operation;
  *  - locks are waited for only HOOK_LOCK_WAIT_MS: a busy lock means "read the existing index" for a
  *    read and "give up" for a write;
+ *  - SessionStart `resume` skips the overview only when the stored hash of the last injected
+ *    overview equals the current one; anything unknown injects (fail toward injecting);
  *  - optional bookkeeping writes are returned as `after`, to run once the answer has been sent.
  */
 
@@ -33,7 +35,7 @@ export interface HookContext {
   cwd: string;
   /** Host session id (absent or invalid: no session bookkeeping). */
   session_id?: string;
-  /** Host name for registration (`codex`, `pi`). */
+  /** Host name for registration (`codex`, `claude`, `pi`); `claude` also renders tool names as `mcp__mwf__…`. */
   host: string;
   /** Test seams. */
   nonce?: () => string;
@@ -113,6 +115,7 @@ export async function sessionStart(
     // The host's own compaction is trusted; nothing is re-injected after it.
     if (input.source === 'compact') return {};
     const env = hookEnv(hc);
+    const r = (ours: string): string => renderForHost(ours, hc.host);
     const boot = await tool('mwf_bootstrap', { max_entries: 40 }, env);
     if (!boot.ok) {
       if (boot.code === 'NOT_INITIALIZED') {
@@ -140,7 +143,7 @@ export async function sessionStart(
     );
     for (const e of entries) lines.push(`- [${e.type}] ${e.id}: ${e.title}`);
     if (data['memory']?.truncated)
-      lines.push('- … more records exist; use mwf_recall to search them.');
+      lines.push(r('- … more records exist; use mwf_recall to search them.'));
     if (open.length) {
       lines.push('', `Open handoffs (${open.length}):`);
       for (const h of open) lines.push(`- ${h.task} (updated ${h.updated}): ${h.summary}`);
@@ -151,15 +154,38 @@ export async function sessionStart(
       lines,
       SESSION_START_CHARS,
       (hc.nonce ?? newNonce)(),
+      r,
     );
-    const parts = [ENTRY, '', block.text];
-    const trashNote = data['trash']?.note;
-    if (typeof trashNote === 'string' && trashNote) parts.push('', oneLine(trashNote, 200));
+    const parts = [r(ENTRY), '', block.text];
+    const trashNote: unknown = data['trash']?.note;
+    if (typeof trashNote === 'string' && trashNote) parts.push('', r(oneLine(trashNote, 200)));
     const warnings: unknown[] = Array.isArray(data['warnings']) ? data['warnings'] : [];
-    for (const w of warnings.slice(0, 3)) parts.push('', `mwf warning: ${oneLine(String(w), 200)}`);
+    for (const w of warnings.slice(0, 3))
+      parts.push('', r(`mwf warning: ${oneLine(String(w), 200)}`));
 
     const session = validSession(hc);
     const startsFresh = input.source !== 'resume';
+    // Hash of everything content-bearing in what would be injected (not the nonce, not our fixed
+    // text): memory counts and entries, handoffs, trash note, warnings.
+    const overview = createHash('sha256')
+      .update(JSON.stringify([lines, trashNote ?? null, warnings.slice(0, 3).map(String)]))
+      .digest('hex')
+      .slice(0, 32);
+    if (!startsFresh && session !== null) {
+      // Resume: the host's transcript already holds the overview. Skip only when the stored hash
+      // is readable and equal; a missing or unreadable state.toml, a missing hash, an old hash or
+      // any failure injects again (never skips on doubt).
+      const known = resultOf(await getSession(session, env));
+      const stored = known.ok ? known.data['session']?.overview : undefined;
+      if (typeof stored === 'string' && stored === overview) {
+        return {
+          after: async () => {
+            if (!withinSoftBudget(hc)) return;
+            await confirmHost({ host: hc.host, channel: 'hook' }, env).catch(() => undefined);
+          },
+        };
+      }
+    }
     const handoffTask = open.length === 1 ? open[0]!.task : undefined;
     return {
       inject: parts.join('\n'),
@@ -171,6 +197,7 @@ export async function sessionStart(
           {
             session_id: session,
             ...(startsFresh ? { injected: [] } : {}),
+            overview,
             ...(handoffTask !== undefined && TASK_NAME_RE.test(handoffTask)
               ? { handoff: handoffTask }
               : {}),
@@ -228,6 +255,7 @@ export async function userPrompt(input: { prompt?: string }, hc: HookContext): P
       fresh.map((h) => `- [${h.type ?? 'record'}] ${h.id}: ${h.title}: ${h.snippet}`),
       PROMPT_CHARS,
       (hc.nonce ?? newNonce)(),
+      (ours) => renderForHost(ours, hc.host),
     );
     return {
       inject: block.text,
@@ -250,17 +278,22 @@ export async function userPrompt(input: { prompt?: string }, hc: HookContext): P
 
 // ---- stop ------------------------------------------------------------------------------------
 
-/** Turn key: derived from the host's turn id, or, without one, from the last message. */
+/**
+ * Turn key: derived from the host's turn id (Codex `turn_id`), else the prompt id (Claude Code
+ * `prompt_id`, which Claude Code's Stop input has instead of a turn id), else the last message.
+ */
 export function turnKey(
   sessionId: string,
-  input: { turn_id?: unknown; last_assistant_message?: unknown },
+  input: { turn_id?: unknown; prompt_id?: unknown; last_assistant_message?: unknown },
 ): string | null {
   const source =
     typeof input.turn_id === 'string' && input.turn_id
       ? ['t', input.turn_id]
-      : typeof input.last_assistant_message === 'string' && input.last_assistant_message.trim()
-        ? ['m', input.last_assistant_message]
-        : null;
+      : typeof input.prompt_id === 'string' && input.prompt_id
+        ? ['p', input.prompt_id]
+        : typeof input.last_assistant_message === 'string' && input.last_assistant_message.trim()
+          ? ['m', input.last_assistant_message]
+          : null;
   if (source === null) return null;
   return createHash('sha256')
     .update(JSON.stringify([sessionId, ...source]))
@@ -268,10 +301,10 @@ export function turnKey(
     .slice(0, 24);
 }
 
-function stopReason(handoffTask: string | undefined): string {
+function stopReason(handoffTask: string | undefined, host: string): string {
   const handoff = skillByName('mwf-handoff')!;
   const save = skillByName('mwf-save')!;
-  return [
+  const text = [
     'mwf end-of-turn check (once per turn, then you may finish).',
     '1. If this turn changed files or moved a task forward, follow the mwf-handoff skill below' +
       (handoffTask ? ` (this session continues the task "${handoffTask}")` : '') +
@@ -284,6 +317,7 @@ function stopReason(handoffTask: string | undefined): string {
     `## Skill: ${save.name}`,
     save.body,
   ].join('\n');
+  return renderForHost(text, host);
 }
 
 /**
@@ -294,7 +328,12 @@ function stopReason(handoffTask: string | undefined): string {
  * continuation. Nothing is shown to the user on failure.
  */
 export async function stop(
-  input: { stop_hook_active?: unknown; turn_id?: unknown; last_assistant_message?: unknown },
+  input: {
+    stop_hook_active?: unknown;
+    turn_id?: unknown;
+    prompt_id?: unknown;
+    last_assistant_message?: unknown;
+  },
   hc: HookContext,
 ): Promise<HookResult> {
   try {
@@ -321,7 +360,7 @@ export async function stop(
       typeof known?.handoff === 'string' && TASK_NAME_RE.test(known.handoff)
         ? known.handoff
         : undefined;
-    return { block: stopReason(task) };
+    return { block: stopReason(task, hc.host) };
   } catch {
     return {};
   }
