@@ -18,6 +18,8 @@ export interface DedupEntry {
 export interface SessionEntry {
   handoff?: string;
   injected?: string[];
+  /** Stop-hook guard: the turn the Stop hook already continued once (see src/hooks). */
+  stop_turn?: string;
   updated: string;
 }
 
@@ -88,11 +90,16 @@ export function readState(layout: Layout): State {
 export function stringifyState(state: State): string {
   const sessions: Record<string, unknown> = {};
   for (const key of Object.keys(state.sessions).sort()) {
-    const s = state.sessions[key] as SessionEntry;
+    // Fields this version does not know (written by a newer mwf) are kept as they are.
+    const { handoff, injected, stop_turn, updated, ...unknown } = state.sessions[
+      key
+    ] as SessionEntry;
     sessions[key] = {
-      ...(s.handoff !== undefined ? { handoff: s.handoff } : {}),
-      ...(s.injected ? { injected: s.injected } : {}),
-      updated: s.updated,
+      ...unknown,
+      ...(handoff !== undefined ? { handoff } : {}),
+      ...(injected ? { injected } : {}),
+      ...(stop_turn !== undefined ? { stop_turn } : {}),
+      updated,
     };
   }
   return TOML.stringify({ schema: state.schema, sessions } as unknown as TOML.JsonMap);

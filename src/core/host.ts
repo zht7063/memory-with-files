@@ -43,6 +43,13 @@ export interface SessionInput extends WriteInput {
   session_id: string;
   handoff?: string;
   injected?: string[];
+  /** Stop-hook guard marker (the turn that was already continued once). */
+  stop_turn?: string;
+  /**
+   * With `stop_turn`: claim the turn atomically. Under the lock, when the session already holds
+   * this very `stop_turn` nothing is written and the result says `claimed: false`.
+   */
+  claim_stop_turn?: boolean;
 }
 
 export function getSession(ctx: Ctx, sessionId: string): SessionEntry | null {
@@ -54,25 +61,42 @@ export function getSession(ctx: Ctx, sessionId: string): SessionEntry | null {
 export async function setSession(ctx: Ctx, input: SessionInput) {
   if (!/^[A-Za-z0-9._:-]{1,128}$/.test(String(input.session_id)))
     throw invalid('invalid session_id');
+  if (input.stop_turn !== undefined && !/^[A-Za-z0-9._:-]{1,128}$/.test(String(input.stop_turn)))
+    throw invalid('invalid stop_turn');
   const injected = input.injected?.map(String).slice(-200);
-  return runWrite<{ session_id: string }>(
+  return runWrite<{ session_id: string; claimed: boolean }>(
     ctx,
     'session.set',
     input,
-    { s: input.session_id, h: input.handoff, i: injected },
+    {
+      s: input.session_id,
+      h: input.handoff,
+      i: injected,
+      t: input.stop_turn,
+      c: input.claim_stop_turn === true,
+    },
     (env) => {
       const state = readState(env.layout);
       const prev = state.sessions[input.session_id];
-      const next: SessionEntry = { updated: isoTime(env.now) };
+      if (
+        input.claim_stop_turn &&
+        input.stop_turn !== undefined &&
+        prev?.stop_turn === input.stop_turn
+      ) {
+        return { targets: [], result: { session_id: input.session_id, claimed: false } };
+      }
+      const next: SessionEntry = { ...prev, updated: isoTime(env.now) };
       const handoff = input.handoff ?? prev?.handoff;
       const inj = injected ?? prev?.injected;
+      const turn = input.stop_turn ?? prev?.stop_turn;
       if (handoff !== undefined) next.handoff = handoff;
       if (inj !== undefined) next.injected = inj;
+      if (turn !== undefined) next.stop_turn = turn;
       state.sessions[input.session_id] = next;
       pruneSessions(state);
       return {
         targets: [{ path: 'state.toml', content: stringifyState(state) }],
-        result: { session_id: input.session_id },
+        result: { session_id: input.session_id, claimed: true },
       };
     },
   );

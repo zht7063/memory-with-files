@@ -295,6 +295,8 @@ export interface StatusResult {
     holder_pid: number | null;
   };
   host: Record<string, Record<string, string>>;
+  /** Per-project hook switches from config.toml. */
+  hooks: { stop: boolean };
   hints: string[];
   warnings: string[];
 }
@@ -359,6 +361,7 @@ export async function status(ctx: Ctx): Promise<StatusResult> {
         holder_pid: lock.holder?.pid ?? null,
       },
       host: readHost(layout.hostLocal),
+      hooks: { stop: config?.hooks_stop ?? true },
       hints,
       warnings,
     };
