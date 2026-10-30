@@ -1,33 +1,25 @@
-import * as core from '../core/index.ts';
+import { randomUUID } from 'node:crypto';
 import { COMMANDS, findCommand, type Access, type CliEnv, type Command } from './commands.ts';
+import { toError, type CliResult } from './result.ts';
 
 export { COMMANDS, findCommand, resolveCtx } from './commands.ts';
+export { confirmHost } from './host.ts';
+export type { ConfirmHostArgs } from './host.ts';
+export { shellCommandFor } from './shellcmd.ts';
 export type { Access, CliEnv, Command } from './commands.ts';
 export type { ObjectSchema, Schema } from './schema.ts';
+export { toError } from './result.ts';
+export { MWF_VERSION } from '../core/index.ts';
+export type { CliError, CliResult } from './result.ts';
 
-export interface CliError {
-  /** A core error code, or one of the CLI's own. */
-  code: core.MwfErrorCode | 'UNKNOWN_COMMAND' | 'INTERNAL';
-  message: string;
-  details: Record<string, unknown>;
-}
-
-/** What every CLI function returns; it never throws. MCP maps it onto a tool result unchanged. */
-export type CliResult<T = unknown> = { ok: true; data: T } | { ok: false; error: CliError };
-
-export function toError(error: unknown): CliError {
-  if (error instanceof core.MwfError) {
-    return { code: error.code, message: error.message, details: error.details };
-  }
-  // Anything else is a bug or an environment fault: keep the message, never a stack or file contents.
-  return {
-    code: 'INTERNAL',
-    message: error instanceof Error ? error.message : String(error),
-    details: {},
-  };
-}
-
-/** Run a CLI function by name. */
+/**
+ * Run a CLI function by name.
+ *
+ * Every call that changes the project carries a request_id (the caller's, or `cli-<uuid>`), and a
+ * failure reports it in `error.details.request_id`: whatever state a failed first attempt left
+ * behind, repeating the call with the same id applies it exactly once. Shell, MCP and hooks all
+ * get this from here.
+ */
 export async function run(name: string, input: unknown, env: CliEnv = {}): Promise<CliResult> {
   const command = findCommand(name);
   if (!command) {
@@ -36,10 +28,20 @@ export async function run(name: string, input: unknown, env: CliEnv = {}): Promi
       error: { code: 'UNKNOWN_COMMAND', message: `unknown command: ${name}`, details: { name } },
     };
   }
+  let args = (input ?? {}) as Record<string, unknown>;
+  const plain = typeof args === 'object' && !Array.isArray(args);
+  if (plain && 'request_id' in command.input.properties && command.writes(args)) {
+    args = { ...args, request_id: args['request_id'] ?? `cli-${randomUUID()}` };
+  }
   try {
-    return { ok: true, data: await command.run((input ?? {}) as Record<string, unknown>, env) };
+    return { ok: true, data: await command.run(args, env) };
   } catch (error) {
-    return { ok: false, error: toError(error) };
+    const failure = toError(error);
+    const requestId = plain ? args['request_id'] : undefined;
+    if (typeof requestId === 'string') {
+      failure.details = { ...failure.details, request_id: requestId };
+    }
+    return { ok: false, error: failure };
   }
 }
 
@@ -67,7 +69,7 @@ export const forget = byName('forget');
 export const restore = byName('restore');
 export const purge = byName('purge');
 
-/** Names of the commands that may be run from a shell: the read-only ones plus add and handoff. */
+/** Names of the commands that may be run from a shell (the read-only ones, add, handoff, and the destructive ones). */
 export const SHELL_COMMANDS: readonly string[] = COMMANDS.filter((c) => c.shell).map((c) => c.name);
 
 export function accessOf(name: string): Access | undefined {

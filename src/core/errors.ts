@@ -11,6 +11,7 @@ export type MwfErrorCode =
   | 'PREVIEW_MISMATCH'
   | 'SECRET_DETECTED'
   | 'GIT_MODE_CONFLICT'
+  | 'NOT_GIT_ROOT'
   | 'INDEX_UNAVAILABLE';
 
 /** Error with a stable machine-readable code (surfaced unchanged by the CLI/MCP layers). */

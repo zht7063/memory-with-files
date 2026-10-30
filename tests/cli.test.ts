@@ -8,7 +8,7 @@ import { main, MAX_INPUT_BYTES, type Io } from '../src/cli/main.ts';
 import { readLimited, StdinTooLarge } from '../src/cli/stdin.ts';
 import { validate, type ObjectSchema } from '../src/cli/schema.ts';
 import { withLock } from '../src/core/write.ts';
-import { project, runChild, tmpDir } from './helpers/util.ts';
+import { gitRepo, project, runChild, tmpDir } from './helpers/util.ts';
 
 const FAST = { waitMs: 3000, lockStaleMs: 300 };
 
@@ -129,13 +129,16 @@ describe('CLI functions', () => {
   it('shell commands: the read-only diagnostics plus add and handoff; destructive ones take confirm + preview_token', () => {
     assert.deepEqual([...cli.SHELL_COMMANDS].sort(), [
       'add',
+      'compact',
       'doctor',
+      'forget',
       'handoff',
+      'inbox',
+      'purge',
       'recall',
       'status',
     ]);
     for (const c of cli.COMMANDS) {
-      if (c.shell) assert.notEqual(c.access, 'destructive', c.name);
       if (c.access === 'destructive') {
         assert.ok('confirm' in c.input.properties && 'preview_token' in c.input.properties, c.name);
       }
@@ -149,7 +152,7 @@ describe('CLI functions', () => {
   });
 
   it('runs the whole memory lifecycle through the structured functions', async () => {
-    const root = tmpDir();
+    const root = gitRepo();
     const env = { cwd: root, ctx: FAST };
     const init = await ok(cli.init({ git_mode: 'track' }, env));
     assert.equal(init['created'], true);
@@ -247,16 +250,20 @@ describe('CLI functions', () => {
     await fails(cli.add({ ...input, title: 'Different' }, env), 'REQUEST_ID_REUSED');
   });
 
-  it('finds the project from a subdirectory; init there reuses the project instead of nesting', async () => {
+  it('finds the project from a subdirectory; init there is refused (it only runs at the git root)', async () => {
     const ctx = await project();
     const sub = join(ctx.root, 'packages', 'a');
     mkdirSync(sub, { recursive: true });
     const env = { cwd: sub, ctx: FAST };
     await ok(cli.add({ type: 'knowledge', title: 'From sub', body: 'found upwards' }, env));
-    const again = await ok(cli.init({ git_mode: 'track' }, env));
-    assert.equal(again['created'], false);
-    assert.equal(again['root'], ctx.root);
-    await fails(cli.init({ git_mode: 'local' }, env), 'GIT_MODE_CONFLICT');
+    const refused = await fails(cli.init({ git_mode: 'track' }, env), 'NOT_GIT_ROOT');
+    assert.match(refused.message, /not its root/);
+    assert.equal(refused.details['git_root'], ctx.root);
+    assert.equal(existsSync(join(sub, '.mwf')), false, 'no nested .mwf/');
+    // at the root, init is idempotent and a conflicting git_mode is still refused
+    const root = { cwd: ctx.root, ctx: FAST };
+    assert.equal((await ok(cli.init({ git_mode: 'track' }, root)))['created'], false);
+    await fails(cli.init({ git_mode: 'local' }, root), 'GIT_MODE_CONFLICT');
   });
 
   it('reports NOT_INITIALIZED outside a project, and bad input as INVALID_ARGUMENT', async () => {
@@ -427,26 +434,17 @@ describe('mwf command line', () => {
 
   it('writes are not reachable from the shell; later-PR commands say so', async () => {
     const ctx = await project();
-    for (const name of [
-      'forget',
-      'init',
-      'purge',
-      'edit',
-      'propose',
-      'inbox',
-      'compact',
-      'reindex',
-      'restore',
-    ]) {
+    for (const name of ['init', 'edit', 'propose', 'reindex', 'restore']) {
       const r = await sh([name], ctx.root);
       assert.equal(r.code, 2);
       assert.match(r.err, /MCP tool/);
     }
-    for (const name of ['hook', 'mcp', 'install', 'uninstall', 'update']) {
+    for (const name of ['hook', 'install', 'uninstall', 'update']) {
       const r = await sh([name], ctx.root);
       assert.equal(r.code, 2);
       assert.match(r.err, /not part of this build yet/);
     }
+    assert.match((await sh(['mcp'], ctx.root)).err, /mwf executable/);
   });
 
   it('help and version; hook / mcp stay out of --help', async () => {
@@ -878,7 +876,7 @@ describe('mwf add and handoff from the shell', () => {
 
   it('other writes stay MCP-only; the executable pipes stdin through', async () => {
     const ctx = await project();
-    for (const name of ['edit', 'propose', 'forget']) {
+    for (const name of ['edit', 'propose', 'init']) {
       const r = await sh([name, '--help'], ctx.root);
       assert.equal(r.code, 2);
     }
@@ -986,5 +984,220 @@ describe('stdin is limited while it streams', () => {
     }
     const status = JSON.parse((await sh(['status', '--json'], ctx.root)).out);
     assert.equal(status.data.records.task.active, 0);
+  });
+});
+
+describe('destructive commands from the shell: preview, then --confirm --preview-token', () => {
+  const FAST_CTX = { waitMs: 3000, lockStaleMs: 300 };
+
+  async function seeded(): Promise<{ root: string; ids: string[] }> {
+    const ctx = await project();
+    const env = { root: ctx.root, ctx: FAST_CTX };
+    const ids: string[] = [];
+    for (const title of ['First', 'Second']) {
+      ids.push(
+        String((await ok(cli.add({ type: 'knowledge', title, body: `${title} body` }, env)))['id']),
+      );
+    }
+    return { root: ctx.root, ids };
+  }
+
+  const tokenOf = (text: string): string => /preview_token: (\S+)/.exec(text)![1]!;
+  const recallIds = async (root: string): Promise<string[]> => {
+    const r = await ok(cli.recall({ limit: 50, status: 'all' }, { root }));
+    return (r['hits'] as Array<{ id: string }>).map((h) => h.id);
+  };
+
+  it('forget: without --confirm it only previews and prints the token and the command to run', async () => {
+    const { root, ids } = await seeded();
+    const r = await sh(['forget', '--id', ids[0]!, '--reason', 'it is old'], root);
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /nothing was changed; 1 affected/);
+    assert.match(
+      r.out,
+      new RegExp(
+        `to execute: mwf forget --id ${ids[0]} --reason 'it is old' --confirm --preview-token ${tokenOf(r.out)}`,
+      ),
+    );
+    assert.deepEqual((await recallIds(root)).sort(), [...ids].sort());
+  });
+
+  it('--confirm without --preview-token is refused with CONFIRM_REQUIRES_TOKEN and deletes nothing', async () => {
+    const { root, ids } = await seeded();
+    const r = await sh(['forget', '--id', ids[0]!, '--confirm'], root);
+    assert.equal(r.code, 1);
+    assert.match(r.err, /CONFIRM_REQUIRES_TOKEN/);
+    const j = JSON.parse((await sh(['forget', '--id', ids[0]!, '--confirm', '--json'], root)).out);
+    assert.equal(j.error.code, 'CONFIRM_REQUIRES_TOKEN');
+    assert.deepEqual((await recallIds(root)).sort(), [...ids].sort());
+    assert.equal(
+      ((await ok(cli.restore({}, { root }))) as { entries: unknown[] })['entries'].length,
+      0,
+    );
+  });
+
+  it('--preview-token without --confirm is a usage error and changes nothing', async () => {
+    const { root, ids } = await seeded();
+    const r = await sh(['forget', '--id', ids[0]!, '--preview-token', 'abc'], root);
+    assert.equal(r.code, 2);
+    assert.deepEqual((await recallIds(root)).sort(), [...ids].sort());
+  });
+
+  it('--confirm --preview-token executes; the token is re-verified under the lock', async () => {
+    const { root, ids } = await seeded();
+    const token = tokenOf((await sh(['forget', '--id', ids[0]!], root)).out);
+
+    const wrong = await sh(
+      ['forget', '--id', ids[0]!, '--confirm', '--preview-token', 'nope'],
+      root,
+    );
+    assert.equal(wrong.code, 1);
+    assert.match(wrong.err, /PREVIEW_MISMATCH/);
+    assert.equal((await recallIds(root)).length, 2);
+
+    // the record changed after the preview: the old token must not authorise the deletion
+    const rec = await ok(cli.get({ id: ids[0] }, { root }));
+    await ok(cli.edit({ id: ids[0], expected_hash: rec['hash'], body: 'edited since' }, { root }));
+    const stale = await sh(
+      ['forget', '--id', ids[0]!, '--confirm', '--preview-token', token],
+      root,
+    );
+    assert.equal(stale.code, 1);
+    assert.match(stale.err, /PREVIEW_MISMATCH/);
+    assert.equal((await recallIds(root)).length, 2);
+
+    const fresh = tokenOf((await sh(['forget', '--id', ids[0]!], root)).out);
+    const done = await sh(
+      ['forget', '--id', ids[0]!, '--confirm', '--preview-token', fresh, '--json'],
+      root,
+    );
+    assert.equal(done.code, 0, done.err);
+    assert.match(JSON.parse(done.out).data.request_id, /^cli-/);
+    assert.deepEqual(await recallIds(root), [ids[1]]);
+    const trash = (await ok(cli.restore({}, { root }))) as { entries: Array<{ id: string }> };
+    assert.deepEqual(
+      trash['entries'].map((e) => e.id),
+      [ids[0]],
+    );
+  });
+
+  it('purge: preview, refused without a token, then permanently deletes the trash entry', async () => {
+    const { root, ids } = await seeded();
+    const t1 = tokenOf((await sh(['forget', '--id', ids[0]!], root)).out);
+    await sh(['forget', '--id', ids[0]!, '--confirm', '--preview-token', t1], root);
+    const pre = await sh(['purge', '--id', ids[0]!], root);
+    assert.equal(pre.code, 0, pre.err);
+    assert.match(pre.out, /to execute: mwf purge --id \S+ --confirm --preview-token /);
+    const bare = await sh(['purge', '--id', ids[0]!, '--confirm'], root);
+    assert.match(bare.err, /CONFIRM_REQUIRES_TOKEN/);
+    assert.equal(
+      ((await ok(cli.restore({}, { root }))) as { entries: unknown[] })['entries'].length,
+      1,
+    );
+    const done = await sh(
+      ['purge', '--id', ids[0]!, '--confirm', '--preview-token', tokenOf(pre.out)],
+      root,
+    );
+    assert.equal(done.code, 0, done.err);
+    assert.equal(
+      ((await ok(cli.restore({}, { root }))) as { entries: unknown[] })['entries'].length,
+      0,
+    );
+  });
+
+  it('compact and inbox discard follow the same two steps', async () => {
+    const ctx = await project();
+    const env = { root: ctx.root, ctx: FAST_CTX };
+    const a = await ok(cli.add({ type: 'knowledge', title: 'Same', body: 'identical body' }, env));
+    const b = await ok(
+      cli.add({ type: 'knowledge', title: 'same', body: 'identical   body' }, env),
+    );
+    const pre = await sh(['compact'], ctx.root);
+    assert.equal(pre.code, 0, pre.err);
+    assert.match(pre.out, /1 affected/);
+    assert.match((await sh(['compact', '--confirm'], ctx.root)).err, /CONFIRM_REQUIRES_TOKEN/);
+    assert.equal((await recallIds(ctx.root)).length, 2);
+    const done = await sh(['compact', '--confirm', '--preview-token', tokenOf(pre.out)], ctx.root);
+    assert.equal(done.code, 0, done.err);
+    assert.deepEqual(await recallIds(ctx.root), [a['id']]);
+    assert.notEqual(a['id'], b['id']);
+
+    const p = await ok(cli.propose({ text: 'maybe?' }, env));
+    const entry = String(p['entry_id']);
+    assert.equal((await sh(['inbox'], ctx.root)).code, 0);
+    const prev = await sh(['inbox', 'discard', '--entry-id', entry], ctx.root);
+    assert.equal(prev.code, 0, prev.err);
+    assert.match(
+      prev.out,
+      new RegExp(`to execute: mwf inbox discard --entry-id ${entry} --confirm --preview-token `),
+    );
+    assert.match(
+      (await sh(['inbox', 'discard', '--entry-id', entry, '--confirm'], ctx.root)).err,
+      /CONFIRM_REQUIRES_TOKEN/,
+    );
+    assert.equal(((await ok(cli.inbox({}, env))) as { total: number })['total'], 1);
+    const gone = await sh(
+      ['inbox', 'discard', '--entry-id', entry, '--confirm', '--preview-token', tokenOf(prev.out)],
+      ctx.root,
+    );
+    assert.equal(gone.code, 0, gone.err);
+    assert.equal(((await ok(cli.inbox({}, env))) as { total: number })['total'], 0);
+  });
+
+  it('forget needs --id; inbox accept needs exactly one --entry-id', async () => {
+    const { root } = await seeded();
+    assert.equal((await sh(['forget'], root)).code, 2);
+    assert.equal((await sh(['inbox', 'accept'], root)).code, 2);
+    assert.equal((await sh(['inbox', 'discard'], root)).code, 2);
+    assert.equal((await sh(['inbox', 'wipe'], root)).code, 2);
+  });
+});
+
+describe('request_id lives in cli.run', () => {
+  it('every writing call gets a request_id; previews and reads do not; failures report it', async () => {
+    const ctx = await project();
+    const env = { root: ctx.root, ctx: FAST };
+    const added = await ok(cli.add({ type: 'decision', title: 'D', body: 'b' }, env));
+    assert.match(String(added.request_id), /^cli-/);
+    const given = await ok(
+      cli.add({ type: 'decision', title: 'D2', body: 'b2', request_id: 'mine-1' }, env),
+    );
+    assert.equal(given.request_id, 'mine-1');
+    const preview = await ok(cli.forget({ ids: [String(added['id'])] }, env));
+    assert.equal(preview['preview'], true);
+    assert.equal(
+      'request_id' in preview,
+      false,
+      'a preview writes nothing, so it has no request_id',
+    );
+    const bad = await fails(cli.add({ type: 'decision', title: 'x' }, env), 'INVALID_ARGUMENT');
+    assert.match(String(bad.details['request_id']), /^cli-/);
+    const secret = await fails(
+      cli.add(
+        { type: 'knowledge', title: 's', body: `k AKIA${'ABCDEFGHIJKLMNOP'}`, request_id: 'sec-1' },
+        env,
+      ),
+      'SECRET_DETECTED',
+    );
+    assert.equal(secret.details['request_id'], 'sec-1');
+    assert.equal('request_id' in (await ok(cli.status({}, env))), false);
+  });
+
+  it('confirmHost records a host once and is not a command', async () => {
+    const ctx = await project();
+    const env = { root: ctx.root, ctx: FAST };
+    assert.equal(
+      cli.COMMANDS.some((c) => c.name === 'confirmHost' || c.name === 'confirm_host'),
+      false,
+    );
+    const first = await ok(cli.confirmHost({ host: 'codex', channel: 'mcp' }, env));
+    assert.equal(first['changed'], true);
+    const again = await ok(cli.confirmHost({ host: 'codex', channel: 'mcp' }, env));
+    assert.equal(again['changed'], false);
+    await fails(cli.confirmHost({ host: 'Bad Host', channel: 'mcp' }, env), 'INVALID_ARGUMENT');
+    await fails(
+      cli.confirmHost({ host: 'codex', channel: 'mcp' }, { cwd: tmpDir() }),
+      'NOT_INITIALIZED',
+    );
   });
 });

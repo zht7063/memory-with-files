@@ -24,8 +24,13 @@ export interface Command {
   name: string;
   description: string;
   access: Access;
-  /** Exposed as a shell command line (`mwf <name>`): status, recall, doctor, add, handoff. */
+  /**
+   * Exposed as a shell command line (`mwf <name>`): status, recall, doctor, add, handoff, and the
+   * destructive commands (forget, purge, compact, inbox), whose execution is shell-only.
+   */
   shell: boolean;
+  /** Whether this call changes the project (and so takes a request_id for exactly-once retries). */
+  writes(input: Record<string, unknown>): boolean;
   /** JSON-Schema description of the input; validated before core is called. */
   input: ObjectSchema;
   run(input: Record<string, unknown>, env: CliEnv): Promise<unknown>;
@@ -83,6 +88,10 @@ const WRITE_PROPS = {
   wait_ms: int('Lock wait budget in ms (0-600000).', 0, 600_000),
 } as const;
 
+/**
+ * Destructive commands preview unless `confirm` + `preview_token` are given. Only the shell passes
+ * them: the MCP tools never execute (see src/mcp), they preview and hand back the shell command.
+ */
 const DESTRUCTIVE_PROPS = {
   confirm: bool('Execute. Without it the call only previews. Requires preview_token.'),
   preview_token: str('Token returned by the preview of the same operation.'),
@@ -98,8 +107,11 @@ function object(
 /** The project a command works on, as a core context. */
 export function resolveCtx(env: CliEnv, mode: 'existing' | 'init' = 'existing'): core.Ctx {
   const cwd = env.cwd ?? process.cwd();
+  // init creates the project exactly where it is run (and core insists that is a git root);
+  // every other command finds the .mwf/ that init created by walking up from the directory.
+  if (mode === 'init') return { ...env.ctx, root: env.root ?? cwd };
   const found = env.root ?? core.findProjectRoot(cwd);
-  if (found === null && mode === 'existing') {
+  if (found === null) {
     throw new core.MwfError(
       'NOT_INITIALIZED',
       `no .mwf/ found in ${cwd} or any parent; initialize it with the MCP tool mwf_init ` +
@@ -107,8 +119,7 @@ export function resolveCtx(env: CliEnv, mode: 'existing' | 'init' = 'existing'):
       { cwd },
     );
   }
-  // init inside an already initialised project targets that project (never a nested .mwf/).
-  return { ...env.ctx, root: found ?? cwd };
+  return { ...env.ctx, root: found };
 }
 
 type Fn = (ctx: core.Ctx, input: never) => Promise<unknown> | unknown;
@@ -119,13 +130,21 @@ function command(
   access: Access,
   input: ObjectSchema,
   fn: Fn,
-  options: { shell?: boolean; init?: boolean } = {},
+  options: {
+    shell?: boolean;
+    init?: boolean;
+    writes?: (input: Record<string, unknown>) => boolean;
+  } = {},
 ): Command {
   return {
     name,
     description,
     access,
     shell: options.shell ?? false,
+    writes:
+      options.writes ??
+      ((i) =>
+        access === 'write' ? true : access === 'destructive' ? i['confirm'] === true : false),
     input,
     async run(raw, env) {
       const value = validate(input, raw);
@@ -280,6 +299,7 @@ export const COMMANDS: readonly Command[] = [
       ...WRITE_PROPS,
     }),
     core.inbox,
+    { shell: true, writes: (i) => i['confirm'] === true || i['action'] === 'accept' },
   ),
   command(
     'compact',
@@ -291,6 +311,7 @@ export const COMMANDS: readonly Command[] = [
       ...WRITE_PROPS,
     }),
     core.compact,
+    { shell: true },
   ),
   command(
     'reindex',
@@ -313,6 +334,7 @@ export const COMMANDS: readonly Command[] = [
       ['ids'],
     ),
     core.forget,
+    { shell: true },
   ),
   command(
     'restore',
@@ -320,6 +342,7 @@ export const COMMANDS: readonly Command[] = [
     'write',
     object({ id: str('Record id or trash id; omit to list the trash.'), ...WRITE_PROPS }),
     core.restore,
+    { writes: (i) => i['id'] !== undefined },
   ),
   command(
     'purge',
@@ -331,6 +354,7 @@ export const COMMANDS: readonly Command[] = [
       ...WRITE_PROPS,
     }),
     core.purge,
+    { shell: true },
   ),
 ];
 
