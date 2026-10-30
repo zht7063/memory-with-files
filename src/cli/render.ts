@@ -149,7 +149,7 @@ export function renderMaintenance(
     const token = String(d['preview_token'] ?? '');
     lines.push(`preview_token: ${token}`);
     const command = shellCommandFor(name, input, token);
-    if (command) lines.push(`to execute: ${command}`);
+    if (command) lines.push(`to execute, run this yourself in a terminal: ${command}`);
     return lines.join('\n');
   }
   return JSON.stringify(d, null, 2);

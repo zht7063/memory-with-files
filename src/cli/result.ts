@@ -2,7 +2,7 @@ import * as core from '../core/index.ts';
 
 export interface CliError {
   /** A core error code, or one of the CLI's own. */
-  code: core.MwfErrorCode | 'UNKNOWN_COMMAND' | 'INTERNAL';
+  code: core.MwfErrorCode | 'UNKNOWN_COMMAND' | 'CONFIRM_REQUIRES_TTY' | 'INTERNAL';
   message: string;
   details: Record<string, unknown>;
 }

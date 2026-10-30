@@ -27,6 +27,7 @@ process.exitCode = await main(process.argv.slice(2), {
   stdout: (text) => void process.stdout.write(text),
   stderr: (text) => void process.stderr.write(text),
   cwd: process.cwd(),
+  tty: { stdin: process.stdin.isTTY === true, stdout: process.stdout.isTTY === true },
   stdin: async (maxBytes) => {
     // Refuse to wait on an interactive terminal: `--body-file -` is for pipes and redirects.
     if (process.stdin.isTTY) throw new Error('standard input is a terminal; pipe the text in');

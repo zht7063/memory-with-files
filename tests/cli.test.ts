@@ -27,12 +27,17 @@ async function fails(p: Promise<cli.CliResult>, code: string): Promise<cli.CliEr
   return (r as { ok: false; error: cli.CliError }).error;
 }
 
-function io(cwd: string, stdin?: string): Io & { out: string; err: string } {
+function io(
+  cwd: string,
+  stdin?: string,
+  tty?: { stdin: boolean; stdout: boolean },
+): Io & { out: string; err: string } {
   const sink = {
     out: '',
     err: '',
     cwd,
     ...(stdin === undefined ? {} : { stdin: async () => stdin }),
+    ...(tty === undefined ? {} : { tty }),
     stdout: (t: string) => void (sink.out += t),
     stderr: (t: string) => void (sink.err += t),
   };
@@ -43,11 +48,16 @@ async function sh(
   argv: string[],
   cwd: string,
   stdin?: string,
+  tty?: { stdin: boolean; stdout: boolean },
 ): Promise<{ code: number; out: string; err: string }> {
-  const sink = io(cwd, stdin);
+  const sink = io(cwd, stdin, tty);
   const code = await main(argv, sink);
   return { code, out: sink.out, err: sink.err };
 }
+
+/** `sh` as typed by a person at an interactive terminal: stdin and stdout are both TTYs. */
+const TERMINAL = { stdin: true, stdout: true };
+const term = (argv: string[], cwd: string) => sh(argv, cwd, undefined, TERMINAL);
 
 describe('CLI schema validation', () => {
   const schema: ObjectSchema = {
@@ -1010,13 +1020,13 @@ describe('destructive commands from the shell: preview, then --confirm --preview
 
   it('forget: without --confirm it only previews and prints the token and the command to run', async () => {
     const { root, ids } = await seeded();
-    const r = await sh(['forget', '--id', ids[0]!, '--reason', 'it is old'], root);
+    const r = await term(['forget', '--id', ids[0]!, '--reason', 'it is old'], root);
     assert.equal(r.code, 0, r.err);
     assert.match(r.out, /nothing was changed; 1 affected/);
     assert.match(
       r.out,
       new RegExp(
-        `to execute: mwf forget --id ${ids[0]} --reason 'it is old' --confirm --preview-token ${tokenOf(r.out)}`,
+        `to execute, run this yourself in a terminal: mwf forget --id ${ids[0]} --reason 'it is old' --confirm --preview-token ${tokenOf(r.out)}`,
       ),
     );
     assert.deepEqual((await recallIds(root)).sort(), [...ids].sort());
@@ -1024,10 +1034,12 @@ describe('destructive commands from the shell: preview, then --confirm --preview
 
   it('--confirm without --preview-token is refused with CONFIRM_REQUIRES_TOKEN and deletes nothing', async () => {
     const { root, ids } = await seeded();
-    const r = await sh(['forget', '--id', ids[0]!, '--confirm'], root);
+    const r = await term(['forget', '--id', ids[0]!, '--confirm'], root);
     assert.equal(r.code, 1);
     assert.match(r.err, /CONFIRM_REQUIRES_TOKEN/);
-    const j = JSON.parse((await sh(['forget', '--id', ids[0]!, '--confirm', '--json'], root)).out);
+    const j = JSON.parse(
+      (await term(['forget', '--id', ids[0]!, '--confirm', '--json'], root)).out,
+    );
     assert.equal(j.error.code, 'CONFIRM_REQUIRES_TOKEN');
     assert.deepEqual((await recallIds(root)).sort(), [...ids].sort());
     assert.equal(
@@ -1038,16 +1050,16 @@ describe('destructive commands from the shell: preview, then --confirm --preview
 
   it('--preview-token without --confirm is a usage error and changes nothing', async () => {
     const { root, ids } = await seeded();
-    const r = await sh(['forget', '--id', ids[0]!, '--preview-token', 'abc'], root);
+    const r = await term(['forget', '--id', ids[0]!, '--preview-token', 'abc'], root);
     assert.equal(r.code, 2);
     assert.deepEqual((await recallIds(root)).sort(), [...ids].sort());
   });
 
   it('--confirm --preview-token executes; the token is re-verified under the lock', async () => {
     const { root, ids } = await seeded();
-    const token = tokenOf((await sh(['forget', '--id', ids[0]!], root)).out);
+    const token = tokenOf((await term(['forget', '--id', ids[0]!], root)).out);
 
-    const wrong = await sh(
+    const wrong = await term(
       ['forget', '--id', ids[0]!, '--confirm', '--preview-token', 'nope'],
       root,
     );
@@ -1058,7 +1070,7 @@ describe('destructive commands from the shell: preview, then --confirm --preview
     // the record changed after the preview: the old token must not authorise the deletion
     const rec = await ok(cli.get({ id: ids[0] }, { root }));
     await ok(cli.edit({ id: ids[0], expected_hash: rec['hash'], body: 'edited since' }, { root }));
-    const stale = await sh(
+    const stale = await term(
       ['forget', '--id', ids[0]!, '--confirm', '--preview-token', token],
       root,
     );
@@ -1066,8 +1078,8 @@ describe('destructive commands from the shell: preview, then --confirm --preview
     assert.match(stale.err, /PREVIEW_MISMATCH/);
     assert.equal((await recallIds(root)).length, 2);
 
-    const fresh = tokenOf((await sh(['forget', '--id', ids[0]!], root)).out);
-    const done = await sh(
+    const fresh = tokenOf((await term(['forget', '--id', ids[0]!], root)).out);
+    const done = await term(
       ['forget', '--id', ids[0]!, '--confirm', '--preview-token', fresh, '--json'],
       root,
     );
@@ -1083,18 +1095,21 @@ describe('destructive commands from the shell: preview, then --confirm --preview
 
   it('purge: preview, refused without a token, then permanently deletes the trash entry', async () => {
     const { root, ids } = await seeded();
-    const t1 = tokenOf((await sh(['forget', '--id', ids[0]!], root)).out);
-    await sh(['forget', '--id', ids[0]!, '--confirm', '--preview-token', t1], root);
-    const pre = await sh(['purge', '--id', ids[0]!], root);
+    const t1 = tokenOf((await term(['forget', '--id', ids[0]!], root)).out);
+    await term(['forget', '--id', ids[0]!, '--confirm', '--preview-token', t1], root);
+    const pre = await term(['purge', '--id', ids[0]!], root);
     assert.equal(pre.code, 0, pre.err);
-    assert.match(pre.out, /to execute: mwf purge --id \S+ --confirm --preview-token /);
-    const bare = await sh(['purge', '--id', ids[0]!, '--confirm'], root);
+    assert.match(
+      pre.out,
+      /to execute, run this yourself in a terminal: mwf purge --id \S+ --confirm --preview-token /,
+    );
+    const bare = await term(['purge', '--id', ids[0]!, '--confirm'], root);
     assert.match(bare.err, /CONFIRM_REQUIRES_TOKEN/);
     assert.equal(
       ((await ok(cli.restore({}, { root }))) as { entries: unknown[] })['entries'].length,
       1,
     );
-    const done = await sh(
+    const done = await term(
       ['purge', '--id', ids[0]!, '--confirm', '--preview-token', tokenOf(pre.out)],
       root,
     );
@@ -1112,31 +1127,36 @@ describe('destructive commands from the shell: preview, then --confirm --preview
     const b = await ok(
       cli.add({ type: 'knowledge', title: 'same', body: 'identical   body' }, env),
     );
-    const pre = await sh(['compact'], ctx.root);
+    const pre = await term(['compact'], ctx.root);
     assert.equal(pre.code, 0, pre.err);
     assert.match(pre.out, /1 affected/);
-    assert.match((await sh(['compact', '--confirm'], ctx.root)).err, /CONFIRM_REQUIRES_TOKEN/);
+    assert.match((await term(['compact', '--confirm'], ctx.root)).err, /CONFIRM_REQUIRES_TOKEN/);
     assert.equal((await recallIds(ctx.root)).length, 2);
-    const done = await sh(['compact', '--confirm', '--preview-token', tokenOf(pre.out)], ctx.root);
+    const done = await term(
+      ['compact', '--confirm', '--preview-token', tokenOf(pre.out)],
+      ctx.root,
+    );
     assert.equal(done.code, 0, done.err);
     assert.deepEqual(await recallIds(ctx.root), [a['id']]);
     assert.notEqual(a['id'], b['id']);
 
     const p = await ok(cli.propose({ text: 'maybe?' }, env));
     const entry = String(p['entry_id']);
-    assert.equal((await sh(['inbox'], ctx.root)).code, 0);
-    const prev = await sh(['inbox', 'discard', '--entry-id', entry], ctx.root);
+    assert.equal((await term(['inbox'], ctx.root)).code, 0);
+    const prev = await term(['inbox', 'discard', '--entry-id', entry], ctx.root);
     assert.equal(prev.code, 0, prev.err);
     assert.match(
       prev.out,
-      new RegExp(`to execute: mwf inbox discard --entry-id ${entry} --confirm --preview-token `),
+      new RegExp(
+        `to execute, run this yourself in a terminal: mwf inbox discard --entry-id ${entry} --confirm --preview-token `,
+      ),
     );
     assert.match(
-      (await sh(['inbox', 'discard', '--entry-id', entry, '--confirm'], ctx.root)).err,
+      (await term(['inbox', 'discard', '--entry-id', entry, '--confirm'], ctx.root)).err,
       /CONFIRM_REQUIRES_TOKEN/,
     );
     assert.equal(((await ok(cli.inbox({}, env))) as { total: number })['total'], 1);
-    const gone = await sh(
+    const gone = await term(
       ['inbox', 'discard', '--entry-id', entry, '--confirm', '--preview-token', tokenOf(prev.out)],
       ctx.root,
     );
@@ -1146,10 +1166,153 @@ describe('destructive commands from the shell: preview, then --confirm --preview
 
   it('forget needs --id; inbox accept needs exactly one --entry-id', async () => {
     const { root } = await seeded();
-    assert.equal((await sh(['forget'], root)).code, 2);
-    assert.equal((await sh(['inbox', 'accept'], root)).code, 2);
-    assert.equal((await sh(['inbox', 'discard'], root)).code, 2);
-    assert.equal((await sh(['inbox', 'wipe'], root)).code, 2);
+    assert.equal((await term(['forget'], root)).code, 2);
+    assert.equal((await term(['inbox', 'accept'], root)).code, 2);
+    assert.equal((await term(['inbox', 'discard'], root)).code, 2);
+    assert.equal((await term(['inbox', 'wipe'], root)).code, 2);
+  });
+
+  describe('--confirm needs an interactive terminal (stdin and stdout both TTYs)', () => {
+    const BIN = new URL('../src/bin/mwf.ts', import.meta.url).pathname;
+    const NODE = [process.execPath, '--experimental-strip-types', '--no-warnings', BIN];
+
+    async function previewed(): Promise<{ root: string; ids: string[]; token: string }> {
+      const { root, ids } = await seeded();
+      const pre = await sh(['forget', '--id', ids[0]!], root); // no tty at all: a preview works
+      assert.equal(pre.code, 0, pre.err);
+      return { root, ids, token: tokenOf(pre.out) };
+    }
+
+    it('preview works with no terminal at all, for every destructive command', async () => {
+      const { root, ids } = await seeded();
+      for (const argv of [
+        ['forget', '--id', ids[0]!],
+        ['purge'],
+        ['compact'],
+        ['inbox', 'discard', '--entry-id', 'nope'],
+      ]) {
+        const r = await sh(argv, root);
+        assert.doesNotMatch(r.err, /CONFIRM_REQUIRES_TTY/, argv.join(' '));
+      }
+      const pre = await sh(['forget', '--id', ids[0]!, '--json'], root);
+      assert.equal(pre.code, 0, pre.err);
+      assert.equal(JSON.parse(pre.out).data.preview, true);
+      assert.equal((await recallIds(root)).length, 2);
+    });
+
+    it('without a terminal a valid --confirm is refused with CONFIRM_REQUIRES_TTY and deletes nothing', async () => {
+      const { root, ids, token } = await previewed();
+      const r = await sh(['forget', '--id', ids[0]!, '--confirm', '--preview-token', token], root);
+      assert.equal(r.code, 1);
+      assert.match(r.err, /mwf: CONFIRM_REQUIRES_TTY: .*in an interactive terminal/);
+      assert.match(r.err, /Run this command yourself in a terminal/);
+      assert.equal(r.out, '');
+      assert.equal((await recallIds(root)).length, 2);
+      assert.equal(
+        ((await ok(cli.restore({}, { root }))) as { entries: unknown[] })['entries'].length,
+        0,
+        'nothing reached the trash',
+      );
+      // the same token still works for the person at a terminal: the refusal consumed nothing
+      const done = await term(
+        ['forget', '--id', ids[0]!, '--confirm', '--preview-token', token],
+        root,
+      );
+      assert.equal(done.code, 0, done.err);
+      assert.deepEqual(await recallIds(root), [ids[1]]);
+    });
+
+    it('stdin alone or stdout alone being a terminal is not enough; each is checked on its own', async () => {
+      const { root, ids, token } = await previewed();
+      const argv = ['forget', '--id', ids[0]!, '--confirm', '--preview-token', token, '--json'];
+      for (const [tty, stdin, stdout] of [
+        [{ stdin: true, stdout: false }, true, false],
+        [{ stdin: false, stdout: true }, false, true],
+        [{ stdin: false, stdout: false }, false, false],
+      ] as const) {
+        const r = await sh(argv, root, undefined, tty);
+        assert.equal(r.code, 1);
+        const j = JSON.parse(r.out);
+        assert.equal(j.ok, false);
+        assert.equal(j.error.code, 'CONFIRM_REQUIRES_TTY');
+        assert.deepEqual(j.error.details, { stdin_tty: stdin, stdout_tty: stdout });
+        assert.equal((await recallIds(root)).length, 2);
+      }
+      const both = await sh(argv, root, undefined, TERMINAL);
+      assert.equal(both.code, 0, both.out + both.err);
+      assert.deepEqual(await recallIds(root), [ids[1]]);
+    });
+
+    it('the refusal comes first: purge, compact and inbox discard never reach core without a terminal', async () => {
+      const empty = tmpDir('mwf-notty-'); // not initialised: core would say NOT_INITIALIZED
+      for (const argv of [
+        ['forget', '--id', 'x', '--confirm', '--preview-token', 't'],
+        ['purge', '--confirm', '--preview-token', 't'],
+        ['compact', '--confirm', '--preview-token', 't'],
+        ['inbox', 'discard', '--entry-id', 'e', '--confirm', '--preview-token', 't'],
+        ['purge', '--confirm'], // no token either: still the terminal rule
+      ]) {
+        const r = await sh(argv, empty);
+        assert.equal(r.code, 1, argv.join(' '));
+        assert.match(r.err, /CONFIRM_REQUIRES_TTY/, argv.join(' '));
+      }
+    });
+
+    it('a real process with piped stdin is refused: echo y | mwf forget … --confirm --preview-token …', async () => {
+      const { root, ids, token } = await previewed();
+      const quoted = NODE.map((a) => `'${a}'`).join(' ');
+      for (const command of [
+        `echo y | ${quoted} forget --id ${ids[0]} --confirm --preview-token ${token}`,
+        `yes | ${quoted} forget --id ${ids[0]} --confirm --preview-token ${token}`,
+        `${quoted} forget --id ${ids[0]} --confirm --preview-token ${token} < /dev/null`,
+      ]) {
+        const r = spawnSync('sh', ['-c', command], { cwd: root, encoding: 'utf8' });
+        assert.equal(r.status, 1, `${command}\n${r.stdout}${r.stderr}`);
+        assert.match(r.stderr, /CONFIRM_REQUIRES_TTY/);
+        assert.equal((await recallIds(root)).length, 2, `nothing deleted by: ${command}`);
+      }
+    });
+
+    it('no environment variable or flag turns the check off', async () => {
+      const { root, ids, token } = await previewed();
+      const r = spawnSync(
+        NODE[0]!,
+        [...NODE.slice(1), 'forget', '--id', ids[0]!, '--confirm', '--preview-token', token],
+        {
+          cwd: root,
+          encoding: 'utf8',
+          input: 'y\n',
+          env: {
+            ...process.env,
+            MWF_TTY: '1',
+            MWF_ASSUME_TTY: '1',
+            MWF_FORCE_TTY: '1',
+            FORCE_TTY: '1',
+            CI: '',
+            TERM: 'xterm',
+          },
+        },
+      );
+      assert.equal(r.status, 1, r.stdout + r.stderr);
+      assert.match(r.stderr, /CONFIRM_REQUIRES_TTY/);
+      assert.equal((await recallIds(root)).length, 2);
+    });
+
+    // A real pseudo terminal, to see the check pass in the actual executable. `script` (util-linux)
+    // runs the command on a pty; it is skipped where `script` is missing or behaves differently.
+    const hasScript = spawnSync('script', ['--version'], { encoding: 'utf8' }).status === 0;
+    it('in a real pseudo terminal the same command executes', { skip: !hasScript }, async () => {
+      const { root, ids, token } = await previewed();
+      const quoted = NODE.map((a) => `'${a}'`).join(' ');
+      const inner = `${quoted} forget --id ${ids[0]} --confirm --preview-token ${token}`;
+      const r = spawnSync('script', ['-qec', inner, '/dev/null'], {
+        cwd: root,
+        encoding: 'utf8',
+        input: '',
+      });
+      assert.equal(r.status, 0, r.stdout + r.stderr);
+      assert.deepEqual(await recallIds(root), [ids[1]]);
+    });
   });
 });
 
