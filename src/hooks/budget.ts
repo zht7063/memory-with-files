@@ -39,6 +39,6 @@ export const PROMPT_CHARS = 4_000;
 /**
  * Relevance a stored record needs to be injected for a user prompt when the project's
  * `[hooks] recall_min_score` cannot be read. Mirrors core's DEFAULT_RECALL_MIN_SCORE (hooks may not
- * import core; tests/hooks-recall.test.ts keeps the two equal).
+ * import core; tests/recall-threshold.test.ts keeps the two equal).
  */
 export const DEFAULT_RECALL_MIN_SCORE = 2;
