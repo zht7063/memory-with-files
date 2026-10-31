@@ -6,6 +6,7 @@ import { openIndexReadOnly } from './db.ts';
 import { findTempFiles, readTextIfExists } from './fsx.ts';
 import { buildIndexMd } from './indexmd.ts';
 import { GITIGNORE_LOCAL, GITIGNORE_TRACK, readConfig } from './init.ts';
+import { DEFAULT_RECALL_MIN_SCORE, MAX_RECALL_MIN_SCORE } from './relevance.ts';
 import { loadAll } from './load.ts';
 import { inspectLock } from './lock.ts';
 import { TRASH_NEAR_DAYS, TRASH_RETENTION_DAYS } from './paths.ts';
@@ -56,6 +57,13 @@ export async function doctor(ctx: Ctx): Promise<DoctorResult> {
       'error',
       'config_invalid',
       'config.toml is missing git_mode or unreadable',
+      '.mwf/config.toml',
+    );
+  if (config?.recall_min_score_invalid)
+    add(
+      'warn',
+      'config_recall_min_score_invalid',
+      `[hooks] recall_min_score must be an integer from 0 to ${MAX_RECALL_MIN_SCORE}; using the default ${DEFAULT_RECALL_MIN_SCORE}`,
       '.mwf/config.toml',
     );
   for (const [file, path] of [

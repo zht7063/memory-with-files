@@ -184,6 +184,11 @@ export const COMMANDS: readonly Command[] = [
       status: oneOf([...STATUS, 'all'], 'Which statuses to search (default active).'),
       task: str('Read this handoff in full instead of searching.'),
       include_handoffs: bool('Also search handoffs; they are never filtered by scope.'),
+      min_relevance: int(
+        'Keep only hits whose relevance score is at least this (0..20, default 0 = no filter). Scores count distinctive query terms: title match 2, body match 1; stopwords and terms under 3 characters (except db, ci, k8 and similar) do not count. Hook auto-recall sets it; explicit searches normally leave it out.',
+        0,
+        20,
+      ),
       limit: int('Max hits (default 8).', 1, 50),
       max_chars: int('Output budget in characters (default 4000).', 100, 20_000),
     }),
