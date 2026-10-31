@@ -23,7 +23,7 @@ export const HOOK_SOFT_MS = 2_500;
  */
 export const HOOK_LOCK_WAIT_MS = 200;
 
-/** The most locks one hook run can try to take (read fallback, host registration, session write). */
+/** The most locks one hook run can try to take (status for the config, recall, host registration, session write). */
 export const MAX_LOCK_WAITS = 4;
 
 /** Biggest stdin a hook reads (the host sends the prompt and the last message). */
@@ -35,3 +35,10 @@ export const MAX_STDOUT_BYTES = 64 * 1024;
 /** Characters of stored memory a hook injects, per event (the fenced data only). */
 export const SESSION_START_CHARS = 8_000;
 export const PROMPT_CHARS = 4_000;
+
+/**
+ * Relevance a stored record needs to be injected for a user prompt when the project's
+ * `[hooks] recall_min_score` cannot be read. Mirrors core's DEFAULT_RECALL_MIN_SCORE (hooks may not
+ * import core; tests/recall-threshold.test.ts keeps the two equal).
+ */
+export const DEFAULT_RECALL_MIN_SCORE = 2;
