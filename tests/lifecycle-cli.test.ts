@@ -113,11 +113,10 @@ describe('mwf install / uninstall command line', () => {
     assert.match(r.err, /nothing was installed/);
   });
 
-  it('usage errors exit 2: missing or unknown harness, claude not yet, extra arguments', async () => {
+  it('usage errors exit 2: missing or unknown harness, extra arguments', async () => {
     const sb = sandbox();
     for (const [args, re] of [
       [['install'], /needs --harness codex/],
-      [['install', '--harness', 'claude'], /not available yet/],
       [['install', '--harness', 'vim'], /unknown harness/],
       [['install', '--harness', 'codex', 'extra'], /Unexpected argument/],
       [['uninstall', '--bogus'], /Unknown option/],
@@ -196,7 +195,7 @@ describe('the mwf executable (type-stripped source)', () => {
   it('--help lists the new commands', () => {
     const sb = sandbox();
     const r = spawn(sb, ['--help']);
-    assert.match(r.stdout, /install \| uninstall --harness codex/);
+    assert.match(r.stdout, /install \| uninstall --harness codex\|claude/);
     assert.ok(readFileSync(bin, 'utf8').includes('lifecycle'));
   });
 });

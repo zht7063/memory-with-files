@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { MWF_VERSION } from '../core/index.ts';
+import { installClaude, MIN_CLAUDE_TEXT, uninstallClaude, type ClaudeEnv } from './claude.ts';
 import {
   execRunner,
   installCodex,
@@ -27,22 +28,30 @@ export interface LifecycleIo {
   home?: string;
   node?: string;
   codexBin?: string;
+  claudeBin?: string;
   run?: Runner;
   owner?: Owner;
   now?: () => Date;
   beforeRename?: () => void;
 }
 
-const USAGE = `Usage: mwf install   --harness codex [--dry-run] [--json] [--force-skills]
-       mwf uninstall --harness codex [--dry-run] [--json] [--force-skills]
+const USAGE = `Usage: mwf install   --harness codex|claude [--dry-run] [--json] [--force-skills]
+       mwf uninstall --harness codex|claude [--dry-run] [--json] [--force-skills]
 
 Connects mwf to a host, at user level only (never a project's own config):
-  codex: <CODEX_HOME or ~/.codex>/hooks.json (three hooks), the skills in ~/.agents/skills, and the MCP
-         server through \`codex mcp add\` (Codex's config.toml is never edited by mwf directly).
-         Needs Codex ${MIN_CODEX_TEXT} or newer. Afterwards run /hooks in Codex to trust the hooks.
+  codex:  <CODEX_HOME or ~/.codex>/hooks.json (three hooks), the skills in ~/.agents/skills, and the MCP
+          server through \`codex mcp add\` (Codex's config.toml is never edited by mwf directly).
+          Needs Codex ${MIN_CODEX_TEXT} or newer. Afterwards run /hooks in Codex to trust the hooks.
+          ~/.agents/skills is the shared agent-skills directory: other tools that read it see mwf's skills too.
+  claude: <CLAUDE_CONFIG_DIR or ~/.claude>/settings.json (three hooks), the skills in <that directory>/skills
+          (Claude Code's own, not the shared ~/.agents/skills), and the MCP server through
+          \`claude mcp add --scope user\` (.claude.json is never edited by mwf directly; it is
+          <CLAUDE_CONFIG_DIR>/.claude.json when CLAUDE_CONFIG_DIR is set, else ~/.claude.json).
+          Needs Claude Code ${MIN_CLAUDE_TEXT} or newer. The hooks run once you accept Claude Code's
+          workspace trust prompt in a project. mwf never writes permissions.allow.
 
-  --dry-run       show what would change; writes nothing, runs no codex command that changes anything,
-                  and works without a terminal
+  --dry-run       show what would change; writes nothing, runs no codex/claude command that changes
+                  anything, and works without a terminal
   --json          print the result as JSON
   --force-skills  overwrite (after a backup) or remove skills mwf did not write or that you edited
 
@@ -74,13 +83,14 @@ export function renderReport(r: Report): string {
   const lines: string[] = [];
   const verb = r.action === 'install' ? 'install' : 'uninstall';
   lines.push(
-    `mwf ${verb} --harness codex${r.dry_run ? ' (dry run: nothing was written)' : ''}: ${r.status}` +
-      (r.codex_version ? ` (Codex ${r.codex_version})` : ''),
+    `mwf ${verb} --harness ${r.harness}${r.dry_run ? ' (dry run: nothing was written)' : ''}: ${r.status}` +
+      (r.codex_version ? ` (Codex ${r.codex_version})` : '') +
+      (r.claude_version ? ` (Claude Code ${r.claude_version})` : ''),
   );
   if (r.message) lines.push(`  ${r.code ?? ''}: ${r.message}`);
   if (r.hooks)
     lines.push(
-      `  hooks      ${r.hooks.status}  ${r.hooks.path}` +
+      `  ${r.harness === 'claude' ? 'settings   ' : 'hooks      '}${r.hooks.status}  ${r.hooks.path}` +
         (r.hooks.detail ? `\n             ${r.hooks.detail}` : '') +
         (r.hooks.backup ? `\n             backup: ${r.hooks.backup}` : ''),
     );
@@ -91,7 +101,10 @@ export function renderReport(r: Report): string {
     );
   if (r.mcp) {
     lines.push(`  mcp        ${r.mcp.status}${r.mcp.detail ? ` - ${r.mcp.detail}` : ''}`);
-    if (r.mcp.backup) lines.push(`             config.toml backup: ${r.mcp.backup}`);
+    if (r.mcp.backup)
+      lines.push(
+        `             ${r.harness === 'claude' ? '.claude.json' : 'config.toml'} backup: ${r.mcp.backup}`,
+      );
     if (
       r.mcp.manual &&
       !['added', 'updated', 'removed', 'unchanged', 'absent'].includes(r.mcp.status)
@@ -131,13 +144,9 @@ export async function lifecycleMain(argv: readonly string[], io: LifecycleIo): P
       return 0;
     }
     const harness = parsed.values.harness;
-    if (harness === undefined) throw new Usage(`${name} needs --harness codex`);
-    if (harness !== 'codex')
-      throw new Usage(
-        harness === 'claude'
-          ? `--harness claude is not available yet in this build; only --harness codex is`
-          : `unknown harness: ${harness} (only codex is available)`,
-      );
+    if (harness === undefined) throw new Usage(`${name} needs --harness codex or --harness claude`);
+    if (harness !== 'codex' && harness !== 'claude')
+      throw new Usage(`unknown harness: ${harness} (use codex or claude)`);
     const dryRun = parsed.values['dry-run'] === true;
     if (!dryRun && !(io.tty?.stdin === true && io.tty?.stdout === true)) {
       const stdin = io.tty?.stdin === true;
@@ -156,38 +165,72 @@ export async function lifecycleMain(argv: readonly string[], io: LifecycleIo): P
 
     const processEnv = io.env ?? process.env;
     const home = io.home ?? homedir();
-    const rawCodexHome = processEnv['CODEX_HOME'];
-    const codexHome = rawCodexHome ? rawCodexHome : join(home, '.codex');
-    if (!isAbsolute(codexHome) || !isAbsolute(home))
-      return fail(
-        io,
-        wantJson,
-        'INVALID_PATH',
-        'CODEX_HOME and the home directory must be absolute paths',
-      );
     let mwfJs: string;
     try {
       mwfJs = realpathSync(io.entry);
     } catch {
       mwfJs = io.entry;
     }
-    const env: CodexEnv = {
-      codexHome,
-      home,
-      node: io.node ?? process.execPath,
-      mwfJs,
-      codexBin: io.codexBin ?? 'codex',
-      version: MWF_VERSION,
-      run: io.run ?? execRunner,
-      baseEnv: processEnv,
-      ...(io.owner ? { owner: io.owner } : {}),
-      ...(io.now ? { now: io.now } : {}),
-      ...(io.beforeRename ? { beforeRename: io.beforeRename } : {}),
-    };
+    const node = io.node ?? process.execPath;
+    let env: CodexEnv | ClaudeEnv;
+    if (harness === 'codex') {
+      const rawCodexHome = processEnv['CODEX_HOME'];
+      const codexHome = rawCodexHome ? rawCodexHome : join(home, '.codex');
+      if (!isAbsolute(codexHome) || !isAbsolute(home))
+        return fail(
+          io,
+          wantJson,
+          'INVALID_PATH',
+          'CODEX_HOME and the home directory must be absolute paths',
+        );
+      env = {
+        codexHome,
+        home,
+        node,
+        mwfJs,
+        codexBin: io.codexBin ?? 'codex',
+        version: MWF_VERSION,
+        run: io.run ?? execRunner,
+        baseEnv: processEnv,
+        ...(io.owner ? { owner: io.owner } : {}),
+        ...(io.now ? { now: io.now } : {}),
+        ...(io.beforeRename ? { beforeRename: io.beforeRename } : {}),
+      };
+    } else {
+      // CLAUDE_CONFIG_DIR wins when set (as it does for Claude Code itself), else ~/.claude
+      const rawClaudeDir = processEnv['CLAUDE_CONFIG_DIR'];
+      const claudeDir = rawClaudeDir ? rawClaudeDir : join(home, '.claude');
+      if (!isAbsolute(claudeDir) || !isAbsolute(home))
+        return fail(
+          io,
+          wantJson,
+          'INVALID_PATH',
+          'CLAUDE_CONFIG_DIR and the home directory must be absolute paths',
+        );
+      env = {
+        claudeDir,
+        customDir: Boolean(rawClaudeDir),
+        home,
+        node,
+        mwfJs,
+        claudeBin: io.claudeBin ?? 'claude',
+        version: MWF_VERSION,
+        run: io.run ?? execRunner,
+        baseEnv: processEnv,
+        ...(io.owner ? { owner: io.owner } : {}),
+        ...(io.now ? { now: io.now } : {}),
+        ...(io.beforeRename ? { beforeRename: io.beforeRename } : {}),
+      };
+    }
     const options = { dryRun, forceSkills: parsed.values['force-skills'] === true };
-    const report = await (name === 'install'
-      ? installCodex(env, options)
-      : uninstallCodex(env, options));
+    const report =
+      harness === 'codex'
+        ? await (name === 'install'
+            ? installCodex(env as CodexEnv, options)
+            : uninstallCodex(env as CodexEnv, options))
+        : await (name === 'install'
+            ? installClaude(env as ClaudeEnv, options)
+            : uninstallClaude(env as ClaudeEnv, options));
     if (parsed.values.json)
       io.stdout(`${JSON.stringify({ ok: report.status === 'done', data: report }, null, 2)}\n`);
     else (report.status === 'done' ? io.stdout : io.stderr)(renderReport(report));
