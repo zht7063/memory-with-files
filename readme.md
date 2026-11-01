@@ -2,7 +2,7 @@
 
 Project memory for coding agents, stored as plain Markdown files under `.mwf/` in your repository. Files are the source of truth; `index.db` (SQLite, FTS5) is a derived, rebuildable cache.
 
-> **Status: 1.0.0.** MWF 1.0 is a ground-up rewrite. `src/core`, `src/cli`, `src/mcp`, `src/hooks` (the hook logic, the Codex and Claude Code adapters and the supervised `mwf hook` command) and `src/lifecycle` (`mwf install|uninstall --harness codex|claude|pi`) are implemented. There is no `mwf update` in 1.0 (deferred to 1.1): to update, install the new package and run `mwf install --harness …` again. The 0.x line lives on `main`.
+> **Status: 1.0.0.** MWF 1.0 is a ground-up rewrite. `src/core`, `src/cli`, `src/mcp`, `src/hooks` (the hook logic, the Codex and Claude Code adapters and the supervised `mwf hook` command) and `src/lifecycle` (`mwf install|uninstall --harness codex|claude|pi`) are implemented. There is no `mwf update` in 1.0 (deferred to 1.1): to update, install the new package and run `mwf install --harness …` again. The 0.x line is the 0.4.x line (tag `v0.4.0`, npm `0.4.0`); `main` now carries 1.x.
 
 ## Layout
 
