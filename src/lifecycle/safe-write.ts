@@ -211,7 +211,10 @@ export function checkAncestors(dir: string, owner: Owner): string {
       return join(resolved, ...parts.slice(i)); // the rest does not exist yet
     }
     if (!inside(rootReal, real))
-      unsafe(`${cur} is a symbolic link to ${real}, outside ${rootReal}`);
+      unsafe(
+        `${cur} is a symbolic link to ${real}, outside ${rootReal}. ` +
+          `A harness or skills directory that is symlinked outside the home directory (for example into a dotfiles repository) is refused; make it a real directory.`,
+      );
     const label = real === cur ? cur : `${cur} (-> ${real})`;
     checkDirStat(label, statSync(real), owner);
     resolved = real;

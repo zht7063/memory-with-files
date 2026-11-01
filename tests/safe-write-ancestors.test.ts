@@ -105,6 +105,10 @@ describe('checkAncestors (the shared rule)', () => {
     const away = tmpDir('mwf-away-'); // 0700, ours, but not inside the root
     symlinkSync(away, join(root, 'out'));
     expectUnsafe(() => checkAncestors(join(root, 'out', 'skills'), { uid, root }), /outside/);
+    expectUnsafe(
+      () => checkAncestors(join(root, 'out', 'skills'), { uid, root }),
+      /dotfiles repository\) is refused; make it a real directory/,
+    );
   });
 
   it('refuses a dangling symlink at any component, and mkdirSafe creates nothing through it', () => {

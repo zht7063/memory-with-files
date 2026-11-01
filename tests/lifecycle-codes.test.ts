@@ -85,6 +85,17 @@ describe('F2: the text output carries the code names, equal to the --json code',
         assert.match(r.text, /UNSAFE_TARGET: /, `${cmd}: ${r.text}`);
         assert.match(r.text, /^    mwf[a-z-]*: refused - UNSAFE_TARGET: /m, r.text);
         assert.doesNotMatch(r.text, /_JSON_REFUSED/);
+        // The symlink-outside-home refusal carries a hint, in text and in --json alike.
+        assert.match(
+          r.text,
+          /symlinked outside the home directory \(for example into a dotfiles/,
+          r.text,
+        );
+        assert.match(r.text, /make it a real directory/, r.text);
+        assert.match(
+          JSON.stringify(r.json),
+          /dotfiles repository\) is refused; make it a real directory/,
+        );
       }
     });
 
