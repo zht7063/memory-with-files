@@ -111,7 +111,23 @@ describe('multi-process concurrent writes', () => {
     const r = await core.add(ctx, { type: 'knowledge', title: 'Big', body: mk(0) });
     const file = join(ctx.root, '.mwf/memory/knowledge', `${r.id}.md`);
 
-    // writer: 40 sequential edits, each a different big body (hash chain done in the child)
+    // One complete read of the record: the raw file (complete frontmatter + a body of exactly one
+    // version) and the API. Returns the version the file held.
+    const readOnce = async (): Promise<string> => {
+      const text = readFileSync(file, 'utf8');
+      assert.match(text, /^---\n[\s\S]*?\n---\n/);
+      const versions = new Set([...text.matchAll(/version-(\d+) /g)].map((m) => m[1]));
+      assert.equal(versions.size, 1, 'file contains exactly one version');
+      const got = core.get(ctx, { id: r.id });
+      assert.equal(new Set([...got.body.matchAll(/version-(\d+) /g)].map((m) => m[1])).size, 1);
+      return [...versions][0]!;
+    };
+    const seen = new Set<string>();
+    let reads = 0;
+    seen.add(await readOnce()); // version 0, read before the writer exists: a complete version too
+    reads++;
+
+    // writer: 60 sequential edits, each a different big body (hash chain done in the child)
     const script = `
       import * as core from ${JSON.stringify(new URL('../src/core/index.ts', import.meta.url).href)};
       const ctx = ${JSON.stringify(ctx)};
@@ -139,28 +155,33 @@ describe('multi-process concurrent writes', () => {
         res(c);
       }),
     );
-    await started; // only start reading once the writer is about to begin editing
-    let reads = 0;
-    const seen = new Set<string>();
-    while (!done) {
-      // 1. raw file reads (cheap, many): complete frontmatter + a body of one single version
-      for (let i = 0; i < 25; i++) {
-        const text = readFileSync(file, 'utf8');
-        assert.match(text, /^---\n[\s\S]*?\n---\n/);
-        const versions = new Set([...text.matchAll(/version-(\d+) /g)].map((m) => m[1]));
-        assert.equal(versions.size, 1, 'file contains exactly one version');
-        seen.add([...versions][0]!);
-        reads++;
+    const deadline = Date.now() + 120_000; // safety net only: the loop ends on events, not time
+    try {
+      await started; // only start reading once the writer is about to begin editing
+      // Read until the writer process has exited AND a change of version was actually observed.
+      // The read after the exit sees the last version, so the loop always ends once the writer
+      // is done; a loaded machine only makes the reader see fewer in-between versions, never fail.
+      while (!(done && seen.size > 1)) {
+        assert.ok(
+          Date.now() < deadline,
+          `no version change observed (done=${done}, reads=${reads})`,
+        );
+        for (let i = 0; i < 25; i++) {
+          seen.add(await readOnce());
+          reads++;
+        }
+        const hits = await core.recall(ctx, { query: 'version' }); // the index may be repaired under a short lock
+        assert.ok(hits.hits.length <= 1);
+        await new Promise((r) => setTimeout(r, 1)); // let the child's exit event through
       }
-      // 2. API reads (the index may be repaired under a short lock)
-      const got = core.get(ctx, { id: r.id });
-      assert.equal(new Set([...got.body.matchAll(/version-(\d+) /g)].map((m) => m[1])).size, 1);
-      const hits = await core.recall(ctx, { query: 'version' });
-      assert.ok(hits.hits.length <= 1);
-      await new Promise((r) => setTimeout(r, 1)); // let the child's exit event through
+    } finally {
+      if (!done) writer.kill('SIGKILL');
     }
     assert.equal(await exited, 0, err);
+    seen.add(await readOnce()); // after the exit: the last version, complete
+    reads++;
     assert.ok(reads > 3 && seen.size > 1, `observed ${seen.size} versions over ${reads} reads`);
+    assert.ok(seen.has('60'), 'the last version was read once the writer had exited');
     assert.match(core.get(ctx, { id: r.id }).body, /version-60 /);
     assert.deepEqual(
       readdirSync(join(ctx.root, '.mwf/memory/knowledge')).filter((f) => f.includes('.tmp-')),
