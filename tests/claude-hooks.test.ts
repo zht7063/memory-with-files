@@ -84,7 +84,9 @@ describe('tool names per host (D8)', () => {
       renderForHost(text, 'claude'),
       'call mcp__mwf__mwf_recall, then `mcp__mwf__mwf_save`; also mcp__mwf__mwf_* and (mcp__mwf__mwf_bootstrap).',
     );
-    for (const host of ['codex', 'pi', undefined]) assert.equal(renderForHost(text, host), text);
+    for (const host of ['codex', undefined]) assert.equal(renderForHost(text, host), text);
+    // Pi names MCP tools the same way Claude Code does (mcp__<server>__<tool>)
+    assert.equal(renderForHost(text, 'pi'), renderForHost(text, 'claude'));
   });
 
   it('is idempotent and leaves look-alikes alone', () => {

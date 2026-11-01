@@ -14,6 +14,7 @@ import {
   type Report,
   type Runner,
 } from './codex.ts';
+import { installPi, MIN_PI_TEXT, uninstallPi, type PiEnv } from './pi.ts';
 import type { Owner } from './safe-write.ts';
 
 export interface LifecycleIo {
@@ -29,14 +30,15 @@ export interface LifecycleIo {
   node?: string;
   codexBin?: string;
   claudeBin?: string;
+  piBin?: string;
   run?: Runner;
   owner?: Owner;
   now?: () => Date;
   beforeRename?: () => void;
 }
 
-const USAGE = `Usage: mwf install   --harness codex|claude [--dry-run] [--json] [--force-skills]
-       mwf uninstall --harness codex|claude [--dry-run] [--json] [--force-skills]
+const USAGE = `Usage: mwf install   --harness codex|claude|pi [--dry-run] [--json] [--force-skills]
+       mwf uninstall --harness codex|claude|pi [--dry-run] [--json] [--force-skills]
 
 Connects mwf to a host, at user level only (never a project's own config):
   codex:  <CODEX_HOME or ~/.codex>/hooks.json (three hooks), the skills in ~/.agents/skills, and the MCP
@@ -49,8 +51,14 @@ Connects mwf to a host, at user level only (never a project's own config):
           <CLAUDE_CONFIG_DIR>/.claude.json when CLAUDE_CONFIG_DIR is set, else ~/.claude.json).
           Needs Claude Code ${MIN_CLAUDE_TEXT} or newer. The hooks run once you accept Claude Code's
           workspace trust prompt in a project. mwf never writes permissions.allow.
+  pi:     <PI_CODING_AGENT_DIR or ~/.pi/agent>/skills (Pi's own, not the shared ~/.agents/skills), a generated
+          extension <that directory>/extensions/mwf.js (the hooks and the /mwf command; it only runs
+          \`mwf hook\` and, like every Pi extension, runs inside Pi with Pi's full permissions), and the MCP
+          server through \`pi mcp add\` (mcp.json is never edited by mwf directly). Pi's settings.json is not
+          touched. Needs Pi ${MIN_PI_TEXT} or newer. A same-named mwf skill in a project's own .agents/skills
+          (or an ancestor's .agents/skills) or .pi/skills has higher priority and overrides the installed one.
 
-  --dry-run       show what would change; writes nothing, runs no codex/claude command that changes
+  --dry-run       show what would change; writes nothing, runs no codex/claude/pi command that changes
                   anything, and works without a terminal
   --json          print the result as JSON
   --force-skills  overwrite (after a backup) or remove skills mwf did not write or that you edited
@@ -85,12 +93,13 @@ export function renderReport(r: Report): string {
   lines.push(
     `mwf ${verb} --harness ${r.harness}${r.dry_run ? ' (dry run: nothing was written)' : ''}: ${r.status}` +
       (r.codex_version ? ` (Codex ${r.codex_version})` : '') +
-      (r.claude_version ? ` (Claude Code ${r.claude_version})` : ''),
+      (r.claude_version ? ` (Claude Code ${r.claude_version})` : '') +
+      (r.pi_version ? ` (Pi ${r.pi_version})` : ''),
   );
   if (r.message) lines.push(`  ${r.code ?? ''}: ${r.message}`);
   if (r.hooks)
     lines.push(
-      `  ${r.harness === 'claude' ? 'settings   ' : 'hooks      '}${r.hooks.status}  ${r.hooks.path}` +
+      `  ${r.harness === 'claude' ? 'settings   ' : r.harness === 'pi' ? 'extension  ' : 'hooks      '}${r.hooks.status}  ${r.hooks.path}` +
         (r.hooks.detail ? `\n             ${r.hooks.detail}` : '') +
         (r.hooks.backup ? `\n             backup: ${r.hooks.backup}` : ''),
     );
@@ -103,7 +112,7 @@ export function renderReport(r: Report): string {
     lines.push(`  mcp        ${r.mcp.status}${r.mcp.detail ? ` - ${r.mcp.detail}` : ''}`);
     if (r.mcp.backup)
       lines.push(
-        `             ${r.harness === 'claude' ? '.claude.json' : 'config.toml'} backup: ${r.mcp.backup}`,
+        `             ${r.harness === 'claude' ? '.claude.json' : r.harness === 'pi' ? 'mcp.json' : 'config.toml'} backup: ${r.mcp.backup}`,
       );
     if (
       r.mcp.manual &&
@@ -144,9 +153,9 @@ export async function lifecycleMain(argv: readonly string[], io: LifecycleIo): P
       return 0;
     }
     const harness = parsed.values.harness;
-    if (harness === undefined) throw new Usage(`${name} needs --harness codex or --harness claude`);
-    if (harness !== 'codex' && harness !== 'claude')
-      throw new Usage(`unknown harness: ${harness} (use codex or claude)`);
+    if (harness === undefined) throw new Usage(`${name} needs --harness codex, claude or pi`);
+    if (harness !== 'codex' && harness !== 'claude' && harness !== 'pi')
+      throw new Usage(`unknown harness: ${harness} (use codex, claude or pi)`);
     const dryRun = parsed.values['dry-run'] === true;
     if (!dryRun && !(io.tty?.stdin === true && io.tty?.stdout === true)) {
       const stdin = io.tty?.stdin === true;
@@ -172,7 +181,7 @@ export async function lifecycleMain(argv: readonly string[], io: LifecycleIo): P
       mwfJs = io.entry;
     }
     const node = io.node ?? process.execPath;
-    let env: CodexEnv | ClaudeEnv;
+    let env: CodexEnv | ClaudeEnv | PiEnv;
     if (harness === 'codex') {
       const rawCodexHome = processEnv['CODEX_HOME'];
       const codexHome = rawCodexHome ? rawCodexHome : join(home, '.codex');
@@ -189,6 +198,31 @@ export async function lifecycleMain(argv: readonly string[], io: LifecycleIo): P
         node,
         mwfJs,
         codexBin: io.codexBin ?? 'codex',
+        version: MWF_VERSION,
+        run: io.run ?? execRunner,
+        baseEnv: processEnv,
+        ...(io.owner ? { owner: io.owner } : {}),
+        ...(io.now ? { now: io.now } : {}),
+        ...(io.beforeRename ? { beforeRename: io.beforeRename } : {}),
+      };
+    } else if (harness === 'pi') {
+      // PI_CODING_AGENT_DIR wins when set (as it does for Pi itself), else ~/.pi/agent
+      const rawPiDir = processEnv['PI_CODING_AGENT_DIR'];
+      const piDir = rawPiDir ? rawPiDir : join(home, '.pi', 'agent');
+      if (!isAbsolute(piDir) || !isAbsolute(home))
+        return fail(
+          io,
+          wantJson,
+          'INVALID_PATH',
+          'PI_CODING_AGENT_DIR and the home directory must be absolute paths',
+        );
+      env = {
+        piDir,
+        customDir: Boolean(rawPiDir),
+        home,
+        node,
+        mwfJs,
+        piBin: io.piBin ?? 'pi',
         version: MWF_VERSION,
         run: io.run ?? execRunner,
         baseEnv: processEnv,
@@ -228,9 +262,13 @@ export async function lifecycleMain(argv: readonly string[], io: LifecycleIo): P
         ? await (name === 'install'
             ? installCodex(env as CodexEnv, options)
             : uninstallCodex(env as CodexEnv, options))
-        : await (name === 'install'
-            ? installClaude(env as ClaudeEnv, options)
-            : uninstallClaude(env as ClaudeEnv, options));
+        : harness === 'pi'
+          ? await (name === 'install'
+              ? installPi(env as PiEnv, options)
+              : uninstallPi(env as PiEnv, options))
+          : await (name === 'install'
+              ? installClaude(env as ClaudeEnv, options)
+              : uninstallClaude(env as ClaudeEnv, options));
     if (parsed.values.json)
       io.stdout(`${JSON.stringify({ ok: report.status === 'done', data: report }, null, 2)}\n`);
     else (report.status === 'done' ? io.stdout : io.stderr)(renderReport(report));

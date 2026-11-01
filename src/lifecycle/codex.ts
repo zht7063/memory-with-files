@@ -123,7 +123,7 @@ export interface McpStep {
 }
 
 export interface Report {
-  harness: 'codex' | 'claude';
+  harness: 'codex' | 'claude' | 'pi';
   action: 'install' | 'uninstall';
   dry_run: boolean;
   status: Status;
@@ -133,8 +133,10 @@ export interface Report {
   codex_version?: string;
   /** Set by the Claude install (claude.ts), which reuses this report shape. */
   claude_version?: string;
+  /** Set by the Pi install (pi.ts), which reuses this report shape. */
+  pi_version?: string;
   hooks?: {
-    /** hooks.json (Codex) or settings.json (Claude Code). */
+    /** hooks.json (Codex), settings.json (Claude Code) or the generated extension file (Pi). */
     path: string;
     status: 'created' | 'updated' | 'unchanged' | 'removed' | 'refused';
     changes: EventChange[];
