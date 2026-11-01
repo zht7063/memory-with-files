@@ -1,9 +1,16 @@
 # Changelog
 
-## 1.0.0-alpha.0 (unreleased, `v1` integration branch)
+## 1.0.0 - 2026-11-01
+
+MWF 1.0 是从零重写的版本（`v1` 分支，PR #36–#49），相对 0.3.1 / 0.4.0 有破坏性变更，见下。 / MWF 1.0 is a ground-up rewrite (the `v1` branch, PRs #36–#49) with breaking changes against 0.3.1 / 0.4.0, listed below.
+
+范围 / Scope (PR #36–#49)：core 层（#36、#37）、CLI 层（#38、#40）、MCP 层（#39）、hooks 层与 Codex / Claude Code 适配器（#41、#42）、recall 相关度阈值（#43）、`mwf install|uninstall --harness codex`（#44）、`--harness claude`（#45）、锁测试时序修复（#46）、`--harness pi`（#47）、安全写入目标 F1/F2/F4（#48）、Codex `/hooks` 信任提示（#49）。 / Scope: core (#36, #37), CLI (#38, #40), MCP (#39), hooks and the Codex / Claude Code adapters (#41, #42), recall relevance threshold (#43), `mwf install|uninstall --harness codex` (#44), `--harness claude` (#45), lock-test timing fix (#46), `--harness pi` (#47), safe write targets F1/F2/F4 (#48), Codex `/hooks` trust hint (#49).
+
+要求 / Requirements：Node ≥ 22.19.0（`node:sqlite`；`package.json` 的 `engines`）。 / Node >= 22.19.0 (`node:sqlite`; `engines` in `package.json`).
 
 ### 破坏性变更 / Breaking
 
+- 相对 0.3.1（及 0.4.0）：包的根入口 `.`（`dist/core.js`）被移除，`exports` 改为 `./core`、`./cli`、`./mcp`、`./hooks`，`mwf` 可执行文件由 `dist/cli.js` 改为 `dist/bin/mwf.js`；0.x 的 `.mwf/` 数据、receipt 与集成不会被迁移；1.0 没有 `mwf update`（推迟到 1.1）：更新时安装新包后重新运行 `mwf install --harness …`。 / Against 0.3.1 (and 0.4.0): the root entry `.` (`dist/core.js`) is removed and `exports` is now `./core`, `./cli`, `./mcp`, `./hooks`; the `mwf` executable moves from `dist/cli.js` to `dist/bin/mwf.js`; 0.x `.mwf/` data, receipts and integrations are not migrated; there is no `mwf update` in 1.0 (deferred to 1.1): install the new package and run `mwf install --harness …` again.
 - 从零重写，不复用也不迁移 0.x 代码、`.mwf/` 数据或集成回执。新的分层目录为 `src/core`、`src/cli`、`src/mcp`、`src/hooks`（另有纯文本的 `src/skills`）；目前已实现 `src/core`、`src/cli`、`src/mcp`、`src/hooks` 与 `src/lifecycle`（Codex、Claude Code 与 Pi 的 install / uninstall）。
 - Rewritten from scratch: no 0.x code, data or receipt migration. Layered layout `src/core`, `src/cli`, `src/mcp`, `src/hooks`; `core`, `cli`, `mcp`, `hooks` and `lifecycle` (Codex, Claude Code and Pi install / uninstall) are implemented so far.
 
