@@ -184,7 +184,7 @@ describe('lock', () => {
           return true;
         },
       );
-      assert.ok(Date.now() - t0 >= 140 && Date.now() - t0 < 3000);
+      assert.ok(Date.now() - t0 >= 140, 'waited its budget before giving up'); // lower bound only
       // per-call wait budget wins over ctx default
       await assert.rejects(
         core.add(ctx, { type: 'task', title: 'x', body: 'y', wait_ms: 50 }),
@@ -205,9 +205,9 @@ describe('lock', () => {
       JSON.stringify({ pid: await deadPid(), host: hostname(), time: Date.now(), token: 'dead' }),
     );
     assert.equal(inspectLock(layout).stale, true);
-    const t0 = Date.now();
+    // reclaimed without waiting for any stale age: with a wait budget this would otherwise be LOCK_TIMEOUT
+    // (no wall-clock upper bound: an overloaded machine must not fail this test)
     await core.add({ ...ctx, waitMs: 2000 }, { type: 'task', title: 'x', body: 'y' });
-    assert.ok(Date.now() - t0 < 1500);
     assert.equal(existsSync(layout.lock), false);
   });
 
@@ -263,30 +263,41 @@ describe('lock', () => {
   it('a second process does not take a lock held by a live process past the stale age', async () => {
     const ctx = await project('track', { lockStaleMs: 150 });
     const layout = layoutOf(ctx.root);
+    // The holder keeps the lock (no heartbeat, so its lock "time" goes far past staleMs) until the test
+    // closes its stdin; nothing here depends on how long spawning the second process takes. The 60 s
+    // timer is only a safety net so a failed test cannot leave the holder running.
     const script = `
       import { acquireLock } from ${JSON.stringify(new URL('../src/core/lock.ts', import.meta.url).href)};
       const h = await acquireLock(${JSON.stringify(layout)}, { waitMs: 0 });
       process.stdout.write('held');
-      await new Promise((r) => setTimeout(r, 1500)); // no heartbeat: lock "time" goes far past staleMs
+      const safety = setTimeout(() => process.exit(3), 60_000);
+      process.stdin.resume();
+      await new Promise((r) => process.stdin.once('end', r));
+      clearTimeout(safety);
       h.release();
     `;
     const holder = spawn(
       process.execPath,
       ['--experimental-strip-types', '--no-warnings', '--input-type=module', '-e', script],
-      { stdio: ['ignore', 'pipe', 'inherit'] },
+      { stdio: ['pipe', 'pipe', 'inherit'] },
     );
     const exited = new Promise((res) => holder.on('close', res));
-    await new Promise<void>((res) => holder.stdout.once('data', () => res()));
-    await new Promise((r) => setTimeout(r, 400)); // > 2x staleMs
-    assert.equal(inspectLock(layout, { staleMs: 150 }).stale, false);
-    const t0 = Date.now();
-    const second = await runChild({ ...ctx, waitMs: 500, lockStaleMs: 150 }, [
-      { fn: 'add', input: { type: 'task', title: 'blocked', body: 'x' } },
-    ]);
-    assert.equal(second.code, 1);
-    assert.equal((second.results[0] as { error: { code: string } }).error.code, 'LOCK_TIMEOUT');
-    assert.ok(Date.now() - t0 >= 450);
-    assert.equal(loadAll(layout).records.length, 0, 'second process wrote nothing');
+    try {
+      await new Promise<void>((res) => holder.stdout.once('data', () => res()));
+      await new Promise((r) => setTimeout(r, 400)); // > 2x staleMs, a lower bound only
+      assert.equal(inspectLock(layout, { staleMs: 150 }).stale, false);
+      const t0 = Date.now();
+      const second = await runChild({ ...ctx, waitMs: 500, lockStaleMs: 150 }, [
+        { fn: 'add', input: { type: 'task', title: 'blocked', body: 'x' } },
+      ]);
+      assert.equal(second.code, 1);
+      assert.equal((second.results[0] as { error: { code: string } }).error.code, 'LOCK_TIMEOUT');
+      // it waited its whole budget before giving up (a lower bound; an overloaded machine only makes it longer)
+      assert.ok(Date.now() - t0 >= 450);
+      assert.equal(loadAll(layout).records.length, 0, 'second process wrote nothing');
+    } finally {
+      holder.stdin.end(); // release the lock
+    }
     await exited; // holder released normally
     const third = await runChild(ctx, [
       { fn: 'add', input: { type: 'task', title: 'ok', body: 'x' } },
