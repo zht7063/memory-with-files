@@ -6,6 +6,13 @@ import { invalid } from './errors.ts';
 import { readTextIfExists } from './fsx.ts';
 import { readHandoffFile, type HandoffListItem, type HandoffView } from './handoff.ts';
 import { readConfig } from './init.ts';
+import {
+  DEFAULT_RECALL_MIN_SCORE,
+  MAX_RECALL_MIN_SCORE,
+  relevanceScore,
+  scoringTerms,
+  searchTermsOf,
+} from './relevance.ts';
 import { parseInbox } from './inbox.ts';
 import { inspectLock } from './lock.ts';
 import { RECORD_TYPES, TRASH_NEAR_DAYS, TRASH_RETENTION_DAYS, type RecordType } from './paths.ts';
@@ -130,6 +137,12 @@ export interface RecallInput {
   task?: string;
   /** Also search handoffs; they ignore `scope`. */
   include_handoffs?: boolean;
+  /**
+   * Hook auto-recall only: keep a hit only when its relevance score (see ./relevance.ts: distinctive
+   * terms, title 2 / body 1) is at least this; 0 (default) turns the filter off. A query with no
+   * distinctive term returns no hits at all. Ignored without a query.
+   */
+  min_relevance?: number;
   /** Max hits (default 8, max 50). */
   limit?: number;
   /** Output budget in characters across all hits (default 4000, max 20000). */
@@ -213,9 +226,16 @@ export async function recall(ctx: Ctx, input: RecallInput = {}): Promise<RecallR
   if (status !== 'active' && status !== 'done' && status !== 'all')
     throw invalid("status must be 'active', 'done' or 'all'");
   const statusFilter: Status | undefined = status === 'all' ? undefined : status;
-  const terms = input.query ? queryTerms(input.query) : [];
   if (input.query !== undefined && typeof input.query !== 'string')
     throw invalid('query must be a string');
+  const minRelevance = clampInt(input.min_relevance, 0, 0, MAX_RECALL_MIN_SCORE, 'min_relevance');
+  const filtering = minRelevance > 0 && !!input.query;
+  const scoring = filtering ? scoringTerms(input.query as string) : [];
+  // Nothing distinctive to look up (a greeting, "READY", "ok"): no hits, and the index is not read.
+  if (filtering && !scoring.length) {
+    return { hits: [], total_matched: 0, truncated: false, warnings: [] };
+  }
+  const terms = filtering ? searchTermsOf(scoring) : input.query ? queryTerms(input.query) : [];
 
   return withIndexRead(ctx, ({ db, warnings }) => {
     const kinds: Array<'record' | 'handoff'> = input.include_handoffs
@@ -236,6 +256,11 @@ export async function recall(ctx: Ctx, input: RecallInput = {}): Promise<RecallR
             .map((node, i) => ({ node, rank: i }));
       let kept = 0;
       for (const { node, rank } of found) {
+        if (
+          filtering &&
+          relevanceScore(scoring, node.title, bodyOf(db, node.kind, node.id)) < minRelevance
+        )
+          continue;
         // Handoffs carry no scope: they are never scope-filtered (and rank after scope matches).
         const m = kind === 'handoff' ? { ok: true, hits: 0 } : scopeMatch(node.scope, scope);
         if (!m.ok) continue;
@@ -296,7 +321,7 @@ export interface StatusResult {
   };
   host: Record<string, Record<string, string>>;
   /** Per-project hook switches from config.toml. */
-  hooks: { stop: boolean };
+  hooks: { stop: boolean; recall_min_score: number };
   hints: string[];
   warnings: string[];
 }
@@ -361,7 +386,10 @@ export async function status(ctx: Ctx): Promise<StatusResult> {
         holder_pid: lock.holder?.pid ?? null,
       },
       host: readHost(layout.hostLocal),
-      hooks: { stop: config?.hooks_stop ?? true },
+      hooks: {
+        stop: config?.hooks_stop ?? true,
+        recall_min_score: config?.hooks_recall_min_score ?? DEFAULT_RECALL_MIN_SCORE,
+      },
       hints,
       warnings,
     };

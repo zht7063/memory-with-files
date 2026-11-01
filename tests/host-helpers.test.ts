@@ -63,6 +63,6 @@ describe('cli getSession / setSession (host helpers for hooks)', () => {
     const ctx = await project();
     const result = await cli.status({}, { cwd: ctx.root });
     assert.ok(result.ok);
-    assert.deepEqual((result.data as any).hooks, { stop: true });
+    assert.deepEqual((result.data as any).hooks, { stop: true, recall_min_score: 2 });
   });
 });

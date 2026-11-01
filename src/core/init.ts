@@ -18,6 +18,7 @@ import { INBOX_HEADER } from './inbox.ts';
 import { loadAll } from './load.ts';
 import { acquireLock } from './lock.ts';
 import { RECORD_TYPES, TYPE_DIR } from './paths.ts';
+import { DEFAULT_RECALL_MIN_SCORE, MAX_RECALL_MIN_SCORE } from './relevance.ts';
 import { emptyState, stringifyState } from './state.ts';
 import { PROTOCOL_MD } from './templates.ts';
 import { isoTime } from './util.ts';
@@ -46,6 +47,13 @@ export interface Config {
   mwf_version: string;
   /** `[hooks] stop = false` turns the end-of-turn (Stop) hook off for this project; default on. */
   hooks_stop: boolean;
+  /**
+   * `[hooks] recall_min_score = N` (integer 0..20, default 2): the relevance a stored record needs
+   * to be injected for a user prompt; 0 turns the filter off. Anything else falls back to the
+   * default and is reported by doctor (`recall_min_score_invalid`).
+   */
+  hooks_recall_min_score: number;
+  recall_min_score_invalid: boolean;
 }
 
 export function readConfig(text: string | null): Config | null {
@@ -54,14 +62,21 @@ export function readConfig(text: string | null): Config | null {
   const mode = raw['git_mode'];
   if (mode !== 'track' && mode !== 'local') return null;
   const hooks = raw['hooks'];
-  const stop =
-    typeof hooks === 'object' && hooks !== null
-      ? (hooks as Record<string, unknown>)['stop']
-      : undefined;
+  const hooksTable =
+    typeof hooks === 'object' && hooks !== null ? (hooks as Record<string, unknown>) : {};
+  const stop = hooksTable['stop'];
+  const minScore = hooksTable['recall_min_score'];
+  const minScoreOk =
+    typeof minScore === 'number' &&
+    Number.isInteger(minScore) &&
+    minScore >= 0 &&
+    minScore <= MAX_RECALL_MIN_SCORE;
   return {
     git_mode: mode,
     mwf_version: String(raw['mwf_version'] ?? ''),
     hooks_stop: stop !== false,
+    hooks_recall_min_score: minScoreOk ? minScore : DEFAULT_RECALL_MIN_SCORE,
+    recall_min_score_invalid: minScore !== undefined && !minScoreOk,
   };
 }
 

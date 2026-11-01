@@ -10,7 +10,13 @@ import {
   type CliEnv,
   type CliResult,
 } from '../mcp/index.ts';
-import { HOOK_LOCK_WAIT_MS, HOOK_SOFT_MS, PROMPT_CHARS, SESSION_START_CHARS } from './budget.ts';
+import {
+  DEFAULT_RECALL_MIN_SCORE,
+  HOOK_LOCK_WAIT_MS,
+  HOOK_SOFT_MS,
+  PROMPT_CHARS,
+  SESSION_START_CHARS,
+} from './budget.ts';
 import { clean, fence, newNonce, oneLine } from './fence.ts';
 import { FAILURE_NOTICE, UNINITIALIZED_NOTICE } from './messages.ts';
 
@@ -222,12 +228,21 @@ export async function userPrompt(input: { prompt?: string }, hc: HookContext): P
     const prompt = typeof input.prompt === 'string' ? clean(input.prompt).trim() : '';
     if (Array.from(prompt).length < MIN_PROMPT_CHARS) return {};
     const env = hookEnv(hc);
+    // The project's relevance threshold ([hooks] recall_min_score); the default when status fails.
+    const status = await tool('mwf_status', {}, env);
+    if (!status.ok && status.code === 'NOT_INITIALIZED') return {};
+    const configured = status.ok ? status.data['hooks']?.recall_min_score : undefined;
+    const minRelevance =
+      typeof configured === 'number' && Number.isInteger(configured) && configured >= 0
+        ? configured
+        : DEFAULT_RECALL_MIN_SCORE;
     const found = await tool(
       'mwf_recall',
       {
         query: Array.from(prompt).slice(0, MAX_QUERY_CHARS).join(''),
         limit: 5,
         max_chars: 2_500,
+        min_relevance: minRelevance,
       },
       env,
     );
