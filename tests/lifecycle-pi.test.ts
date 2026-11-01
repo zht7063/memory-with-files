@@ -576,9 +576,13 @@ describe('pi install: safeguards on mcp.json (A1, A3, A4)', () => {
     writeMcp(sb, { mcpServers: { other: OTHER } });
     chmodSync(sb.piDir, 0o777);
     const r = await installPi(envOf(sb), REAL);
-    assert.equal(r.mcp?.status, 'refused');
+    // the world-writable agent directory is now refused before anything is written (F1)
+    assert.equal(r.status, 'failed');
+    assert.equal(r.code, 'UNSAFE_TARGET');
+    assert.equal(r.mcp, undefined);
     assert.deepEqual(mutations(sb), []);
     assert.deepEqual(backups(sb.piDir, 'mcp.json'), []);
+    assert.equal(existsSync(join(sb.piDir, 'skills')), false);
   });
 
   it('verifyMcpJsonChange: only the mwf entry may differ', () => {

@@ -12,9 +12,16 @@
 // settings.json is neither read nor written. Order: skills -> extension -> MCP. Every file write is
 // atomic and backed up; nothing is rolled back across files, and uninstall (stateless: it recognises
 // our entries) removes whatever was written.
-import { existsSync, lstatSync, mkdirSync } from 'node:fs';
+import { existsSync, lstatSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join } from 'node:path';
-import { execRunner, type McpStep, type Options, type Report, type Runner } from './codex.ts';
+import {
+  execRunner,
+  noteSkillCodes,
+  type McpStep,
+  type Options,
+  type Report,
+  type Runner,
+} from './codex.ts';
 import { shellQuote, UnquotableError } from './hooks-doc.ts';
 import { JsonSyntaxError, clone, deepEqual, parseStrictJson } from './json-edit.ts';
 import { classifyExtension, EXTENSION_NAME, renderExtension } from './pi-extension.ts';
@@ -23,10 +30,14 @@ import {
   backupSnapshot,
   commitFile,
   currentOwner,
+  mkdirSafe,
   readSnapshot,
   readSnapshotOrAbsent,
   removeFile,
   type Owner,
+  trustRootFor,
+  unsafeOr,
+  withRoot,
 } from './safe-write.ts';
 import { installSkills, uninstallSkills } from './skills-files.ts';
 import { SKILLS } from '../skills/index.ts';
@@ -57,6 +68,10 @@ export interface PiEnv {
   now?: () => Date;
   beforeRename?: () => void;
 }
+
+/** The owner with the trust root: the user's home when the Pi agent directory is inside it. */
+const ownerOf = (env: PiEnv): Owner =>
+  withRoot(env.owner ?? currentOwner(), trustRootFor(env.piDir, env.home));
 
 const SERVER = 'mwf';
 const DESCRIPTION = 'mwf: project memory (the mwf_* tools)';
@@ -273,7 +288,7 @@ async function mutateMcp(
   success: McpStep['status'],
   report: Report,
 ): Promise<McpStep> {
-  const owner = env.owner ?? currentOwner();
+  const owner = ownerOf(env);
   const file = mcpJsonPath(env);
   const manual = expect ? manualAdd(env) : MANUAL_REMOVE;
   const first = readMcpJson(env, owner);
@@ -318,8 +333,8 @@ async function mutateMcp(
   return { status: success, ...(backup ? { backup } : {}) };
 }
 
-const writeOpts = (env: PiEnv) => ({
-  ...(env.owner ? { owner: env.owner } : {}),
+const writeOpts = (env: PiEnv, owner: Owner) => ({
+  owner,
   ...(env.now ? { now: env.now() } : {}),
   ...(env.beforeRename ? { beforeRename: env.beforeRename } : {}),
 });
@@ -348,7 +363,7 @@ const COMMON_NOTES = [
 
 export async function installPi(env: PiEnv, options: Options): Promise<Report> {
   const report = newReport('install', env, options);
-  const owner = env.owner ?? currentOwner();
+  const owner = ownerOf(env);
   const bad = checkPaths(env);
   if (bad) return refuse(report, bad.code, bad.message);
   const version = await checkVersion(env);
@@ -363,7 +378,7 @@ export async function installPi(env: PiEnv, options: Options): Promise<Report> {
     );
 
   try {
-    if (!options.dryRun) mkdirSync(env.piDir, { recursive: true, mode: 0o700 });
+    if (!options.dryRun) mkdirSafe(env.piDir, owner, 0o700);
 
     // 1. skills
     report.skills = installSkills({
@@ -377,19 +392,19 @@ export async function installPi(env: PiEnv, options: Options): Promise<Report> {
     });
     for (const s of report.skills) if (s.backup) report.backups.push(s.backup);
     if (report.skills.some((s) => s.status === 'refused')) report.status = 'partial';
+    noteSkillCodes(report);
 
     // 2. the extension (hooks + /mwf)
     const path = extensionPath(env);
     let step: NonNullable<Report['hooks']>;
     try {
-      if (!options.dryRun)
-        mkdirSync(join(env.piDir, 'extensions'), { recursive: true, mode: 0o755 });
+      if (!options.dryRun) mkdirSafe(join(env.piDir, 'extensions'), owner, 0o755);
       const snap = readSnapshotOrAbsent(path, owner);
       const text = snap.exists ? snap.content.toString('utf8') : '';
       const state = snap.exists ? classifyExtension(text) : undefined;
       if (!snap.exists) {
         if (!options.dryRun)
-          commitFile(path, want, snap, { ...writeOpts(env), mode: 0o644, backup: false });
+          commitFile(path, want, snap, { ...writeOpts(env, owner), mode: 0o644, backup: false });
         step = { path, status: 'created', changes: [] };
       } else if (state!.kind === 'none' && !options.forceSkills) {
         step = {
@@ -416,7 +431,7 @@ export async function installPi(env: PiEnv, options: Options): Promise<Report> {
         let backup: string | undefined;
         if (!options.dryRun) {
           backup = commitFile(path, want, snap, {
-            ...writeOpts(env),
+            ...writeOpts(env, owner),
             mode: 0o644,
             backup: !ours,
           }).backup;
@@ -426,7 +441,14 @@ export async function installPi(env: PiEnv, options: Options): Promise<Report> {
       }
     } catch (error) {
       if (!(error instanceof SafeWriteError)) throw error;
-      step = { path, status: 'refused', changes: [], detail: error.message };
+      step = {
+        path,
+        status: 'refused',
+        changes: [],
+        detail: error.message,
+        ...(unsafeOr(error, '') ? { code: 'UNSAFE_TARGET' } : {}),
+      };
+      if (unsafeOr(error, '')) report.code ??= 'UNSAFE_TARGET';
     }
     report.hooks = step;
     if (step.status === 'refused') report.status = 'partial';
@@ -508,7 +530,7 @@ export async function installPi(env: PiEnv, options: Options): Promise<Report> {
 
 export async function uninstallPi(env: PiEnv, options: Options): Promise<Report> {
   const report = newReport('uninstall', env, options);
-  const owner = env.owner ?? currentOwner();
+  const owner = ownerOf(env);
   const bad = checkPaths(env);
   // uninstall needs no mwf.js/node check (a moved package must still be removable), only an absolute directory
   if (bad && !isAbsolute(env.piDir)) return refuse(report, bad.code, bad.message);
@@ -549,8 +571,15 @@ export async function uninstallPi(env: PiEnv, options: Options): Promise<Report>
     }
   } catch (error) {
     if (!(error instanceof SafeWriteError)) throw error;
-    report.hooks = { path, status: 'refused', changes: [], detail: error.message };
+    report.hooks = {
+      path,
+      status: 'refused',
+      changes: [],
+      detail: error.message,
+      ...(unsafeOr(error, '') ? { code: 'UNSAFE_TARGET' } : {}),
+    };
     report.status = 'partial';
+    if (unsafeOr(error, '')) report.code ??= 'UNSAFE_TARGET';
   }
 
   report.skills = uninstallSkills({
@@ -563,6 +592,7 @@ export async function uninstallPi(env: PiEnv, options: Options): Promise<Report>
     ...(env.now ? { now: env.now() } : {}),
   });
   for (const s of report.skills) if (s.backup) report.backups.push(s.backup);
+  noteSkillCodes(report);
   if (
     report.skills.some(
       (s) => s.status === 'kept' && s.detail && !/not installed|no SKILL.md/.test(s.detail),

@@ -14,7 +14,9 @@ import {
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import {
+  CLAUDE_FIRST_RUN_KEYS,
   claudeJsonPath,
+  firstRunKeysAdded,
   installClaude,
   parseClaudeVersion,
   uninstallClaude,
@@ -1007,5 +1009,181 @@ describe('mwf install / uninstall --harness claude on the command line', () => {
     assert.match(out, /not the shared ~\/\.agents\/skills/);
     assert.match(out, /never writes permissions\.allow/);
     assert.match(out, /not a security boundary/);
+  });
+});
+
+// F4: a fresh CLAUDE_CONFIG_DIR. Claude Code itself adds nine first-run keys to a .claude.json that
+// does not exist yet; those additions (and only additions) are tolerated, nothing else is.
+const FIRST_RUN_KEYS = [
+  'firstStartTime',
+  'firstStartVersion',
+  'hasResetAutoModeOptInForDefaultOffer',
+  'machineID',
+  'migrationVersion',
+  'opusProMigrationComplete',
+  'seenNotifications',
+  'sonnet1m45MigrationComplete',
+  'userID',
+];
+const FIRST_RUN_VALUES: Record<string, unknown> = {
+  firstStartTime: '2026-10-01T00:00:00.000Z',
+  firstStartVersion: '2.1.300',
+  hasResetAutoModeOptInForDefaultOffer: false,
+  machineID: 'machine-before',
+  migrationVersion: 3,
+  opusProMigrationComplete: false,
+  seenNotifications: { a: 1 },
+  sonnet1m45MigrationComplete: false,
+  userID: 'user-before',
+};
+
+describe('claude install: first-run keys that Claude Code adds itself (F4)', () => {
+  it('lists exactly the nine keys of the real L3a re-run', () => {
+    assert.deepEqual([...CLAUDE_FIRST_RUN_KEYS].sort(), [...FIRST_RUN_KEYS].sort());
+    assert.equal(CLAUDE_FIRST_RUN_KEYS.length, 9);
+  });
+
+  it('1: a fresh config directory: the nine added keys plus our entry end in done, with a note', async () => {
+    for (const customDir of [false, true]) {
+      const sb = claudeSandbox(customDir);
+      const r = await installClaude(envOf(sb, {}, { FAKE_CLAUDE_FIRSTRUN: '1' }), REAL);
+      assert.equal(r.status, 'done', JSON.stringify(r));
+      assert.equal(r.code, undefined);
+      assert.equal(r.mcp?.status, 'added');
+      const cj = claudeJson(sb);
+      for (const k of FIRST_RUN_KEYS) assert.ok(k in cj, k);
+      assert.ok(cj.mcpServers.mwf);
+      assert.match(r.notes.join('\n'), /first-run keys/);
+      assert.match(r.notes.join('\n'), /firstStartTime/);
+    }
+  });
+
+  it('2: a whitelisted key plus one key that is not on the list is refused', async () => {
+    const sb = claudeSandbox();
+    const r = await installClaude(
+      envOf(sb, {}, { FAKE_CLAUDE_FIRSTRUN: '1', FAKE_CLAUDE_EXTRA: '1' }),
+      REAL,
+    );
+    assert.equal(r.status, 'failed');
+    assert.equal(r.code, 'CONFIG_CHANGED_UNEXPECTEDLY');
+    assert.equal(r.mcp?.status, 'unexpected_change');
+    assert.match(r.mcp?.detail ?? '', /NOT reverted/);
+  });
+
+  it('an addition of a non-listed key alone is refused too (no pattern, no "unknown additions")', async () => {
+    const sb = claudeSandbox();
+    const r = await installClaude(envOf(sb, {}, { FAKE_CLAUDE_EXTRA: '1' }), REAL);
+    assert.equal(r.code, 'CONFIG_CHANGED_UNEXPECTEDLY');
+  });
+
+  for (const key of FIRST_RUN_KEYS) {
+    it(`8: ${key} present before and changed by claude: refused, not reverted, backup 0600`, async () => {
+      const sb = claudeSandbox();
+      writeFileSync(sb.claudeJson, JSON.stringify(FIRST_RUN_VALUES), { mode: 0o600 });
+      const r = await installClaude(envOf(sb, {}, { FAKE_CLAUDE_CHANGE: key }), REAL);
+      assert.equal(r.status, 'failed', key);
+      assert.equal(r.code, 'CONFIG_CHANGED_UNEXPECTEDLY', key);
+      assert.match(r.mcp?.detail ?? '', /NOT reverted/);
+      const bk = backups(sb.home, '.claude.json');
+      assert.equal(bk.length, 1, key);
+      assert.equal(mode(join(sb.home, bk[0]!)), 0o600);
+      assert.deepEqual(JSON.parse(readFileSync(join(sb.home, bk[0]!), 'utf8')), FIRST_RUN_VALUES);
+      assert.equal(claudeJson(sb)[key], 'changed-by-claude'); // not reverted
+    });
+
+    it(`9: ${key} present before and deleted by claude: refused, not reverted, backup 0600`, async () => {
+      const sb = claudeSandbox();
+      writeFileSync(sb.claudeJson, JSON.stringify(FIRST_RUN_VALUES), { mode: 0o600 });
+      const r = await installClaude(envOf(sb, {}, { FAKE_CLAUDE_DELETE: key }), REAL);
+      assert.equal(r.status, 'failed', key);
+      assert.equal(r.code, 'CONFIG_CHANGED_UNEXPECTEDLY', key);
+      const bk = backups(sb.home, '.claude.json');
+      assert.equal(bk.length, 1, key);
+      assert.equal(mode(join(sb.home, bk[0]!)), 0o600);
+      assert.equal(key in claudeJson(sb), false); // not reverted
+    });
+  }
+
+  it('10: some keys present and unchanged, the others newly added: done, and the unchanged ones stay equal', async () => {
+    const sb = claudeSandbox();
+    const present = { userID: 'user-before', machineID: 'machine-before', firstStartTime: 'x' };
+    writeFileSync(sb.claudeJson, JSON.stringify(present), { mode: 0o600 });
+    const r = await installClaude(envOf(sb, {}, { FAKE_CLAUDE_FIRSTRUN: '1' }), REAL);
+    assert.equal(r.status, 'done', JSON.stringify(r));
+    const cj = claudeJson(sb);
+    for (const [k, v] of Object.entries(present)) assert.equal(cj[k], v);
+    for (const k of FIRST_RUN_KEYS) assert.ok(k in cj, k);
+    // only the newly added ones are in the note
+    assert.doesNotMatch(r.notes.join('\n'), /userID|machineID/);
+    assert.match(r.notes.join('\n'), /migrationVersion/);
+  });
+
+  it('verifyClaudeJsonChange / firstRunKeysAdded: additions only', () => {
+    const want = { command: '/n', args: ['/p/mwf.js', 'mcp'] };
+    const mwf = {
+      mcpServers: { mwf: { type: 'stdio', command: '/n', args: ['/p/mwf.js', 'mcp'] } },
+    };
+    assert.equal(verifyClaudeJsonChange({}, { ...FIRST_RUN_VALUES, ...mwf }, want), undefined);
+    assert.match(
+      verifyClaudeJsonChange({ userID: 'a' }, { ...FIRST_RUN_VALUES, userID: 'b', ...mwf }, want) ??
+        '',
+      /other than the mwf entry/,
+    );
+    assert.match(
+      verifyClaudeJsonChange({ userID: 'a', x: 1 }, { x: 1, ...mwf }, want) ?? '',
+      /other than the mwf entry/,
+    );
+    assert.deepEqual(
+      firstRunKeysAdded({ userID: 'a' }, { userID: 'b', machineID: 'c', other: 1 }),
+      ['machineID'],
+    );
+  });
+
+  it('5: an unrelated key rewritten in .claude.json (L11) is still refused, with or without first-run keys', async () => {
+    for (const first of [false, true]) {
+      const sb = claudeSandbox();
+      writeFileSync(sb.claudeJson, JSON.stringify(SECRET_JSON), { mode: 0o600 });
+      const r = await installClaude(
+        envOf(
+          sb,
+          {},
+          { FAKE_CLAUDE_MODE: 'clobber', ...(first ? { FAKE_CLAUDE_FIRSTRUN: '1' } : {}) },
+        ),
+        REAL,
+      );
+      assert.equal(r.code, 'CONFIG_CHANGED_UNEXPECTEDLY', String(first));
+    }
+  });
+
+  it('6: the A1 backup of an existing .claude.json is 0600 and present in the refusal path', async () => {
+    const sb = claudeSandbox();
+    writeFileSync(sb.claudeJson, JSON.stringify(SECRET_JSON), { mode: 0o600 });
+    const r = await installClaude(
+      envOf(sb, {}, { FAKE_CLAUDE_FIRSTRUN: '1', FAKE_CLAUDE_EXTRA: '1' }),
+      REAL,
+    );
+    assert.equal(r.code, 'CONFIG_CHANGED_UNEXPECTEDLY');
+    const bk = backups(sb.home, '.claude.json');
+    assert.equal(bk.length, 1);
+    assert.equal(mode(join(sb.home, bk[0]!)), 0o600);
+  });
+
+  it("uninstall does not delete Claude Code's own backups/.claude.json.backup.<ms>, nor look at it", async () => {
+    for (const customDir of [false, true]) {
+      const sb = claudeSandbox(customDir);
+      const env = { FAKE_CLAUDE_FIRSTRUN: '1' };
+      const r = await installClaude(envOf(sb, {}, env), REAL);
+      assert.equal(r.status, 'done', JSON.stringify(r));
+      const dir = join(sb.claudeDir, 'backups');
+      const own = join(dir, '.claude.json.backup.1700000000000');
+      writeFileSync(own, '{"kept":true}', { mode: 0o600 });
+      const before = readdirSync(dir).sort();
+      assert.ok(before.length >= 2);
+      const u = await uninstallClaude(envOf(sb), REAL);
+      assert.equal(u.status, 'done', JSON.stringify(u));
+      assert.deepEqual(readdirSync(dir).sort(), before);
+      assert.equal(readFileSync(own, 'utf8'), '{"kept":true}');
+      assert.equal(mode(own), 0o600);
+    }
   });
 });

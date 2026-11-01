@@ -2,13 +2,16 @@
 //   <!-- mwf-managed:<package version>:<sha256 of everything above the marker> -->
 // The hash is how install and uninstall tell "still exactly what mwf wrote" (A4) from a file the
 // user edited, or a skill of the same name that mwf never wrote.
-import { lstatSync, mkdirSync, rmdirSync } from 'node:fs';
+import { lstatSync, rmdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { renderSkillMd, SKILLS } from '../skills/index.ts';
 import {
+  SafeWriteError,
   backupSnapshot,
+  checkAncestors,
   commitFile,
   currentOwner,
+  mkdirSafe,
   readSnapshot,
   readSnapshotOrAbsent,
   removeFile,
@@ -40,6 +43,8 @@ export interface SkillStep {
   status: 'created' | 'updated' | 'unchanged' | 'removed' | 'kept' | 'refused';
   detail?: string;
   backup?: string;
+  /** Set when the step failed with a safe-write code (UNSAFE_TARGET, ...): the same code as in JSON. */
+  code?: string;
 }
 
 export interface SkillsOptions {
@@ -61,15 +66,26 @@ function lstat(path: string) {
   }
 }
 
-/** Create the directory chain if absent (0755); refuse a symlinked skill directory. */
-function ensureSkillDir(dir: string, dryRun: boolean): string | undefined {
+/**
+ * Create the directory chain if absent (0755); refuse a symlinked skill directory. Every directory
+ * above it, up to the trust root, is checked first (a symlinked skills root into /tmp is refused,
+ * UNSAFE_TARGET), the chain is created below the RESOLVED path (never through a link), and checked
+ * again once it exists. Throws SafeWriteError(UNSAFE_TARGET).
+ */
+function ensureSkillDir(dir: string, dryRun: boolean, owner: Owner): string | undefined {
+  checkAncestors(dirname(dir), owner);
   const st = lstat(dir);
   if (st?.isSymbolicLink())
     return 'the skill directory is a symbolic link (an arrangement of yours); mwf will not write into it';
   if (st && !st.isDirectory()) return 'a file is in the way of the skill directory';
-  if (!st && !dryRun) mkdirSync(dir, { recursive: true, mode: 0o755 });
+  if (!st && !dryRun) {
+    mkdirSafe(dir, owner, 0o755);
+  }
   return undefined;
 }
+
+const codeOf = (error: unknown): string | undefined =>
+  error instanceof SafeWriteError && error.code === 'UNSAFE_TARGET' ? error.code : undefined;
 
 export function installSkills(options: SkillsOptions): SkillStep[] {
   const owner = options.owner ?? currentOwner();
@@ -78,7 +94,20 @@ export function installSkills(options: SkillsOptions): SkillStep[] {
     const dir = join(options.skillsRoot, skill.name);
     const path = join(dir, 'SKILL.md');
     const want = withMarker(renderSkillMd(skill, options.host), options.version);
-    const refused = ensureSkillDir(dir, options.dryRun);
+    let refused: string | undefined;
+    try {
+      refused = ensureSkillDir(dir, options.dryRun, owner);
+    } catch (error) {
+      if (!(error instanceof SafeWriteError)) throw error;
+      steps.push({
+        name: skill.name,
+        path,
+        status: 'refused',
+        detail: error.message,
+        code: error.code,
+      });
+      continue;
+    }
     if (refused) {
       steps.push({ name: skill.name, path, status: 'refused', detail: refused });
       continue;
@@ -136,7 +165,14 @@ export function installSkills(options: SkillsOptions): SkillStep[] {
       }
       steps.push({ name: skill.name, path, status: 'updated', ...(backup ? { backup } : {}) });
     } catch (error) {
-      steps.push({ name: skill.name, path, status: 'refused', detail: (error as Error).message });
+      const code = codeOf(error);
+      steps.push({
+        name: skill.name,
+        path,
+        status: 'refused',
+        detail: (error as Error).message,
+        ...(code ? { code } : {}),
+      });
     }
   }
   return steps;
@@ -148,6 +184,19 @@ export function uninstallSkills(options: SkillsOptions): SkillStep[] {
   for (const skill of SKILLS) {
     const dir = join(options.skillsRoot, skill.name);
     const path = join(dir, 'SKILL.md');
+    try {
+      checkAncestors(dirname(dir), owner); // never remove through an unsafe or dangling link
+    } catch (error) {
+      if (!(error instanceof SafeWriteError)) throw error;
+      steps.push({
+        name: skill.name,
+        path,
+        status: 'refused',
+        detail: error.message,
+        code: error.code,
+      });
+      continue;
+    }
     const st = lstat(dir);
     if (!st) {
       steps.push({ name: skill.name, path, status: 'unchanged', detail: 'not installed' });
@@ -199,7 +248,14 @@ export function uninstallSkills(options: SkillsOptions): SkillStep[] {
       }
       steps.push({ name: skill.name, path, status: 'removed', ...(backup ? { backup } : {}) });
     } catch (error) {
-      steps.push({ name: skill.name, path, status: 'kept', detail: (error as Error).message });
+      const code = codeOf(error);
+      steps.push({
+        name: skill.name,
+        path,
+        status: code ? 'refused' : 'kept',
+        detail: (error as Error).message,
+        ...(code ? { code } : {}),
+      });
     }
   }
   return steps;
