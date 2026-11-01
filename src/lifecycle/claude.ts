@@ -250,6 +250,33 @@ function pruneEmpty(o: Obj): void {
 }
 
 /**
+ * The top-level keys Claude Code itself adds to a `.claude.json` that does not exist yet, on its
+ * first run (`claude mcp list` alone creates them): the nine names seen with Claude Code 2.1.314
+ * (L3a re-run, 2026-11-01). Hard-coded on purpose: no pattern, no "ignore unknown additions";
+ * extended deliberately when a newer Claude Code is seen adding more.
+ */
+export const CLAUDE_FIRST_RUN_KEYS: readonly string[] = [
+  'firstStartTime',
+  'firstStartVersion',
+  'hasResetAutoModeOptInForDefaultOffer',
+  'machineID',
+  'migrationVersion',
+  'opusProMigrationComplete',
+  'seenNotifications',
+  'sonnet1m45MigrationComplete',
+  'userID',
+];
+
+/**
+ * The whitelisted keys that are absent in `before` and present in `after`: tolerated. A whitelisted
+ * key that was already there (changed, or deleted) is not in this list, so it is refused like any
+ * other change; that includes userID and machineID.
+ */
+export function firstRunKeysAdded(before: Obj, after: Obj): string[] {
+  return CLAUDE_FIRST_RUN_KEYS.filter((k) => !Object.hasOwn(before, k) && Object.hasOwn(after, k));
+}
+
+/**
  * A1: after `claude mcp add|remove --scope user`, .claude.json may differ from before only by the
  * user-scope `mcpServers.mwf` entry (everything else in it, the projects, history and settings the
  * CLI keeps there, must be exactly as it was).
@@ -262,6 +289,7 @@ export function verifyClaudeJsonChange(
   const b = clone(before);
   const a = clone(after);
   const entry = isObj(a['mcpServers']) ? a['mcpServers'][SERVER] : undefined;
+  for (const k of firstRunKeysAdded(b, a)) delete a[k]; // Claude's own first-run keys, additions only
   if (isObj(b['mcpServers'])) delete b['mcpServers'][SERVER];
   if (isObj(a['mcpServers'])) delete a['mcpServers'][SERVER];
   pruneEmpty(b);
@@ -360,6 +388,13 @@ async function mutateMcp(
       detail: `${problem}; it was NOT reverted${backup ? `, the previous file is ${backup}` : ''}. ${CLOSE_SESSIONS_HINT}`,
       ...(backup ? { backup } : {}),
     };
+  if (!('error' in after)) {
+    const added = firstRunKeysAdded(first.doc, after.doc);
+    if (added.length > 0)
+      report.notes.push(
+        `Claude Code added its own first-run keys to ${file} (${added.join(', ')}); that is not a change by mwf and is accepted. Claude Code also keeps its own backups in ${join(env.claudeDir, 'backups')}; mwf neither checks nor removes them.`,
+      );
+  }
   const other = settingsCheck?.();
   if (other)
     return {

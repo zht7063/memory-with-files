@@ -15,6 +15,12 @@
 //                         settings `mcp add|remove` does its job but also rewrites an unrelated key ("model")
 //                                  in <config dir>/settings.json, which the real CLI has no business touching
 //                         settingsbreak  same, but leaves settings.json as invalid JSON
+// Claude Code's own first-run writes (F4), independent of the mode:
+//   FAKE_CLAUDE_FIRSTRUN  1  adds, to every key that is absent, the nine top-level keys the real 2.1.314
+//                            adds on its first run, and writes <config dir>/backups/.claude.json.backup.<ms>
+//   FAKE_CLAUDE_EXTRA     1  also adds a top-level key that is NOT one of them
+//   FAKE_CLAUDE_CHANGE    <key>  changes the value of that top-level key
+//   FAKE_CLAUDE_DELETE    <key>  deletes that top-level key
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpDir } from './util.ts';
@@ -45,6 +51,17 @@ const holder = () => {
   cfg.projects[process.cwd()] = cfg.projects[process.cwd()] ?? {};
   return cfg.projects[process.cwd()];
 };
+const FIRST = ['firstStartTime','firstStartVersion','hasResetAutoModeOptInForDefaultOffer','machineID','migrationVersion','opusProMigrationComplete','seenNotifications','sonnet1m45MigrationComplete','userID'];
+if (process.env.FAKE_CLAUDE_FIRSTRUN) {
+  const v = { firstStartTime: '2026-11-01T00:00:00.000Z', firstStartVersion: '2.1.314', hasResetAutoModeOptInForDefaultOffer: true, machineID: 'm-1', migrationVersion: 11, opusProMigrationComplete: true, seenNotifications: {}, sonnet1m45MigrationComplete: true, userID: 'u-1' };
+  for (const k of FIRST) if (!(k in cfg)) cfg[k] = v[k];
+  const bdir = path.join(dir ?? path.join(process.env.HOME, '.claude'), 'backups');
+  fs.mkdirSync(bdir, { recursive: true });
+  fs.writeFileSync(path.join(bdir, '.claude.json.backup.' + Date.now()), '{}', { mode: 0o600 });
+}
+if (process.env.FAKE_CLAUDE_EXTRA) cfg.someNewKey = 1;
+if (process.env.FAKE_CLAUDE_CHANGE) cfg[process.env.FAKE_CLAUDE_CHANGE] = 'changed-by-claude';
+if (process.env.FAKE_CLAUDE_DELETE) delete cfg[process.env.FAKE_CLAUDE_DELETE];
 if (argv[1] === 'add') {
   const dash = argv.indexOf('--');
   const name = argv[dash - 1];
