@@ -1,9 +1,12 @@
-// Editing a Codex `hooks.json` document: add, replace and remove only mwf's own handlers.
+// Editing a hooks document (Codex `hooks.json`, Claude Code `settings.json`): add, replace and
+// remove only mwf's own handlers.
 //
-// A handler is ours when it is a command hook whose command parses (POSIX quoting, no expansion)
-// into exactly `<node> <path>/mwf.js hook <event>`. Nothing user-visible (statusMessage) is used
-// to recognise it. Everything else in the document (other tools' hooks, unknown events, other
-// top-level fields) is left exactly as it was; `checkOnlyOursChanged` proves it.
+// What makes a handler "ours" is a HookFlavor. Codex: a command hook whose command parses (POSIX
+// quoting, no expansion) into exactly `<node> <path>/mwf.js hook <event>`. Claude Code (see
+// hooks-settings.ts): an exec-form hook (`command` + `args`) whose args are exactly
+// `[<path>/mwf.js, hook, <event>, --host, claude]`. Nothing user-visible (statusMessage) is used
+// to recognise a handler. Everything else in the document (other tools' hooks, unknown events,
+// other top-level fields) is left exactly as it was; `checkOnlyOursChanged` proves it.
 import { basename } from 'node:path';
 import { clone, deepEqual } from './json-edit.ts';
 
@@ -98,7 +101,10 @@ export function hookCommand(node: string, mwfJs: string, arg: string): string {
 
 const ARGS = new Set(HOOK_EVENTS.map((e) => e.arg));
 
-export function isOurs(handler: unknown): boolean {
+/** Codex's recogniser (kept under its original name for existing callers and tests). */
+export const isOurs = (handler: unknown): boolean => codexIsOurs(handler);
+
+export function codexIsOurs(handler: unknown): boolean {
   if (!isObj(handler) || handler['type'] !== 'command' || typeof handler['command'] !== 'string')
     return false;
   const argv = splitCommand(handler['command']);
@@ -111,11 +117,28 @@ export function isOurs(handler: unknown): boolean {
   );
 }
 
-function ourEventArrays(doc: unknown): Array<{ event: HookEvent; groups: Obj[] }> {
-  if (!isObj(doc)) throw new HooksDocError('hooks.json must contain a JSON object');
+/** How a document flavour builds and recognises mwf's handlers. */
+export interface HookFlavor {
+  /** Name of the file, for error messages. */
+  file: string;
+  isOurs(handler: unknown): boolean;
+  handler(node: string, mwfJs: string, arg: string): Obj;
+}
+
+export const CODEX_FLAVOR: HookFlavor = {
+  file: 'hooks.json',
+  isOurs: (h) => codexIsOurs(h),
+  handler: (node, mwfJs, arg) => desiredHandler(hookCommand(node, mwfJs, arg)),
+};
+
+function ourEventArrays(
+  doc: unknown,
+  flavor: HookFlavor = CODEX_FLAVOR,
+): Array<{ event: HookEvent; groups: Obj[] }> {
+  if (!isObj(doc)) throw new HooksDocError(`${flavor.file} must contain a JSON object`);
   const hooks = doc['hooks'];
   if (hooks === undefined) return [];
-  if (!isObj(hooks)) throw new HooksDocError('"hooks" in hooks.json must be an object');
+  if (!isObj(hooks)) throw new HooksDocError(`"hooks" in ${flavor.file} must be an object`);
   const out: Array<{ event: HookEvent; groups: Obj[] }> = [];
   for (const { event } of HOOK_EVENTS) {
     const groups = hooks[event];
@@ -145,20 +168,25 @@ export interface HooksEdit {
 }
 
 /** Add (or update in place) our three handlers. Idempotent. */
-export function installHooks(doc: unknown, node: string, mwfJs: string): HooksEdit {
-  ourEventArrays(doc); // validates the shape
+export function installHooks(
+  doc: unknown,
+  node: string,
+  mwfJs: string,
+  flavor: HookFlavor = CODEX_FLAVOR,
+): HooksEdit {
+  ourEventArrays(doc, flavor); // validates the shape
   const next = clone(doc) as Obj;
   const hooks = (isObj(next['hooks']) ? next['hooks'] : (next['hooks'] = {})) as Obj;
   const changes: EventChange[] = [];
   for (const { event, arg, matcher } of HOOK_EVENTS) {
-    const want = desiredHandler(hookCommand(node, mwfJs, arg));
+    const want = flavor.handler(node, mwfJs, arg);
     const groups = (hooks[event] ?? (hooks[event] = [])) as Obj[];
     let found = false;
     let action: EventChange['action'] = 'unchanged';
     for (const group of groups) {
       const list = group['hooks'] as unknown[];
       for (let k = 0; k < list.length; k++) {
-        if (!isOurs(list[k])) continue;
+        if (!flavor.isOurs(list[k])) continue;
         if (!found) {
           found = true;
           if (!deepEqual(list[k], want)) {
@@ -181,8 +209,8 @@ export function installHooks(doc: unknown, node: string, mwfJs: string): HooksEd
 }
 
 /** Remove our handlers; groups and events we emptied go too, nothing else. */
-export function removeHooks(doc: unknown): HooksEdit {
-  const arrays = ourEventArrays(doc);
+export function removeHooks(doc: unknown, flavor: HookFlavor = CODEX_FLAVOR): HooksEdit {
+  const arrays = ourEventArrays(doc, flavor);
   const next = clone(doc) as Obj;
   const changes: EventChange[] = [];
   const hooks = next['hooks'] as Obj | undefined;
@@ -193,7 +221,7 @@ export function removeHooks(doc: unknown): HooksEdit {
     const kept: Obj[] = [];
     for (const group of groups) {
       const list = group['hooks'] as unknown[];
-      const left = list.filter((h) => !isOurs(h));
+      const left = list.filter((h) => !flavor.isOurs(h));
       removed += list.length - left.length;
       if (left.length === 0 && list.length > 0) continue; // emptied by us
       group['hooks'] = left;
@@ -214,7 +242,7 @@ export function removeHooks(doc: unknown): HooksEdit {
 }
 
 /** Strip our handlers and empty containers, so two documents can be compared "without ours". */
-function normalized(doc: unknown): unknown {
+function normalized(doc: unknown, flavor: HookFlavor): unknown {
   const copy = clone(doc);
   if (!isObj(copy) || !isObj(copy['hooks'])) return copy;
   const hooks = copy['hooks'];
@@ -224,7 +252,7 @@ function normalized(doc: unknown): unknown {
     const kept = groups
       .map((g) =>
         isObj(g) && Array.isArray(g['hooks'])
-          ? { ...g, hooks: g['hooks'].filter((h) => !isOurs(h)) }
+          ? { ...g, hooks: g['hooks'].filter((h) => !flavor.isOurs(h)) }
           : g,
       )
       .filter((g) => !(isObj(g) && Array.isArray(g['hooks']) && g['hooks'].length === 0));
@@ -236,8 +264,12 @@ function normalized(doc: unknown): unknown {
 }
 
 /** The difference guard: apart from our handlers, the new document must equal the old one. */
-export function checkOnlyOursChanged(before: unknown, after: unknown): void {
-  if (!deepEqual(normalized(before), normalized(after)))
+export function checkOnlyOursChanged(
+  before: unknown,
+  after: unknown,
+  flavor: HookFlavor = CODEX_FLAVOR,
+): void {
+  if (!deepEqual(normalized(before, flavor), normalized(after, flavor)))
     throw new HooksDocError(
       'internal check failed: the edit would change something other than the mwf handlers; nothing was written',
     );
