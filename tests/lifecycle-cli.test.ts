@@ -93,9 +93,17 @@ describe('mwf install / uninstall command line', () => {
     assert.equal(r.code, 0, r.err);
     assert.match(r.out, /mwf install --harness codex: done \(Codex 0\.166\.0\)/);
     assert.match(r.out, /\/hooks/);
+    assert.match(
+      r.out,
+      /note: Next step: Codex does not run newly installed hooks until you review and trust them/,
+    );
+    assert.match(r.out, /codex exec/);
     assert.ok(existsSync(join(sb.codexHome, 'hooks.json')));
     const j = await run(sb, ['install', '--harness', 'codex', '--json'], { tty: TTY });
     assert.equal(JSON.parse(j.out).ok, true);
+    const hint = JSON.parse(j.out).data.notes.find((n: string) => /^Next step:/.test(n));
+    assert.match(hint, /run \/hooks/);
+    assert.match(hint, /codex exec/);
     assert.equal(JSON.parse(j.out).data.hooks.status, 'unchanged');
     const u = await run(sb, ['uninstall', '--harness', 'codex'], { tty: TTY });
     assert.equal(u.code, 0, u.err);
@@ -127,6 +135,7 @@ describe('mwf install / uninstall command line', () => {
     }
     assert.equal((await run(sb, ['install', '--help'])).code, 0);
     assert.match((await run(sb, ['install', '--help'])).out, /not a security boundary/);
+    assert.match((await run(sb, ['install', '--help'])).out, /codex exec/);
   });
 
   it('refuses a source-tree run (mwf.ts) because the hooks must point at the built mwf.js', async () => {

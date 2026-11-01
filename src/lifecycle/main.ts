@@ -43,7 +43,8 @@ const USAGE = `Usage: mwf install   --harness codex|claude|pi [--dry-run] [--jso
 Connects mwf to a host, at user level only (never a project's own config):
   codex:  <CODEX_HOME or ~/.codex>/hooks.json (three hooks), the skills in ~/.agents/skills, and the MCP
           server through \`codex mcp add\` (Codex's config.toml is never edited by mwf directly).
-          Needs Codex ${MIN_CODEX_TEXT} or newer. Afterwards run /hooks in Codex to trust the hooks.
+          Needs Codex ${MIN_CODEX_TEXT} or newer. Afterwards run /hooks in Codex to trust the hooks
+          (until then no hook runs, \`codex exec\` included).
           ~/.agents/skills is the shared agent-skills directory: other tools that read it see mwf's skills too.
   claude: <CLAUDE_CONFIG_DIR or ~/.claude>/settings.json (three hooks), the skills in <that directory>/skills
           (Claude Code's own, not the shared ~/.agents/skills), and the MCP server through
