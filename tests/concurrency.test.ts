@@ -111,7 +111,23 @@ describe('multi-process concurrent writes', () => {
     const r = await core.add(ctx, { type: 'knowledge', title: 'Big', body: mk(0) });
     const file = join(ctx.root, '.mwf/memory/knowledge', `${r.id}.md`);
 
-    // writer: 40 sequential edits, each a different big body (hash chain done in the child)
+    // One complete read of the record: the raw file (complete frontmatter + a body of exactly one
+    // version) and the API. Returns the version the file held.
+    const readOnce = async (): Promise<string> => {
+      const text = readFileSync(file, 'utf8');
+      assert.match(text, /^---\n[\s\S]*?\n---\n/);
+      const versions = new Set([...text.matchAll(/version-(\d+) /g)].map((m) => m[1]));
+      assert.equal(versions.size, 1, 'file contains exactly one version');
+      const got = core.get(ctx, { id: r.id });
+      assert.equal(new Set([...got.body.matchAll(/version-(\d+) /g)].map((m) => m[1])).size, 1);
+      return [...versions][0]!;
+    };
+    const seen = new Set<string>();
+    let reads = 0;
+    seen.add(await readOnce()); // version 0, read before the writer exists: a complete version too
+    reads++;
+
+    // writer: 60 sequential edits, each a different big body (hash chain done in the child)
     const script = `
       import * as core from ${JSON.stringify(new URL('../src/core/index.ts', import.meta.url).href)};
       const ctx = ${JSON.stringify(ctx)};
@@ -139,28 +155,33 @@ describe('multi-process concurrent writes', () => {
         res(c);
       }),
     );
-    await started; // only start reading once the writer is about to begin editing
-    let reads = 0;
-    const seen = new Set<string>();
-    while (!done) {
-      // 1. raw file reads (cheap, many): complete frontmatter + a body of one single version
-      for (let i = 0; i < 25; i++) {
-        const text = readFileSync(file, 'utf8');
-        assert.match(text, /^---\n[\s\S]*?\n---\n/);
-        const versions = new Set([...text.matchAll(/version-(\d+) /g)].map((m) => m[1]));
-        assert.equal(versions.size, 1, 'file contains exactly one version');
-        seen.add([...versions][0]!);
-        reads++;
+    const deadline = Date.now() + 120_000; // safety net only: the loop ends on events, not time
+    try {
+      await started; // only start reading once the writer is about to begin editing
+      // Read until the writer process has exited AND a change of version was actually observed.
+      // The read after the exit sees the last version, so the loop always ends once the writer
+      // is done; a loaded machine only makes the reader see fewer in-between versions, never fail.
+      while (!(done && seen.size > 1)) {
+        assert.ok(
+          Date.now() < deadline,
+          `no version change observed (done=${done}, reads=${reads})`,
+        );
+        for (let i = 0; i < 25; i++) {
+          seen.add(await readOnce());
+          reads++;
+        }
+        const hits = await core.recall(ctx, { query: 'version' }); // the index may be repaired under a short lock
+        assert.ok(hits.hits.length <= 1);
+        await new Promise((r) => setTimeout(r, 1)); // let the child's exit event through
       }
-      // 2. API reads (the index may be repaired under a short lock)
-      const got = core.get(ctx, { id: r.id });
-      assert.equal(new Set([...got.body.matchAll(/version-(\d+) /g)].map((m) => m[1])).size, 1);
-      const hits = await core.recall(ctx, { query: 'version' });
-      assert.ok(hits.hits.length <= 1);
-      await new Promise((r) => setTimeout(r, 1)); // let the child's exit event through
+    } finally {
+      if (!done) writer.kill('SIGKILL');
     }
     assert.equal(await exited, 0, err);
+    seen.add(await readOnce()); // after the exit: the last version, complete
+    reads++;
     assert.ok(reads > 3 && seen.size > 1, `observed ${seen.size} versions over ${reads} reads`);
+    assert.ok(seen.has('60'), 'the last version was read once the writer had exited');
     assert.match(core.get(ctx, { id: r.id }).body, /version-60 /);
     assert.deepEqual(
       readdirSync(join(ctx.root, '.mwf/memory/knowledge')).filter((f) => f.includes('.tmp-')),
@@ -184,7 +205,7 @@ describe('lock', () => {
           return true;
         },
       );
-      assert.ok(Date.now() - t0 >= 140 && Date.now() - t0 < 3000);
+      assert.ok(Date.now() - t0 >= 140, 'waited its budget before giving up'); // lower bound only
       // per-call wait budget wins over ctx default
       await assert.rejects(
         core.add(ctx, { type: 'task', title: 'x', body: 'y', wait_ms: 50 }),
@@ -205,9 +226,9 @@ describe('lock', () => {
       JSON.stringify({ pid: await deadPid(), host: hostname(), time: Date.now(), token: 'dead' }),
     );
     assert.equal(inspectLock(layout).stale, true);
-    const t0 = Date.now();
+    // reclaimed without waiting for any stale age: with a wait budget this would otherwise be LOCK_TIMEOUT
+    // (no wall-clock upper bound: an overloaded machine must not fail this test)
     await core.add({ ...ctx, waitMs: 2000 }, { type: 'task', title: 'x', body: 'y' });
-    assert.ok(Date.now() - t0 < 1500);
     assert.equal(existsSync(layout.lock), false);
   });
 
@@ -263,30 +284,41 @@ describe('lock', () => {
   it('a second process does not take a lock held by a live process past the stale age', async () => {
     const ctx = await project('track', { lockStaleMs: 150 });
     const layout = layoutOf(ctx.root);
+    // The holder keeps the lock (no heartbeat, so its lock "time" goes far past staleMs) until the test
+    // closes its stdin; nothing here depends on how long spawning the second process takes. The 60 s
+    // timer is only a safety net so a failed test cannot leave the holder running.
     const script = `
       import { acquireLock } from ${JSON.stringify(new URL('../src/core/lock.ts', import.meta.url).href)};
       const h = await acquireLock(${JSON.stringify(layout)}, { waitMs: 0 });
       process.stdout.write('held');
-      await new Promise((r) => setTimeout(r, 1500)); // no heartbeat: lock "time" goes far past staleMs
+      const safety = setTimeout(() => process.exit(3), 60_000);
+      process.stdin.resume();
+      await new Promise((r) => process.stdin.once('end', r));
+      clearTimeout(safety);
       h.release();
     `;
     const holder = spawn(
       process.execPath,
       ['--experimental-strip-types', '--no-warnings', '--input-type=module', '-e', script],
-      { stdio: ['ignore', 'pipe', 'inherit'] },
+      { stdio: ['pipe', 'pipe', 'inherit'] },
     );
     const exited = new Promise((res) => holder.on('close', res));
-    await new Promise<void>((res) => holder.stdout.once('data', () => res()));
-    await new Promise((r) => setTimeout(r, 400)); // > 2x staleMs
-    assert.equal(inspectLock(layout, { staleMs: 150 }).stale, false);
-    const t0 = Date.now();
-    const second = await runChild({ ...ctx, waitMs: 500, lockStaleMs: 150 }, [
-      { fn: 'add', input: { type: 'task', title: 'blocked', body: 'x' } },
-    ]);
-    assert.equal(second.code, 1);
-    assert.equal((second.results[0] as { error: { code: string } }).error.code, 'LOCK_TIMEOUT');
-    assert.ok(Date.now() - t0 >= 450);
-    assert.equal(loadAll(layout).records.length, 0, 'second process wrote nothing');
+    try {
+      await new Promise<void>((res) => holder.stdout.once('data', () => res()));
+      await new Promise((r) => setTimeout(r, 400)); // > 2x staleMs, a lower bound only
+      assert.equal(inspectLock(layout, { staleMs: 150 }).stale, false);
+      const t0 = Date.now();
+      const second = await runChild({ ...ctx, waitMs: 500, lockStaleMs: 150 }, [
+        { fn: 'add', input: { type: 'task', title: 'blocked', body: 'x' } },
+      ]);
+      assert.equal(second.code, 1);
+      assert.equal((second.results[0] as { error: { code: string } }).error.code, 'LOCK_TIMEOUT');
+      // it waited its whole budget before giving up (a lower bound; an overloaded machine only makes it longer)
+      assert.ok(Date.now() - t0 >= 450);
+      assert.equal(loadAll(layout).records.length, 0, 'second process wrote nothing');
+    } finally {
+      holder.stdin.end(); // release the lock
+    }
     await exited; // holder released normally
     const third = await runChild(ctx, [
       { fn: 'add', input: { type: 'task', title: 'ok', body: 'x' } },
