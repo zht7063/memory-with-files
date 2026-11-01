@@ -1,6 +1,6 @@
 {
   "name": "@zht7063/mwf",
-  "version": "1.0.0-alpha.0",
+  "version": "1.0.0",
   "description": "Project-local file memory (v1 rewrite): layered core, CLI, MCP and hooks",
   "type": "module",
   "bin": {
@@ -27,6 +27,7 @@
   "files": [
     "dist",
     "LICENSE",
+    "CHANGELOG.md",
     "THIRD-PARTY.md"
   ],
   "engines": {
