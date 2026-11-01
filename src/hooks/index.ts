@@ -21,6 +21,7 @@ export {
   isClaudeStopStyle,
 } from './claude.ts';
 export type { ClaudeStopStyle } from './claude.ts';
+export { PI_PROFILE, formatPi, handlePi } from './pi.ts';
 export { HOOK_EVENTS, HOST_EVENT_NAME, handleHost, isHookEvent } from './json-host.ts';
 export type { HookEvent, HostOutput, HostProfile } from './json-host.ts';
 export * from './budget.ts';

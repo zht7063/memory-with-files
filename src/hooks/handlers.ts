@@ -22,7 +22,7 @@ import { FAILURE_NOTICE, UNINITIALIZED_NOTICE } from './messages.ts';
 
 /**
  * The host-independent hook logic: what to inject at session start, on each user message and at the
- * end of a turn. Host adapters (./codex.ts, the Pi extension of a later PR) parse the host's input
+ * end of a turn. Host adapters (./codex.ts, ./claude.ts and ./pi.ts, which the generated Pi extension runs as `mwf hook <event> --host pi`) parse the host's input
  * and format what comes back.
  *
  * Rules every handler follows:

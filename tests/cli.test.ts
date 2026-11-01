@@ -457,7 +457,7 @@ describe('mwf command line', () => {
     }
     const update = await sh(['update'], ctx.root);
     assert.equal(update.code, 2);
-    assert.match(update.err, /not part of this build yet/);
+    assert.match(update.err, /no mwf update in 1.0/);
     assert.match((await sh(['mcp'], ctx.root)).err, /mwf executable/);
   });
 

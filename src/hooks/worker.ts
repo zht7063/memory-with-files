@@ -1,6 +1,7 @@
 import { MAX_STDIN_BYTES } from './budget.ts';
 import { handleClaude, isClaudeStopStyle } from './claude.ts';
 import { handleCodex } from './codex.ts';
+import { handlePi } from './pi.ts';
 import { isHookEvent } from './json-host.ts';
 
 /**
@@ -40,8 +41,8 @@ export async function runWorker(argv: readonly string[], io: WorkerIo): Promise<
   const host = hostFlag && /^[a-z][a-z0-9_-]{0,30}$/.test(hostFlag) ? hostFlag : undefined;
   const text = await readAll(io.stdin);
   if (text === null) return 1;
-  // `--host claude` selects the Claude Code adapter; any other name keeps the Codex adapter and is
-  // only the name the host is registered under.
+  // `--host claude` selects the Claude Code adapter and `--host pi` the Pi adapter; any other name
+  // keeps the Codex adapter and is only the name the host is registered under.
   const stopStyle = flag('--stop-style');
   const base = { cwd: io.cwd, started, ...(host ? { host } : {}) };
   const handled =
@@ -50,7 +51,9 @@ export async function runWorker(argv: readonly string[], io: WorkerIo): Promise<
           ...base,
           ...(isClaudeStopStyle(stopStyle) ? { stopStyle } : {}),
         })
-      : await handleCodex(event, text, base);
+      : host === 'pi'
+        ? await handlePi(event, text, base)
+        : await handleCodex(event, text, base);
   if (handled === null) return 1;
   await io.stdout(JSON.stringify(handled.output) + '\n');
   try {

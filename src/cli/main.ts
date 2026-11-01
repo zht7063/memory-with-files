@@ -59,7 +59,7 @@ Commands:
   purge                permanently delete trash entries (same two steps)
   compact              merge exact duplicate records (same two steps)
   inbox [list|accept|discard]  list inbox entries, accept one, or discard (discard: two steps)
-  install | uninstall --harness codex|claude  connect mwf to Codex or Claude Code, or remove it (mwf install --help)
+  install | uninstall --harness codex|claude|pi  connect mwf to Codex, Claude Code or Pi, or remove it (mwf install --help)
 
 Options (all commands):
   --json               print the structured result as JSON
@@ -138,10 +138,11 @@ const LATER: Record<string, string> = {
   hook: 'hook events are handled by the mwf executable itself (`mwf hook <event>`, started by the host), not by this command line',
   mcp: 'the MCP server is started by the mwf executable itself (`mwf mcp`), not by this command line',
   install:
-    'install is run by the mwf executable itself: `mwf install --harness codex|claude` (see `mwf install --help`)',
+    'install is run by the mwf executable itself: `mwf install --harness codex|claude|pi` (see `mwf install --help`)',
   uninstall:
-    'uninstall is run by the mwf executable itself: `mwf uninstall --harness codex|claude` (see `mwf uninstall --help`)',
-  update: 'update is not part of this build yet',
+    'uninstall is run by the mwf executable itself: `mwf uninstall --harness codex|claude|pi` (see `mwf uninstall --help`)',
+  update:
+    'there is no mwf update in 1.0 (planned for 1.1): install the new package, then run `mwf install --harness …` again',
 };
 
 class Usage extends Error {}
