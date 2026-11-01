@@ -110,6 +110,8 @@ describe('codex install', () => {
       [['mcp', 'add', 'mwf', '--', process.execPath, sb.mwfJs, 'mcp']],
     );
     assert.match(r.notes.join('\n'), /\/hooks/);
+    assert.match(r.notes.join('\n'), /Next step: .*trust/);
+    assert.match(r.notes.join('\n'), /codex exec/);
     assert.match(r.notes.join('\n'), /not a security boundary/);
   });
 

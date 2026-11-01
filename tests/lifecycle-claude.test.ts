@@ -944,8 +944,10 @@ describe('mwf install / uninstall --harness claude on the command line', () => {
     assert.equal(r.code, 0, r.err);
     assert.match(r.out, /mwf install --harness claude: done \(Claude Code 2\.1\.314\)/);
     assert.match(r.out, /workspace trust/);
+    assert.doesNotMatch(r.out, /\/hooks|codex exec|Next step/);
     assert.ok(existsSync(join(sb.claudeDir, 'settings.json')));
     const again = await run(sb, ['install', '--harness', 'claude', '--json'], { tty: TTY });
+    assert.doesNotMatch(again.out, /\/hooks|codex exec|Next step/);
     assert.equal(JSON.parse(again.out).data.hooks.status, 'unchanged');
     const u = await run(sb, ['uninstall', '--harness', 'claude'], { tty: TTY });
     assert.equal(u.code, 0, u.err);

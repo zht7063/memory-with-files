@@ -565,7 +565,7 @@ export async function installCodex(env: CodexEnv, options: Options): Promise<Rep
   }
 
   report.notes.push(
-    'Codex will not run the new hooks until you review and trust them: open Codex and run /hooks (trust is recorded against each hook definition, so a changed hook needs trusting again). mwf does not touch Codex trust settings.',
+    'Next step: Codex does not run newly installed hooks until you review and trust them. Open Codex and run /hooks to trust the mwf hooks; until you do, no mwf hook fires, and that includes non-interactive `codex exec` runs, so trust them once in an interactive session first. Trust is recorded against each hook definition, so a changed hook needs trusting again. mwf does not touch Codex trust settings.',
     'Memory is per project: run the mwf init tool (/mwf init) in a project to start using it.',
     'The terminal check for install and uninstall only stops accidents; it is not a security boundary (a pseudo-terminal such as `script` provides a terminal).',
   );

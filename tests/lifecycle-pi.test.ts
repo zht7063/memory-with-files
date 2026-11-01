@@ -782,7 +782,11 @@ describe('mwf install --harness pi (the command)', () => {
     assert.equal(i.code, 0, i.err + i.out);
     assert.match(i.out, /Pi 1\.4\.0/);
     assert.match(i.out, /extension/);
+    assert.doesNotMatch(i.out, /\/hooks|codex exec|Next step/);
     assert.ok(existsSync(extFile(sb)));
+    const ij = await run(sb, ['install', '--harness', 'pi', '--json'], { tty });
+    assert.equal(JSON.parse(ij.out).ok, true);
+    assert.doesNotMatch(ij.out, /\/hooks|codex exec|Next step/);
     const u = await run(sb, ['uninstall', '--harness', 'pi'], { tty });
     assert.equal(u.code, 0, u.err + u.out);
     assert.equal(existsSync(extFile(sb)), false);
