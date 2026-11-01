@@ -32,6 +32,10 @@ import { claudeSandbox, type ClaudeSandbox } from './helpers/fake-claude.ts';
 const REAL = { dryRun: false, forceSkills: false };
 const DRY = { dryRun: true, forceSkills: false };
 
+// the hint a user must see when mwf reports CONFIG_CHANGED_UNEXPECTEDLY (written out here on purpose)
+const CLOSE_HINT =
+  /Close every running Claude Code session first: an open session also rewrites these files and can cause CONFIG_CHANGED_UNEXPECTEDLY/;
+
 function envOf(
   sb: ClaudeSandbox,
   extra: Partial<ClaudeEnv> = {},
@@ -349,6 +353,43 @@ describe('claude install: CLAUDE_CONFIG_DIR and the file the CLI writes (Aegis 1
       // hooks and skills (earlier steps) are done and reported
       assert.equal(r.hooks?.status, 'created');
     }
+  });
+
+  it('a settings.json that claude mcp add rewrote (an unrelated key) is reported as CONFIG_CHANGED_UNEXPECTEDLY via the settings guard, with the close-sessions hint', async () => {
+    for (const customDir of [false, true]) {
+      const sb = claudeSandbox(customDir);
+      mkdirSync(sb.claudeDir, { recursive: true });
+      writeFileSync(settingsFile(sb), '{"model":"mine","env":{"A":"1"}}\n');
+      const r = await installClaude(envOf(sb, {}, { FAKE_CLAUDE_MODE: 'settings' }), REAL);
+      assert.equal(r.status, 'failed');
+      assert.equal(r.code, 'CONFIG_CHANGED_UNEXPECTEDLY');
+      assert.equal(r.mcp?.status, 'unexpected_change');
+      assert.match(r.mcp?.detail ?? '', /settings\.json changed in a way other than the mwf hooks/);
+      assert.match(r.mcp?.detail ?? '', /NOT reverted/);
+      assert.match(r.mcp?.detail ?? '', CLOSE_HINT);
+      // the .claude.json part was fine and the backup named is the settings.json one made before our write
+      const bk = backups(sb.claudeDir, 'settings.json');
+      assert.equal(bk.length, 1);
+      assert.match(r.mcp?.detail ?? '', new RegExp(bk[0]!.replace(/\./g, '\\.')));
+      assert.equal(settings(sb).model, 'tampered-by-claude', 'not reverted');
+    }
+  });
+
+  it('a settings.json that claude left unparseable is reported the same way', async () => {
+    const sb = claudeSandbox(false);
+    const r = await installClaude(envOf(sb, {}, { FAKE_CLAUDE_MODE: 'settingsbreak' }), REAL);
+    assert.equal(r.status, 'failed');
+    assert.equal(r.code, 'CONFIG_CHANGED_UNEXPECTEDLY');
+    assert.match(r.mcp?.detail ?? '', /settings\.json can no longer be read as strict JSON/);
+    assert.match(r.mcp?.detail ?? '', CLOSE_HINT);
+  });
+
+  it('the close-sessions hint is in the message of a .claude.json change too', async () => {
+    const sb = claudeSandbox(false);
+    const r = await installClaude(envOf(sb, {}, { FAKE_CLAUDE_MODE: 'clobber' }), REAL);
+    assert.equal(r.code, 'CONFIG_CHANGED_UNEXPECTEDLY');
+    assert.match(r.mcp?.detail ?? '', CLOSE_HINT);
+    assert.match(r.mcp?.detail ?? '', /Close every running Claude Code session first/);
   });
 
   it('A1: a .claude.json that no longer parses after the CLI ran is reported as unexpected', async () => {
@@ -800,6 +841,35 @@ describe('claude uninstall', () => {
   });
 });
 
+describe('claude uninstall: settings.json guard and the close-sessions hint', () => {
+  it('a settings.json that claude mcp remove rewrote (an unrelated key) is reported as CONFIG_CHANGED_UNEXPECTEDLY, with the hint', async () => {
+    const sb = claudeSandbox();
+    await installed(sb);
+    const r = await uninstallClaude(envOf(sb, {}, { FAKE_CLAUDE_MODE: 'settings' }), REAL);
+    assert.equal(r.status, 'failed');
+    assert.equal(r.code, 'CONFIG_CHANGED_UNEXPECTEDLY');
+    assert.equal(r.mcp?.status, 'unexpected_change');
+    assert.match(r.mcp?.detail ?? '', /settings\.json changed in a way other than the mwf hooks/);
+    assert.match(r.mcp?.detail ?? '', CLOSE_HINT);
+    assert.equal(settings(sb).model, 'tampered-by-claude', 'not reverted');
+  });
+
+  it('a .claude.json change during uninstall carries the hint too', async () => {
+    const sb = claudeSandbox();
+    await installed(sb);
+    const r = await uninstallClaude(envOf(sb, {}, { FAKE_CLAUDE_MODE: 'clobber' }), REAL);
+    assert.equal(r.code, 'CONFIG_CHANGED_UNEXPECTEDLY');
+    assert.match(r.mcp?.detail ?? '', CLOSE_HINT);
+  });
+
+  it('--dry-run never runs the settings check (nothing ran)', async () => {
+    const sb = claudeSandbox();
+    await installed(sb);
+    const r = await uninstallClaude(envOf(sb, {}, { FAKE_CLAUDE_MODE: 'settings' }), DRY);
+    assert.equal(r.status, 'done');
+  });
+});
+
 describe('mwf install / uninstall --harness claude on the command line', () => {
   const TTY = { stdin: true, stdout: true };
   async function run(
@@ -878,6 +948,22 @@ describe('mwf install / uninstall --harness claude on the command line', () => {
     const u = await run(sb, ['uninstall', '--harness', 'claude'], { tty: TTY });
     assert.equal(u.code, 0, u.err);
     assert.equal(existsSync(join(sb.claudeDir, 'skills', 'mwf')), false);
+  });
+
+  it('the text printed for CONFIG_CHANGED_UNEXPECTEDLY (install and uninstall) carries the close-sessions hint', async () => {
+    const sb = claudeSandbox();
+    const env = { ...sb.env, FAKE_CLAUDE_MODE: 'clobber' };
+    const r = await run(sb, ['install', '--harness', 'claude'], { tty: TTY, env });
+    assert.equal(r.code, 1);
+    assert.match(r.out + r.err, /CONFIG_CHANGED_UNEXPECTEDLY/);
+    assert.match(r.out + r.err, CLOSE_HINT);
+    const u = await run(sb, ['uninstall', '--harness', 'claude'], {
+      tty: TTY,
+      env: { ...sb.env, FAKE_CLAUDE_MODE: 'settings' },
+    });
+    assert.equal(u.code, 1);
+    assert.match(u.out + u.err, /CONFIG_CHANGED_UNEXPECTEDLY/);
+    assert.match(u.out + u.err, CLOSE_HINT);
   });
 
   it('CLAUDE_CONFIG_DIR from the environment is honoured; a relative one is refused', async () => {

@@ -265,6 +265,39 @@ export function verifyClaudeJsonChange(
   return undefined;
 }
 
+/** Appended to every CONFIG_CHANGED_UNEXPECTEDLY message: an open session is the usual cause. */
+export const CLOSE_SESSIONS_HINT =
+  'Close every running Claude Code session first: an open session also rewrites these files and can cause CONFIG_CHANGED_UNEXPECTEDLY. Then compare the backup with the current file before using Claude Code again.';
+
+/** What a settings.json check after the CLI ran found: a problem, and the backup of that file. */
+type SettingsCheck = () => { problem: string; backup?: string } | undefined;
+
+/**
+ * `claude mcp add|remove` has no business in settings.json. After it ran, the file must still be what
+ * mwf wrote (or found), up to mwf's own handlers: the same guard that vets mwf's own edit.
+ */
+function settingsCheckAfterCli(
+  env: ClaudeEnv,
+  owner: Owner,
+  expected: unknown,
+  backup: string | undefined,
+): SettingsCheck {
+  return () => {
+    let problem: string | undefined;
+    try {
+      const { doc } = readSettings(env, owner);
+      checkOnlyOursChanged(expected, doc, CLAUDE_FLAVOR);
+    } catch (error) {
+      if (error instanceof HooksDocError)
+        problem = 'settings.json changed in a way other than the mwf hooks';
+      else if (error instanceof JsonSyntaxError || error instanceof SafeWriteError)
+        problem = `settings.json can no longer be read as strict JSON (${describeSettingsProblem(error)})`;
+      else throw error;
+    }
+    return problem ? { problem, ...(backup ? { backup } : {}) } : undefined;
+  };
+}
+
 /** Back .claude.json up, run the claude command(s), and check what changed. */
 async function mutateMcp(
   env: ClaudeEnv,
@@ -272,6 +305,7 @@ async function mutateMcp(
   expect: McpServerInfo | null,
   success: McpStep['status'],
   report: Report,
+  settingsCheck?: SettingsCheck,
 ): Promise<McpStep> {
   const owner = env.owner ?? currentOwner();
   const file = claudeJsonPath(env);
@@ -309,8 +343,15 @@ async function mutateMcp(
   if (problem)
     return {
       status: 'unexpected_change',
-      detail: `${problem}; it was NOT reverted${backup ? `, the previous file is ${backup}` : ''}. A running Claude Code session also rewrites this file: close every session and compare the two before using Claude Code again.`,
+      detail: `${problem}; it was NOT reverted${backup ? `, the previous file is ${backup}` : ''}. ${CLOSE_SESSIONS_HINT}`,
       ...(backup ? { backup } : {}),
+    };
+  const other = settingsCheck?.();
+  if (other)
+    return {
+      status: 'unexpected_change',
+      detail: `${other.problem}; it was NOT reverted${other.backup ? `, the previous file is ${other.backup}` : ''}. ${CLOSE_SESSIONS_HINT}`,
+      ...(other.backup ? { backup: other.backup } : {}),
     };
   return { status: success, ...(backup ? { backup } : {}) };
 }
@@ -482,6 +523,7 @@ export async function installClaude(env: ClaudeEnv, options: Options): Promise<R
           want,
           current.kind === 'ours' ? 'updated' : 'added',
           report,
+          settingsCheckAfterCli(env, owner, plan.edit.doc, report.hooks?.backup),
         );
       }
     }
@@ -504,6 +546,7 @@ export async function uninstallClaude(env: ClaudeEnv, options: Options): Promise
   const owner = env.owner ?? currentOwner();
 
   // settings.json: only our hooks go; the file stays even when nothing is left in it
+  let expectedSettings: unknown;
   try {
     const { snap, doc } = readSettings(env, owner);
     if (!snap.exists) {
@@ -511,6 +554,7 @@ export async function uninstallClaude(env: ClaudeEnv, options: Options): Promise
     } else {
       const edit = removeHooks(doc, CLAUDE_FLAVOR);
       checkOnlyOursChanged(doc, edit.doc, CLAUDE_FLAVOR);
+      if (!options.dryRun) expectedSettings = edit.doc;
       if (deepEqual(doc, edit.doc)) {
         report.hooks = { path: settingsPath(env), status: 'unchanged', changes: edit.changes };
       } else {
@@ -591,6 +635,9 @@ export async function uninstallClaude(env: ClaudeEnv, options: Options): Promise
         null,
         'removed',
         report,
+        expectedSettings === undefined
+          ? undefined
+          : settingsCheckAfterCli(env, owner, expectedSettings, report.hooks?.backup),
       );
   }
   if (

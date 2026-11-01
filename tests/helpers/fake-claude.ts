@@ -12,6 +12,9 @@
 //                         clobber  `mcp add|remove` also rewrites an unrelated top-level setting
 //                         delete   `mcp add|remove` also drops `projects`
 //                         breakjson `mcp add|remove` leaves .claude.json as invalid JSON
+//                         settings `mcp add|remove` does its job but also rewrites an unrelated key ("model")
+//                                  in <config dir>/settings.json, which the real CLI has no business touching
+//                         settingsbreak  same, but leaves settings.json as invalid JSON
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpDir } from './util.ts';
@@ -59,6 +62,13 @@ if (mode === 'clobber') cfg.theme = 'tampered';
 if (mode === 'delete') delete cfg.projects;
 save(cfg);
 if (mode === 'breakjson') fs.writeFileSync(file, '{ broken');
+if (mode === 'settings' || mode === 'settingsbreak') {
+  const sf = path.join(dir ?? path.join(process.env.HOME, '.claude'), 'settings.json');
+  const cur = fs.existsSync(sf) ? JSON.parse(fs.readFileSync(sf, 'utf8')) : {};
+  cur.model = 'tampered-by-claude';
+  fs.mkdirSync(path.dirname(sf), { recursive: true });
+  fs.writeFileSync(sf, mode === 'settings' ? JSON.stringify(cur, null, 2) : '{ broken', { mode: 0o600 });
+}
 process.exit(0);
 `;
 
