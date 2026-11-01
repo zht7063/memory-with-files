@@ -4,6 +4,8 @@
 //   mcp   -> ../cli/index.ts and the MCP SDK (@modelcontextprotocol/server); only server.ts touches the SDK
 //   hooks -> ../mcp/index.ts and ../skills/index.ts (pure text); runner.ts (the supervisor) loads nothing else
 //   skills-> nothing (pure data)
+//   lifecycle -> node:*, its own files, ../core/index.ts (version only), ../skills/index.ts and @iarna/toml;
+//                it never imports cli, mcp or hooks (it talks to hosts through files and their own CLIs)
 //   bin   -> ../cli/main.ts, ../cli/stdin.ts, ../mcp/server.ts (dispatch only; mcp is lazy-loaded)
 import assert from 'node:assert/strict';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
@@ -89,12 +91,24 @@ describe('layering', () => {
     check('skills', sibling);
   });
 
+  it('lifecycle imports only node:*, its own files, the core API (version), the skills text and the TOML parser', () => {
+    check(
+      'lifecycle',
+      (s) =>
+        s.startsWith('node:') ||
+        sibling(s) ||
+        s === '../core/index.ts' ||
+        s === '../skills/index.ts' ||
+        s === '@iarna/toml',
+    );
+  });
+
   it('mcp/host.ts only passes the host helpers through from the cli API', () => {
     const text = readFileSync(join(SRC, 'mcp', 'host.ts'), 'utf8');
     assert.deepEqual(importsOf(text), ['../cli/index.ts', '../cli/index.ts']);
   });
 
-  it('the bin is a dispatcher: it imports only the cli command line, its stdin reader, the mcp server and the hook runner / worker', () => {
+  it('the bin is a dispatcher: it imports only the cli command line, its stdin reader, the mcp server, the hook runner / worker and the lifecycle command', () => {
     check(
       'bin',
       (s) =>
@@ -103,7 +117,8 @@ describe('layering', () => {
         s === '../cli/stdin.ts' ||
         s === '../mcp/server.ts' ||
         s === '../hooks/runner.ts' ||
-        s === '../hooks/worker.ts',
+        s === '../hooks/worker.ts' ||
+        s === '../lifecycle/main.ts',
     );
   });
 

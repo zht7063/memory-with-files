@@ -59,6 +59,7 @@ Commands:
   purge                permanently delete trash entries (same two steps)
   compact              merge exact duplicate records (same two steps)
   inbox [list|accept|discard]  list inbox entries, accept one, or discard (discard: two steps)
+  install | uninstall --harness codex  connect mwf to Codex, or remove it (mwf install --help)
 
 Options (all commands):
   --json               print the structured result as JSON
@@ -121,7 +122,7 @@ inbox   discard --entry-id <id> (repeatable, required)
 
 Every other write (init, edit, propose, reindex, restore) is only available as an MCP tool, and
 so is creating a project: use the MCP tool mwf_init (it only works at the root of a git
-repository), or \`mwf install\` when available. There is no init command in the shell.
+repository), or \`mwf install --harness codex\` to connect Codex. There is no init command in the shell.
 
 Note: "read-only" means status, recall and doctor never change memory, not that they never write
 files. status and recall may take the project lock and write under .mwf/: they recover a leftover
@@ -136,9 +137,11 @@ Exit codes: 0 ok, 1 the command failed (or doctor found errors), 2 usage error o
 const LATER: Record<string, string> = {
   hook: 'hook events are handled by the mwf executable itself (`mwf hook <event>`, started by the host), not by this command line',
   mcp: 'the MCP server is started by the mwf executable itself (`mwf mcp`), not by this command line',
-  install: 'lifecycle commands (install / uninstall / update) are not part of this build yet',
-  uninstall: 'lifecycle commands (install / uninstall / update) are not part of this build yet',
-  update: 'lifecycle commands (install / uninstall / update) are not part of this build yet',
+  install:
+    'install is run by the mwf executable itself: `mwf install --harness codex` (see `mwf install --help`)',
+  uninstall:
+    'uninstall is run by the mwf executable itself: `mwf uninstall --harness codex` (see `mwf uninstall --help`)',
+  update: 'update is not part of this build yet',
 };
 
 class Usage extends Error {}

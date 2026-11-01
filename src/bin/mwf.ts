@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Entry point only: dispatches to the CLI layer, the MCP server or a hook and holds no logic of its own.
+// Entry point only: dispatches to the CLI layer, the MCP server, a hook or the lifecycle commands and holds no logic of its own.
 
 // node:sqlite prints an ExperimentalWarning when it is first imported (Node 22 / 24). It is not
 // actionable for a user of the CLI, and hosts show a command's stderr, so drop that one warning.
@@ -41,6 +41,17 @@ if (process.argv[2] === 'mcp') {
   process.exitCode = await serveMcp(process.argv.slice(3), {
     cwd: process.cwd(),
     stderr: (text) => void process.stderr.write(text),
+  });
+  process.exit();
+}
+
+if (process.argv[2] === 'install' || process.argv[2] === 'uninstall') {
+  const { lifecycleMain } = await import('../lifecycle/main.ts');
+  process.exitCode = await lifecycleMain(process.argv.slice(2), {
+    stdout: (text) => void process.stdout.write(text),
+    stderr: (text) => void process.stderr.write(text),
+    tty: { stdin: process.stdin.isTTY === true, stdout: process.stdout.isTTY === true },
+    entry: process.argv[1] ?? '',
   });
   process.exit();
 }
