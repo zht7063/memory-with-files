@@ -11,9 +11,15 @@
 // Order: skills -> settings.json hooks -> MCP. Every file write is atomic and backed up; nothing is
 // rolled back across files, and uninstall (stateless: it recognises our entries) removes whatever was
 // written. Unlike Codex's hooks.json, settings.json is never deleted, even when nothing is left in it.
-import { mkdirSync } from 'node:fs';
 import { basename, isAbsolute, join } from 'node:path';
-import { execRunner, type McpStep, type Options, type Report, type Runner } from './codex.ts';
+import {
+  execRunner,
+  noteSkillCodes,
+  type McpStep,
+  type Options,
+  type Report,
+  type Runner,
+} from './codex.ts';
 import {
   checkOnlyOursChanged,
   HooksDocError,
@@ -36,8 +42,12 @@ import {
   backupSnapshot,
   commitFile,
   currentOwner,
+  mkdirSafe,
   readSnapshotOrAbsent,
   type Owner,
+  trustRootFor,
+  unsafeOr,
+  withRoot,
   type Snapshot,
 } from './safe-write.ts';
 import { installSkills, uninstallSkills } from './skills-files.ts';
@@ -68,6 +78,10 @@ export interface ClaudeEnv {
   now?: () => Date;
   beforeRename?: () => void;
 }
+
+/** The owner with the trust root: the user's home when the Claude directory is inside it. */
+const ownerOf = (env: ClaudeEnv): Owner =>
+  withRoot(env.owner ?? currentOwner(), trustRootFor(env.claudeDir, env.home));
 
 const SERVER = 'mwf';
 
@@ -307,7 +321,7 @@ async function mutateMcp(
   report: Report,
   settingsCheck?: SettingsCheck,
 ): Promise<McpStep> {
-  const owner = env.owner ?? currentOwner();
+  const owner = ownerOf(env);
   const file = claudeJsonPath(env);
   const manual = expect ? manualAdd(env) : MANUAL_REMOVE;
   const first = readClaudeJson(env, owner);
@@ -356,8 +370,8 @@ async function mutateMcp(
   return { status: success, ...(backup ? { backup } : {}) };
 }
 
-const writeOpts = (env: ClaudeEnv) => ({
-  ...(env.owner ? { owner: env.owner } : {}),
+const writeOpts = (env: ClaudeEnv, owner: Owner) => ({
+  owner,
   ...(env.now ? { now: env.now() } : {}),
   ...(env.beforeRename ? { beforeRename: env.beforeRename } : {}),
 });
@@ -390,7 +404,7 @@ const COMMON_NOTES = [
 
 export async function installClaude(env: ClaudeEnv, options: Options): Promise<Report> {
   const report = newReport('install', env, options);
-  const owner = env.owner ?? currentOwner();
+  const owner = ownerOf(env);
   const bad = checkPaths(env);
   if (bad) return refuse(report, bad.code, bad.message);
   const version = await checkVersion(env);
@@ -419,7 +433,11 @@ export async function installClaude(env: ClaudeEnv, options: Options): Promise<R
       error instanceof HooksDocError ||
       error instanceof SafeWriteError
     )
-      return refuse(report, 'SETTINGS_JSON_REFUSED', describeSettingsProblem(error));
+      return refuse(
+        report,
+        unsafeOr(error, 'SETTINGS_JSON_REFUSED'),
+        describeSettingsProblem(error),
+      );
     throw error;
   }
   if (env.customDir)
@@ -429,7 +447,7 @@ export async function installClaude(env: ClaudeEnv, options: Options): Promise<R
 
   try {
     if (!options.dryRun) {
-      mkdirSync(env.claudeDir, { recursive: true, mode: 0o700 });
+      mkdirSafe(env.claudeDir, owner, 0o700);
       if (!plan.snap.exists) plan.snap = readSnapshotOrAbsent(settingsPath(env), owner);
     }
 
@@ -445,6 +463,7 @@ export async function installClaude(env: ClaudeEnv, options: Options): Promise<R
     });
     for (const s of report.skills) if (s.backup) report.backups.push(s.backup);
     if (report.skills.some((s) => s.status === 'refused')) report.status = 'partial';
+    noteSkillCodes(report);
 
     // 2. settings.json hooks
     if (plan.snap.exists && deepEqual(plan.before, plan.edit.doc)) {
@@ -453,7 +472,7 @@ export async function installClaude(env: ClaudeEnv, options: Options): Promise<R
       let backup: string | undefined;
       if (!options.dryRun) {
         const res = commitFile(settingsPath(env), plan.text, plan.snap, {
-          ...writeOpts(env),
+          ...writeOpts(env, owner),
           mode: 0o600,
         });
         backup = res.backup;
@@ -543,7 +562,7 @@ export async function installClaude(env: ClaudeEnv, options: Options): Promise<R
 
 export async function uninstallClaude(env: ClaudeEnv, options: Options): Promise<Report> {
   const report = newReport('uninstall', env, options);
-  const owner = env.owner ?? currentOwner();
+  const owner = ownerOf(env);
 
   // settings.json: only our hooks go; the file stays even when nothing is left in it
   let expectedSettings: unknown;
@@ -564,7 +583,7 @@ export async function uninstallClaude(env: ClaudeEnv, options: Options): Promise
             settingsPath(env),
             serializeJson(edit.doc, detectStyle(snap.content.toString('utf8'))),
             snap,
-            writeOpts(env),
+            writeOpts(env, owner),
           ).backup;
           if (backup) report.backups.push(backup);
         }
@@ -587,8 +606,10 @@ export async function uninstallClaude(env: ClaudeEnv, options: Options): Promise
         status: 'refused',
         changes: [],
         detail: describeSettingsProblem(error),
+        ...(unsafeOr(error, '') ? { code: 'UNSAFE_TARGET' } : {}),
       };
       report.status = 'partial';
+      if (unsafeOr(error, '')) report.code ??= 'UNSAFE_TARGET';
     } else throw error;
   }
 
@@ -602,6 +623,7 @@ export async function uninstallClaude(env: ClaudeEnv, options: Options): Promise
     ...(env.now ? { now: env.now() } : {}),
   });
   for (const s of report.skills) if (s.backup) report.backups.push(s.backup);
+  noteSkillCodes(report);
   if (
     report.skills.some(
       (s) => s.status === 'kept' && s.detail && !/not installed|no SKILL.md/.test(s.detail),

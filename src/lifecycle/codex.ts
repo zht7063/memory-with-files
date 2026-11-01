@@ -7,7 +7,6 @@
 // Order: skills -> hooks -> MCP. Every file write is atomic and backed up; nothing is rolled back
 // across files, and uninstall (stateless: it recognises our entries) removes whatever was written.
 import { execFile } from 'node:child_process';
-import { mkdirSync } from 'node:fs';
 import { basename, isAbsolute, join } from 'node:path';
 import TOML from '@iarna/toml';
 import {
@@ -34,9 +33,13 @@ import {
   backupSnapshot,
   commitFile,
   currentOwner,
+  mkdirSafe,
   readSnapshotOrAbsent,
   removeFile,
   type Owner,
+  trustRootFor,
+  unsafeOr,
+  withRoot,
   type Snapshot,
 } from './safe-write.ts';
 import { installSkills, uninstallSkills, type SkillStep } from './skills-files.ts';
@@ -142,6 +145,8 @@ export interface Report {
     changes: EventChange[];
     backup?: string;
     detail?: string;
+    /** UNSAFE_TARGET when the file or a directory on its way was refused as unsafe. */
+    code?: string;
   };
   skills: SkillStep[];
   skills_root: string;
@@ -150,6 +155,13 @@ export interface Report {
   backups: string[];
   notes: string[];
 }
+
+/**
+ * Who may own the files, and the trust root every write below is checked against (see
+ * checkAncestors): the user's home when CODEX_HOME is inside it, else CODEX_HOME itself.
+ */
+const ownerOf = (env: CodexEnv): Owner =>
+  withRoot(env.owner ?? currentOwner(), trustRootFor(env.codexHome, env.home));
 
 const SERVER = 'mwf';
 
@@ -172,6 +184,14 @@ function refuse(report: Report, code: string, message: string): Report {
   report.code = code;
   report.message = message;
   return report;
+}
+
+/** A skill step that was refused as unsafe makes the whole report say UNSAFE_TARGET (F1, F2). */
+export function noteSkillCodes(report: Report): void {
+  const coded = report.skills.find((s) => s.code);
+  if (!coded) return;
+  if (report.status === 'done') report.status = 'partial';
+  report.code ??= coded.code;
 }
 
 const codexEnv = (env: CodexEnv): NodeJS.ProcessEnv => ({
@@ -343,7 +363,7 @@ async function mutateMcp(
   success: McpStep['status'],
   report: Report,
 ): Promise<McpStep> {
-  const owner = env.owner ?? currentOwner();
+  const owner = ownerOf(env);
   const configPath = join(env.codexHome, 'config.toml');
   const manual = expect ? manualAdd(env) : `codex mcp remove ${SERVER}`;
   let snap: Snapshot;
@@ -410,15 +430,15 @@ function describeHooksProblem(error: unknown): string {
   return (error as Error).message;
 }
 
-const writeOpts = (env: CodexEnv) => ({
-  ...(env.owner ? { owner: env.owner } : {}),
+const writeOpts = (env: CodexEnv, owner: Owner) => ({
+  owner,
   ...(env.now ? { now: env.now() } : {}),
   ...(env.beforeRename ? { beforeRename: env.beforeRename } : {}),
 });
 
 export async function installCodex(env: CodexEnv, options: Options): Promise<Report> {
   const report = newReport('install', env, options);
-  const owner = env.owner ?? currentOwner();
+  const owner = ownerOf(env);
   const bad = checkPaths(env);
   if (bad) return refuse(report, bad.code, bad.message);
   const version = await checkVersion(env);
@@ -446,7 +466,7 @@ export async function installCodex(env: CodexEnv, options: Options): Promise<Rep
       error instanceof HooksDocError ||
       error instanceof SafeWriteError
     )
-      return refuse(report, 'HOOKS_JSON_REFUSED', describeHooksProblem(error));
+      return refuse(report, unsafeOr(error, 'HOOKS_JSON_REFUSED'), describeHooksProblem(error));
     throw error;
   }
   const configPath = join(env.codexHome, 'config.toml');
@@ -460,7 +480,7 @@ export async function installCodex(env: CodexEnv, options: Options): Promise<Rep
 
   try {
     if (!options.dryRun) {
-      mkdirSync(env.codexHome, { recursive: true, mode: 0o700 });
+      mkdirSafe(env.codexHome, owner, 0o700);
       // the directory may be new: read hooks.json's snapshot again, now with its real path
       if (!hooksPlan.snap.exists) hooksPlan.snap = readSnapshotOrAbsent(hooksPath(env), owner);
     }
@@ -472,11 +492,12 @@ export async function installCodex(env: CodexEnv, options: Options): Promise<Rep
       host: 'codex',
       dryRun: options.dryRun,
       force: options.forceSkills,
-      owner,
+      owner: withRoot(owner, env.home),
       ...(env.now ? { now: env.now() } : {}),
     });
     for (const s of report.skills) if (s.backup) report.backups.push(s.backup);
     if (report.skills.some((s) => s.status === 'refused')) report.status = 'partial';
+    noteSkillCodes(report);
 
     // 2. hooks.json
     const unchanged = hooksPlan.snap.exists && deepEqual(hooksPlan.before, hooksPlan.edit.doc);
@@ -486,7 +507,7 @@ export async function installCodex(env: CodexEnv, options: Options): Promise<Rep
       let backup: string | undefined;
       if (!options.dryRun) {
         const res = commitFile(hooksPath(env), hooksPlan.text, hooksPlan.snap, {
-          ...writeOpts(env),
+          ...writeOpts(env, owner),
           mode: 0o600,
         });
         backup = res.backup;
@@ -553,7 +574,7 @@ export async function installCodex(env: CodexEnv, options: Options): Promise<Rep
 
 export async function uninstallCodex(env: CodexEnv, options: Options): Promise<Report> {
   const report = newReport('uninstall', env, options);
-  const owner = env.owner ?? currentOwner();
+  const owner = ownerOf(env);
 
   // hooks.json
   try {
@@ -570,7 +591,7 @@ export async function uninstallCodex(env: CodexEnv, options: Options): Promise<R
         let status: 'removed' | 'updated' = 'removed';
         if (!options.dryRun) {
           try {
-            backup = removeFile(hooksPath(env), snap, writeOpts(env)).backup;
+            backup = removeFile(hooksPath(env), snap, writeOpts(env, owner)).backup;
           } catch (error) {
             if (!(error instanceof SafeWriteError) || error.code !== 'UNSAFE_TARGET') throw error;
             // a symbolic link: keep the link, leave an empty document behind
@@ -578,7 +599,7 @@ export async function uninstallCodex(env: CodexEnv, options: Options): Promise<R
               hooksPath(env),
               serializeJson({}, detectStyle(snap.content.toString('utf8'))),
               snap,
-              writeOpts(env),
+              writeOpts(env, owner),
             ).backup;
             status = 'updated';
           }
@@ -597,7 +618,7 @@ export async function uninstallCodex(env: CodexEnv, options: Options): Promise<R
             hooksPath(env),
             serializeJson(edit.doc, detectStyle(snap.content.toString('utf8'))),
             snap,
-            writeOpts(env),
+            writeOpts(env, owner),
           ).backup;
           if (backup) report.backups.push(backup);
         }
@@ -620,8 +641,10 @@ export async function uninstallCodex(env: CodexEnv, options: Options): Promise<R
         status: 'refused',
         changes: [],
         detail: describeHooksProblem(error),
+        ...(unsafeOr(error, '') ? { code: 'UNSAFE_TARGET' } : {}),
       };
       report.status = 'partial';
+      if (unsafeOr(error, '')) report.code ??= 'UNSAFE_TARGET';
     } else throw error;
   }
 
@@ -632,10 +655,11 @@ export async function uninstallCodex(env: CodexEnv, options: Options): Promise<R
     host: 'codex',
     dryRun: options.dryRun,
     force: options.forceSkills,
-    owner,
+    owner: withRoot(owner, env.home),
     ...(env.now ? { now: env.now() } : {}),
   });
   for (const s of report.skills) if (s.backup) report.backups.push(s.backup);
+  noteSkillCodes(report);
   if (
     report.skills.some(
       (s) => s.status === 'kept' && s.detail && !/not installed|no SKILL.md/.test(s.detail),
