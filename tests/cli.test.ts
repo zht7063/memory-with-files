@@ -450,11 +450,14 @@ describe('mwf command line', () => {
       assert.match(r.err, /MCP tool/);
     }
     assert.match((await sh(['hook'], ctx.root)).err, /mwf executable/);
-    for (const name of ['install', 'uninstall', 'update']) {
+    for (const name of ['install', 'uninstall']) {
       const r = await sh([name], ctx.root);
       assert.equal(r.code, 2);
-      assert.match(r.err, /not part of this build yet/);
+      assert.match(r.err, /mwf executable/); // run by the bin, not by this command line
     }
+    const update = await sh(['update'], ctx.root);
+    assert.equal(update.code, 2);
+    assert.match(update.err, /not part of this build yet/);
     assert.match((await sh(['mcp'], ctx.root)).err, /mwf executable/);
   });
 

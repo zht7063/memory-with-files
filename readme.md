@@ -2,7 +2,7 @@
 
 Project memory for coding agents, stored as plain Markdown files under `.mwf/` in your repository. Files are the source of truth; `index.db` (SQLite, FTS5) is a derived, rebuildable cache.
 
-> **Status: `v1` integration branch, PR4a / 4a.1 (hooks layer, Codex and Claude Code adapters).** MWF 1.0 is a ground-up rewrite. `src/core`, `src/cli`, `src/mcp` and `src/hooks` (the hook logic, the Codex and Claude Code adapters and the supervised `mwf hook` command) are implemented; installing the hooks into a host (`mwf install`) and the Pi extension come next. The 0.x line lives on `main`.
+> **Status: `v1` integration branch, PR4b (Codex install).** MWF 1.0 is a ground-up rewrite. `src/core`, `src/cli`, `src/mcp`, `src/hooks` (the hook logic, the Codex and Claude Code adapters and the supervised `mwf hook` command) and `src/lifecycle` (`mwf install|uninstall --harness codex`) are implemented; installing into Claude Code and the Pi extension come next. The 0.x line lives on `main`.
 
 ## Layout
 
@@ -11,11 +11,12 @@ src/core    # file store, index, locking, all operations
 src/cli     # structured command functions + the shell command line
 src/mcp     # MCP tools + the stdio server (`mwf mcp`)
 src/hooks   # host hooks: SessionStart / UserPromptSubmit / Stop logic, Codex and Claude Code adapters, supervisor
+src/lifecycle # install / uninstall into a host (Codex so far): safe file writes, hooks.json editing
 src/skills  # the skill and shortcut-command text: pure data, one source for every host
 src/bin     # the `mwf` executable: dispatch only
 ```
 
-Each layer imports only the one beneath it (`cli` -> `core`, `mcp` -> `cli`, `hooks` -> `mcp` plus the pure-text `skills`); `tests/layers.test.ts` enforces it.
+Each layer imports only the one beneath it (`cli` -> `core`, `mcp` -> `cli`, `hooks` -> `mcp` plus the pure-text `skills`; `lifecycle` is a separate branch that needs only the core version, the skills text and the TOML parser, because it talks to hosts through files and their own CLIs); `tests/layers.test.ts` enforces it.
 
 ```
 .mwf/
@@ -95,7 +96,7 @@ The shell always sends a `request_id` (generated as `cli-<uuid>` unless you pass
 
 "Read-only" means these commands never change memory, not that they never write files. `status` and `recall` may take the project lock and write under `.mwf/`: they recover a leftover intent from a crashed write (roll it forward or discard it, and repair `index.md`) and refresh a stale `index.db`. If another writer holds the lock they wait briefly (up to 1.5 s), then answer from the existing index with a warning. `doctor` never takes the lock and never writes; it only reports (a leftover intent shows up as a warning).
 
-A project is created through the MCP tool `mwf_init` (or `mwf install`, once available); the shell has no `init` command, and the not-initialized error says so.
+A project is created through the MCP tool `mwf_init` (or `mwf install --harness codex` to connect Codex); the shell has no `init` command, and the not-initialized error says so.
 
 ## MCP server
 
@@ -108,11 +109,11 @@ A project is created through the MCP tool `mwf_init` (or `mwf install`, once ava
 - **Killed mid-write:** the server does not trap SIGTERM; the lock and intent it leaves are recovered by the next process.
 - **Host registration:** after the first tool call the server records the host in `host.local.toml` (channel `mcp`).
 
-Exit codes: `0` ok, `1` the command failed (including a refused write) or `doctor` found errors, `2` usage error or invalid input. The lifecycle commands (`install`, `uninstall`, `update`) are not part of this build; `mwf hook <event>` is started by the host (see Hooks).
+Exit codes: `0` ok, `1` the command failed (including a refused write) or `doctor` found errors, `2` usage error or invalid input. `mwf install` and `mwf uninstall` are run by the executable itself (see Install); `update` is not part of this build; `mwf hook <event>` is started by the host (see Hooks).
 
 ## Hooks
 
-`mwf hook <session-start|prompt|stop>` is what a host runs as a command hook (Codex and Claude Code; Pi gets an in-process extension later). It reads the host's JSON event on stdin, prints one JSON line, and **always exits 0**; it needs no terminal and never confirms anything (hooks only call `mwf_bootstrap`, `mwf_recall`, `mwf_status` and write the host / session bookkeeping through the normal write path). Install and uninstall are not in this build: nothing here edits any host configuration.
+`mwf hook <session-start|prompt|stop>` is what a host runs as a command hook (Codex and Claude Code; Pi gets an in-process extension later). It reads the host's JSON event on stdin, prints one JSON line, and **always exits 0**; it needs no terminal and never confirms anything (hooks only call `mwf_bootstrap`, `mwf_recall`, `mwf_status` and write the host / session bookkeeping through the normal write path). Installing them into a host is `mwf install` (see Install); the hook command itself edits no configuration.
 
 - **SessionStart** injects the short resident entry text plus a fenced overview of the memory (`mwf_bootstrap`) and registers the host. After a compaction it does nothing. Inside a git repository that has no `.mwf/` it prints one line suggesting `/mwf init`; elsewhere nothing.
 - **UserPromptSubmit** runs `mwf_recall` on the prompt and injects a fenced list of what matched, at most once per record per session (the ids are kept in `state.toml`). Short or unmatched prompts do nothing. **A match must be relevant, not just present**: the hook asks `mwf_recall` for `min_relevance` equal to `[hooks] recall_min_score` (integer 0..20, default 2; `0` turns the filter off; an invalid value falls back to 2 and `mwf doctor` warns `config_recall_min_score_invalid`). The score is term based: English stopwords (`with`, `the`, `and`, …), Chinese question and filler words (为什么, 怎么样, …) and words shorter than 3 characters carry no weight; a distinct word scores 2 when it is in the record title and 1 when it is only in the body, summed over the words. A run of Chinese characters counts as one word, and only when at least 2 of its distinct 3-character pieces match. A short allow-list of technical terms (`ai ci cd db go io ip js k8 ml os pr py qa rs tf ts ui ux vm`) counts as whole tokens only (`go`, `io`, `ip`, `os`, `pr` can add at most 1). So "Reply with exactly the word READY" injects nothing, while "why did we pick sqlite for the index?" still recalls the sqlite decision. Limits: the stopword lists are English plus a few Chinese filler words; Chinese words of 2 characters (部署, 迁移) cannot match on their own (the index is a trigram index); a single ordinary word in a record body (score 1) is below the default threshold. Explicit `mwf_recall` / `mwf recall` are unchanged unless you pass `min_relevance` (integer 0..20, default 0 = off).
@@ -135,6 +136,24 @@ Exit codes: `0` ok, `1` the command failed (including a refused write) or `docto
 | MCP tools are named `mcp__<server>__<tool>`                                              | our own text names them `mcp__mwf__mwf_recall` etc. for host `claude` (server name `mwf`); stored memory is never rewritten                                                                                                                                                                                                                                                                                                                                                                                 |
 
 `import … from '@zht7063/mwf/hooks'` exposes the handlers and the Codex and Claude adapters for tests and for the generated Pi extension. `renderSkillMd(skill, 'claude')` from `src/skills` renders the skill files with Claude tool names.
+
+## Install (Codex)
+
+`mwf install --harness codex [--dry-run] [--json] [--force-skills]` and `mwf uninstall --harness codex [...]` connect mwf to Codex at user level (never a project's own `.codex/`). Run them from the built package (`mwf.js`), in an interactive terminal. Requires Codex 0.165.0 or newer: if `codex --version` cannot be run or understood, nothing is installed.
+
+| What                                                                                                     | Where                                                                                                                             | How                                                                                                                    |
+| -------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| three command hooks (SessionStart `startup\|resume\|clear\|fork`, UserPromptSubmit, Stop; `timeout` 5 s) | `<CODEX_HOME or ~/.codex>/hooks.json`                                                                                             | strict-JSON edit of mwf's own handlers only                                                                            |
+| skills `mwf`, `mwf-save`, `mwf-handoff`, `mwf-tidy`                                                      | `~/.agents/skills/<name>/SKILL.md` (Codex's documented user skills directory, under HOME; `~/.codex/skills` is legacy and unused) | each file ends in `<!-- mwf-managed:<version>:<sha256> -->`                                                            |
+| the MCP server                                                                                           | Codex's `config.toml`                                                                                                             | only through `codex mcp add mwf -- <node> <mwf.js> mcp` / `codex mcp remove mwf`; mwf never edits `config.toml` itself |
+
+- **Order and failure:** skills, then hooks.json, then MCP. A failed step does not undo finished ones; the report lists every step and any command to run yourself. Run the command again to finish.
+- **Dry run** (`--dry-run`) needs no terminal, writes nothing and runs no codex command that changes anything.
+- **Terminal only:** a real install or uninstall needs standard input and output to be terminals (`CONFIRM_REQUIRES_TTY`; no flag or variable overrides it). This prevents accidents, for example an agent's shell tool or a pipe running it; it is not a security boundary, because a pseudo-terminal such as `script` provides a terminal.
+- **Trust:** Codex does not run new hooks until you review them: open Codex and run `/hooks`. Trust is recorded per hook definition, so a changed hook needs trusting again. mwf writes no trust state. A `[features] hooks = false` in `config.toml`, or hooks also defined inline under `[hooks]`, are reported as warnings and never changed.
+- **Safe writes:** targets must be regular files you own in a directory you own that is not world-writable (anything else is refused); a symlink (a dotfiles manager's) stays a symlink and the real file is updated in its own directory; the new content goes to an `O_EXCL|O_NOFOLLOW` temp file, is fsynced and renamed; if the file changed since it was read the write is aborted and the other writer's file is kept (`CONCURRENT_MODIFICATION`). Before any change the old file is copied to `<name>.mwf-bak-<time>-<id>` (mode 0600, unique, never deleted by mwf), including `config.toml` before a `codex mcp` call, which is re-read afterwards and must differ only in `mcp_servers.mwf` (otherwise `CONFIG_CHANGED_UNEXPECTEDLY`, nothing is reverted, the backup path is printed). `hooks.json` must be strict JSON (comments, a BOM, trailing commas and duplicate keys are refused with line and column); unknown fields and other tools' hooks are kept.
+- **Uninstall** is stateless and removes only what it recognises as its own (hook commands of the form `<node> …/mwf.js hook <event>`; skills whose hash still matches the marker; the MCP entry when it runs `mwf.js mcp`). An edited skill is kept and reported (`--force-skills` removes it after a backup); `.mwf/` and all backups stay. A `hooks.json` left empty is deleted (after a backup).
+- **Not verified:** Codex 0.165 or newer on a real machine (the tests use a fake `codex`), where Codex stores hook trust, and the `~/.agents/skills` path beyond the documentation.
 
 ## Locking
 
