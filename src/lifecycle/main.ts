@@ -96,20 +96,28 @@ export function renderReport(r: Report): string {
       (r.claude_version ? ` (Claude Code ${r.claude_version})` : '') +
       (r.pi_version ? ` (Pi ${r.pi_version})` : ''),
   );
-  if (r.message) lines.push(`  ${r.code ?? ''}: ${r.message}`);
+  // Every refusal or failure line carries its code name first, the same name as `code` in --json.
+  if (r.message) lines.push(`  ${r.code ? `${r.code}: ` : ''}${r.message}`);
+  else if (r.code) lines.push(`  ${r.code}: see below`);
+  const labelled = (code: string | undefined, detail: string): string =>
+    code ? `${code}: ${detail}` : detail;
   if (r.hooks)
     lines.push(
       `  ${r.harness === 'claude' ? 'settings   ' : r.harness === 'pi' ? 'extension  ' : 'hooks      '}${r.hooks.status}  ${r.hooks.path}` +
-        (r.hooks.detail ? `\n             ${r.hooks.detail}` : '') +
+        (r.hooks.detail ? `\n             ${labelled(r.hooks.code, r.hooks.detail)}` : '') +
         (r.hooks.backup ? `\n             backup: ${r.hooks.backup}` : ''),
     );
   if (r.skills.length > 0) lines.push(`  skills     (${r.skills_root})`);
   for (const s of r.skills)
     lines.push(
-      `    ${s.name}: ${s.status}${s.detail ? ` - ${s.detail}` : ''}${s.backup ? ` (backup: ${s.backup})` : ''}`,
+      `    ${s.name}: ${s.status}${s.detail ? ` - ${labelled(s.code, s.detail)}` : ''}${s.backup ? ` (backup: ${s.backup})` : ''}`,
     );
   if (r.mcp) {
-    lines.push(`  mcp        ${r.mcp.status}${r.mcp.detail ? ` - ${r.mcp.detail}` : ''}`);
+    const mcpCode =
+      r.mcp.status === 'unexpected_change' ? 'CONFIG_CHANGED_UNEXPECTEDLY' : undefined;
+    lines.push(
+      `  mcp        ${r.mcp.status}${r.mcp.detail ? ` - ${labelled(mcpCode, r.mcp.detail)}` : mcpCode ? ` - ${mcpCode}` : ''}`,
+    );
     if (r.mcp.backup)
       lines.push(
         `             ${r.harness === 'claude' ? '.claude.json' : r.harness === 'pi' ? 'mcp.json' : 'config.toml'} backup: ${r.mcp.backup}`,
