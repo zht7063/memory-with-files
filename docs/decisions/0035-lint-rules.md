@@ -13,5 +13,6 @@
 | warning | 孤立页（没有任何入链） |
 | warning | `active` 的 `task` 页 30 天未更新 |
 | warning | `index.md` 与页面不一致 |
+| warning | `possible_duplicate`：两页 BM25 相似度过高（[0040](0040-llm-wiki-workflow.md) 补充） |
 
 有 error 时 `mwf lint` 退出 1；只有 warning 时退出 0。

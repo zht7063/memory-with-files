@@ -8,23 +8,17 @@
 - 第 4 轮 → ADR 0023–0031、[cli.md](cli.md)
 - 第 5 轮 → ADR 0032–0037
 - 第 6 轮 → ADR 0038–0039
+- 第 7 轮 → ADR 0040
 
-## 第 7 轮：LLM wiki 的工作流（进行中）
-
-参照 LLM wiki 模式的三层（原始资料 / wiki 页面 / 约定）与三种操作（摄入 / 查询 / 体检），逐项决定 mwf 提供什么。
+## 第 8 轮：落地（进行中）
 
 | # | 问题 | 推荐 | 依赖 |
 | --- | --- | --- | --- |
-| R7-1 | 原始资料层 | 2.0 不设 `sources/`；资料就是会话、代码、提交，页面用外部链接引用代码路径或提交 | 0008, 0038 |
-| R7-2 | 摄入（写入）时的辅助 | 每个写命令成功后附带"可能相关但尚未链接"的前 3 页（用新内容做 BM25），提示 agent 补双向链接或合并 | 0023, 0039 |
-| R7-3 | 查询时的辅助 | `show` 列出出链与反向链接时附带对方的标题与 summary，agent 不用逐页打开就能决定顺哪条走 | 0028, 0038 |
-| R7-4 | 体检的辅助 | lint 增加 warning `possible_duplicate`（页面两两 BM25 相似度过高）；SessionStart 在有 lint 问题时附一行计数；skill 定义"体检"流程（合并重复、修正矛盾、归档过时、补链接） | 0035, 0030 |
-| R7-5 | 目录变大后怎么注入 | `index.md` 始终完整；SessionStart 按预算注入：先 preference 正文，再按类型顺序注入目录行，超出则截断并提示 `mwf index` / `mwf list` | 0027, 0030 |
-| R7-6 | 项目约定（schema 层） | 不单设约定文件；项目约定写成 `preference` 页面，SessionStart 总会注入 | 0017, 0030 |
-| R7-7 | Stop 提醒的内容 | 提醒按摄入流程做：先搜索、优先 patch 现有页、新建时写好 summary、补双向链接；没有值得记的就什么都不做 | 0030, 0036 |
-| R7-8 | 页面类型是否够用 | 保持 5 类；`knowledge` 页兼作主题汇总页（hub），由 skill 鼓励"一个主题一页、持续累积" | 0017 |
-
-## 后续轮次（等待前置决策）
-
-- **实施阶段划分、v2 成为默认分支的时机、何时删除 rust-rebuild** → `implementation-plan.md` ← 以上全部
-- **每个 crate 的公开 API** → `docs/crates/*.md` ← 以上全部
+| R8-1 | `mwf-search` 不依赖 `mwf-domain` | 是：search 只认自己的 `Doc`，成为零依赖叶子 crate；页面 → Doc 的转换在 app | 0015 |
+| R8-2 | 第三方依赖策略 | 每个 crate 的依赖白名单写在 crates/*.md；新增依赖须改文档；用 `cargo-deny` 检查许可证与重复版本 | 0005 |
+| R8-3 | 跨层错误处理 | 库 crate 各自 `thiserror` 错误枚举；`mwf-app` 统一映射为 `ErrorCode`；不在库里用 `anyhow`；不 panic（hook 中额外 `catch_unwind`） | 0015, 0028 |
+| R8-4 | 时钟注入 | domain / search 不取时间；app 持有可注入的 `Clock`，测试用固定时间 | 0015 |
+| R8-5 | crates/*.md 的 API 草案 | 作为 P0–P2 的起点接受，实现中可调，调整回写文档 | 以上 |
+| R8-6 | 实施阶段 P0–P4 | 按 implementation-plan.md | 以上 |
+| R8-7 | v2 成为默认分支 | 2.0.0 发布时把 GitHub 默认分支切到 `v2`；`main` 冻结为 1.x | 0010 |
+| R8-8 | 推送 v2、删除 rust-rebuild | 本轮确认后推送 `v2` 到 origin；删除本地 `rust-rebuild` 及其 worktree（需用户确认） | 0010 |
