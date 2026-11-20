@@ -5,6 +5,7 @@
 | 文档 | 内容 | 状态 |
 | --- | --- | --- |
 | [architecture.md](architecture.md) | 总体结构、crate 依赖图、依赖规则 | 已接受 |
+| [cli.md](cli.md) | 命令、参数、输出、错误码规格 | 命令已接受，细节草案 |
 | [decisions/](decisions/) | 架构决策记录（ADR），一个决策一份 | 持续追加 |
 | [open-questions.md](open-questions.md) | 设计树：尚未决定的问题与其依赖 | 讨论中 |
 | crates/`<name>`.md | 每个 crate 的职责、公开 API、禁止事项 | 待拓扑确认后创建 |

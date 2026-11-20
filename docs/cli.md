@@ -1,0 +1,65 @@
+# CLI 规格
+
+> 状态：命令集合已接受（[0023](decisions/0023-write-commands-and-rev.md)、[0028](decisions/0028-read-commands-and-output.md)）；参数细节与错误码为**草案**，随设计收敛更新。
+
+所有命令：从当前目录向上查找 `.mwf/`（`init` 除外）；`--json` 输出结构化结果；退出码 0 / 1 / 2。
+
+## 项目
+
+```
+mwf init [--local]
+```
+
+在 git 仓库根目录创建 `.mwf/`。默认进 git 并写 `.gitattributes`（`log.md merge=union`）；`--local` 时把 `.mwf/` 写入 `.gitignore`。
+
+## 读
+
+```
+mwf show <slug>                         frontmatter、正文、rev、出链、反向链接
+mwf search <query> [--type T]... [--tag t]... [--limit N]
+                                        BM25 结果：slug、title、summary、score、rev
+mwf list [--type T]... [--tag t]... [--status active|archived|all]
+mwf index [--rebuild]                   打印目录；--rebuild 重新生成 index.md
+mwf log [-n N]                          最近 N 条写操作（默认 20）
+mwf lint                                检查全部页面；有 error 时退出 1
+```
+
+## 写
+
+所有写命令：持写锁 → 校验 → secret 扫描 → 原子写 → 重建 `index.md` → 追加 `log.md`；成功后输出新的 `rev`。
+
+```
+mwf new <slug> --type T --title "…" --summary "…" [--tag t]...    正文从 stdin
+mwf write <slug> --rev R                                           正文从 stdin，整页替换
+mwf patch <slug> --old "…" --new "…"                               也可 --old-file/--new-file
+mwf set <slug> [--title …] [--type …] [--summary …] [--tag t]... [--untag t]...
+mwf archive <slug>
+mwf unarchive <slug>
+mwf rename <old> <new>                                             改写所有 [[old]] 入链
+mwf delete <slug> [--unlink]                                       移入 .mwf/trash/
+```
+
+## 宿主集成
+
+```
+mwf hook <event> --host claude|codex     由宿主调用；读 stdin JSON，输出一行 JSON，总是退出 0
+mwf install --host claude|codex
+mwf uninstall --host claude|codex
+```
+
+## 错误码（草案）
+
+| code | 含义 |
+| --- | --- |
+| `NOT_INITIALIZED` | 找不到 `.mwf/` |
+| `NOT_GIT_ROOT` | `init` 不在 git 仓库根目录 |
+| `NOT_FOUND` | 页面不存在 |
+| `ALREADY_EXISTS` | `new` / `rename` 目标 slug 已存在 |
+| `INVALID_SLUG` | slug 不符合 `[a-z0-9-]` |
+| `INVALID_FIELD` | frontmatter 字段不合法（type 不在枚举内、summary 过长……） |
+| `REV_MISMATCH` | `write` 的 rev 与当前不一致 |
+| `PATCH_NO_MATCH` / `PATCH_AMBIGUOUS` | `patch` 旧串无匹配 / 多处匹配 |
+| `SECRET_DETECTED` | 新增内容疑似密钥 |
+| `HAS_BACKLINKS` | `delete` 时仍有入链 |
+| `LOCK_TIMEOUT` | 等写锁超时 |
+| `USAGE` | 参数错误（退出码 2） |

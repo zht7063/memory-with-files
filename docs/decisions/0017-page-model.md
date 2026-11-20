@@ -16,6 +16,7 @@
 | 字段 | 必填 | 说明 |
 | --- | --- | --- |
 | `title` | 是 | 页面标题 |
+| `summary` | 是 | 一句话摘要（[0027](0027-summary-and-index-md.md) 补充） |
 | `type` | 是 | `preference` / `decision` / `incident` / `knowledge` / `task` 之一 |
 | `tags` | 否 | 字符串列表 |
 | `status` | 是 | `active` / `archived`（默认 `active`） |
