@@ -1,6 +1,6 @@
-# 实施计划（草案）
+# 实施计划
 
-> 状态：草案（第 8 轮评审）。每个阶段结束时 `cargo fmt --check`、`cargo clippy -D warnings`、`cargo test` 全绿。
+> 状态：已接受（[0044](decisions/0044-implementation-and-branches.md)）。每个阶段结束时 `cargo fmt --check`、`cargo clippy -D warnings`、`cargo test` 全绿。
 
 ## 目录结构
 
@@ -30,7 +30,3 @@ docs/
 - 一个阶段一个或多个 PR，合入 `v2`。
 - 实现与文档冲突时先改文档（新增 ADR），再改代码。
 - `docs/crates/*.md` 中的 API 是起点，实现中可以调整，但调整要回写文档。
-
-## 待定（第 8 轮）
-
-- 第三方依赖策略、跨层错误处理、v2 何时成为默认分支、推送与删除 `rust-rebuild` 的时机。

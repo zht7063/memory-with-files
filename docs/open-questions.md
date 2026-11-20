@@ -1,24 +1,20 @@
-# 设计树：未决问题
+# 设计树：讨论记录
 
-讨论按轮进行。每轮只问"前置决策都已确定"的问题；确定后写成 ADR 并从这里移除。未回复的问题视为接受推荐答案。
+设计讨论按轮进行，每轮只问"前置决策都已确定"的问题；确定后写成 ADR。未回复的问题视为接受推荐答案。
 
-- 第 1 轮 → ADR 0001–0007
-- 第 2 轮 → ADR 0008–0015
-- 第 3 轮 → ADR 0016–0022
-- 第 4 轮 → ADR 0023–0031、[cli.md](cli.md)
-- 第 5 轮 → ADR 0032–0037
-- 第 6 轮 → ADR 0038–0039
-- 第 7 轮 → ADR 0040
+| 轮次 | 主题 | 结果 |
+| --- | --- | --- |
+| 1 | 重写范围、兼容、分发、分层机制、同步、文档 | ADR 0001–0007 |
+| 2 | LLM wiki 分工、不做 MCP、孤儿分支、检索、工具链、并发、拓扑 | ADR 0008–0015 |
+| 3 | 写入经过 mwf、页面模型、日志、git、宿主、测试、发布 | ADR 0016–0022 |
+| 4 | 命令集合、冲突检测、绕过守卫、secret、删除、目录、输出、hooks、安装 | ADR 0023–0031、[cli.md](cli.md) |
+| 5 | frontmatter、一致性与上限、会话状态、lint、skill、lifecycle 安全 | ADR 0032–0037 |
+| 6 | Markdown 链接、BM25 打分与 hook 门槛 | ADR 0038–0039 |
+| 7 | LLM wiki 工作流 | ADR 0040 |
+| 8 | search 叶子化、依赖策略、错误与时钟、实施与分支 | ADR 0041–0044、[crates/](crates/)、[implementation-plan.md](implementation-plan.md) |
 
-## 第 8 轮：落地（进行中）
+## 当前未决问题
 
-| # | 问题 | 推荐 | 依赖 |
-| --- | --- | --- | --- |
-| R8-1 | `mwf-search` 不依赖 `mwf-domain` | 是：search 只认自己的 `Doc`，成为零依赖叶子 crate；页面 → Doc 的转换在 app | 0015 |
-| R8-2 | 第三方依赖策略 | 每个 crate 的依赖白名单写在 crates/*.md；新增依赖须改文档；用 `cargo-deny` 检查许可证与重复版本 | 0005 |
-| R8-3 | 跨层错误处理 | 库 crate 各自 `thiserror` 错误枚举；`mwf-app` 统一映射为 `ErrorCode`；不在库里用 `anyhow`；不 panic（hook 中额外 `catch_unwind`） | 0015, 0028 |
-| R8-4 | 时钟注入 | domain / search 不取时间；app 持有可注入的 `Clock`，测试用固定时间 | 0015 |
-| R8-5 | crates/*.md 的 API 草案 | 作为 P0–P2 的起点接受，实现中可调，调整回写文档 | 以上 |
-| R8-6 | 实施阶段 P0–P4 | 按 implementation-plan.md | 以上 |
-| R8-7 | v2 成为默认分支 | 2.0.0 发布时把 GitHub 默认分支切到 `v2`；`main` 冻结为 1.x | 0010 |
-| R8-8 | 推送 v2、删除 rust-rebuild | 本轮确认后推送 `v2` 到 origin；删除本地 `rust-rebuild` 及其 worktree（需用户确认） | 0010 |
+无。设计树已收敛（2026-11-20），可以从 [implementation-plan.md](implementation-plan.md) 的 P0 开始实施。
+
+实施中出现的新问题：先在此处登记，确定后写 ADR。

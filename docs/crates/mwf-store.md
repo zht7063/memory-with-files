@@ -1,6 +1,6 @@
 # mwf-store
 
-> 状态：草案（第 8 轮评审）
+> 状态：已接受为实现起点（[0044](../decisions/0044-implementation-and-branches.md)）；实现中可调整，调整须回写本文档。依赖白名单见 [0042](../decisions/0042-dependency-policy.md)。
 
 **职责**：`.mwf/` 的全部文件 IO：布局、项目定位、原子写、写锁、配置、日志、trash、会话状态。不含业务规则（校验、扫描在 domain，编排在 app）。
 

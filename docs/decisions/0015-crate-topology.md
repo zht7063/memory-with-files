@@ -1,6 +1,7 @@
 # 0015 crate 拓扑与依赖规则
 
 - 状态：已接受（2026-11-20）；落实 [0005](0005-cargo-workspace-layering.md)
+- 注：`search → domain` 一条边已被 [0041](0041-search-is-a-leaf.md) 去掉。
 
 ## 决定
 

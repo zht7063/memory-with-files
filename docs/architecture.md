@@ -1,7 +1,7 @@
 # 架构
 
-> 状态：**已接受**（crate 拓扑与依赖规则，见 [0015](decisions/0015-crate-topology.md)）。各 crate 的公开 API 待数据模型确定后写入 `crates/*.md`。
-> 依据：[0005](decisions/0005-cargo-workspace-layering.md) 分层机制、[0006](decisions/0006-sync-first.md) 同步优先、[0008](decisions/0008-llm-wiki-division.md) wiki 引擎、[0009](decisions/0009-cli-only-no-mcp.md) 不做 MCP、[0013](decisions/0013-atomic-write-file-lock.md) 原子写与锁。
+> 状态：**已接受**（crate 拓扑与依赖规则，见 [0015](decisions/0015-crate-topology.md)）。各 crate 的职责与 API 见 [crates/](crates/)。
+> 依据：[0005](decisions/0005-cargo-workspace-layering.md) 分层机制、[0006](decisions/0006-sync-first.md) 同步优先、[0008](decisions/0008-llm-wiki-division.md) wiki 引擎、[0009](decisions/0009-cli-only-no-mcp.md) 不做 MCP、[0013](decisions/0013-atomic-write-file-lock.md) 原子写与锁、[0041](decisions/0041-search-is-a-leaf.md) search 为叶子、[0042](decisions/0042-dependency-policy.md) 依赖策略、[0043](decisions/0043-errors-and-clock.md) 错误与时钟。
 
 ## 产品一句话
 
@@ -25,7 +25,7 @@ flowchart TD
 
     subgraph engine["引擎层"]
         store["mwf-store<br/>.mwf 布局 · 原子写 · 文件锁 · 读取页面"]
-        search["mwf-search<br/>分词 · BM25（纯计算）"]
+        search["mwf-search<br/>分词 · BM25（纯计算，零依赖）"]
     end
 
     domain["mwf-domain<br/>页面模型 · frontmatter · 链接解析 · 校验（纯计算）"]
@@ -46,7 +46,6 @@ flowchart TD
     app --> assets
 
     store --> domain
-    search --> domain
 ```
 
 ## 依赖规则
@@ -55,7 +54,7 @@ flowchart TD
 2. **适配器只看见 `mwf-app`**（外加纯数据 `mwf-assets`）：`cli` / `hooks` 不得依赖 `store`、`search`、`domain`。`mwf-app` 对外暴露自己的请求/响应类型（DTO），不透传 domain 类型。
 3. **适配器之间互不依赖**。
 4. **`lifecycle` 不依赖 `app`**：它只改宿主配置文件，不读写记忆数据。
-5. **纯计算 crate 不做 IO**：`domain`、`search` 不触碰文件系统、时钟、环境变量。
+5. **纯计算 crate 不做 IO**：`domain`、`search` 不触碰文件系统、时钟、环境变量；`search` 不依赖任何 workspace crate（[0041](decisions/0041-search-is-a-leaf.md)）。
 6. **同步**：所有 crate 无异步运行时。
 7. **bin 只做分发**：解析第一个子命令，交给对应适配器，自身不含逻辑。
 

@@ -7,9 +7,9 @@
 | [architecture.md](architecture.md) | 总体结构、crate 依赖图、依赖规则 | 已接受 |
 | [cli.md](cli.md) | 命令、参数、输出、错误码规格 | 命令已接受，细节草案 |
 | [decisions/](decisions/) | 架构决策记录（ADR），一个决策一份 | 持续追加 |
-| [open-questions.md](open-questions.md) | 设计树：尚未决定的问题与其依赖 | 讨论中 |
-| [crates/](crates/) | 每个 crate 的职责、公开 API、依赖、禁止事项 | 草案 |
-| [implementation-plan.md](implementation-plan.md) | 目录结构与 P0–P4 实施阶段 | 草案 |
+| [open-questions.md](open-questions.md) | 设计树：各轮讨论记录 | 已收敛 |
+| [crates/](crates/) | 每个 crate 的职责、公开 API、依赖、禁止事项 | 已接受为实现起点 |
+| [implementation-plan.md](implementation-plan.md) | 目录结构与 P0–P4 实施阶段 | 已接受 |
 
 ## 约定
 

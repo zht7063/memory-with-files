@@ -1,8 +1,8 @@
 # mwf-search
 
-> 状态：草案（第 8 轮评审）
+> 状态：已接受为实现起点（[0044](../decisions/0044-implementation-and-branches.md)）；实现中可调整，调整须回写本文档。依赖白名单见 [0042](../decisions/0042-dependency-policy.md)。
 
-**职责**：分词与 BM25，纯计算。**提议：不依赖 `mwf-domain`**，只接受自己的 `Doc` 结构，由 app 负责把页面转成 `Doc`——这样 search 成为一个零 workspace 依赖的叶子 crate。
+**职责**：分词与 BM25，纯计算。**不依赖 `mwf-domain`**（[0041](../decisions/0041-search-is-a-leaf.md)），只接受自己的 `Doc` 结构，由 app 负责把页面转成 `Doc`——这样 search 成为一个零 workspace 依赖的叶子 crate。
 
 ## 公开 API（草案）
 

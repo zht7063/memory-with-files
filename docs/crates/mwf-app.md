@@ -1,6 +1,6 @@
 # mwf-app
 
-> 状态：草案（第 8 轮评审）
+> 状态：已接受为实现起点（[0044](../decisions/0044-implementation-and-branches.md)）；实现中可调整，调整须回写本文档。依赖白名单见 [0042](../decisions/0042-dependency-policy.md)。
 
 **职责**：用例层。每个操作一个函数：取锁 → 读 → domain 校验/扫描 → store 写 → 重建 index → 追加 log → 返回 DTO。适配器唯一的入口。对外只暴露自己的 DTO 与错误码，不透传 domain / store / search 类型（0015）。
 
@@ -44,7 +44,7 @@ DTO 全部 `#[derive(Serialize)]`，`--json` 与快照测试直接使用。
 
 ## 依赖
 
-`mwf-domain`、`mwf-store`、`mwf-search`、`mwf-assets`（hook 提示文本可能放 hooks，见评审）、`serde`、`serde_json`、`thiserror`。
+`mwf-domain`、`mwf-store`、`mwf-search`、`mwf-assets`（init 模板）、`serde`、`serde_json`、`thiserror`。
 
 ## 禁止
 

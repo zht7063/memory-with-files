@@ -1,6 +1,6 @@
 # 适配器与其余 crate
 
-> 状态：草案（第 8 轮评审）
+> 状态：已接受为实现起点（[0044](../decisions/0044-implementation-and-branches.md)）；实现中可调整，调整须回写本文档。依赖白名单见 [0042](../decisions/0042-dependency-policy.md)。
 
 ## mwf-cli
 
