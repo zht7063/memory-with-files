@@ -1,6 +1,7 @@
 # 0008 LLM wiki：mwf 是给 agent 用的 wiki 引擎，不调用 LLM
 
 - 状态：已接受（2026-11-20）；细化 [0003](0003-drop-sqlite-bm25-llm-wiki.md)
+- 注：文中 `[[slug]]` 链接语法已被 [0038](0038-markdown-links.md) 取代，改为 `[文字](slug.md)`。
 
 ## 决定
 

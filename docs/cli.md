@@ -35,7 +35,7 @@ mwf patch <slug> --old "…" --new "…"                               也可 --
 mwf set <slug> [--title …] [--type …] [--summary …] [--tag t]... [--untag t]...
 mwf archive <slug>
 mwf unarchive <slug>
-mwf rename <old> <new>                                             改写所有 [[old]] 入链
+mwf rename <old> <new>                                             改写所有指向 old.md 的内部链接
 mwf delete <slug> [--unlink]                                       移入 .mwf/trash/
 ```
 

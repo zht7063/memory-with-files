@@ -5,7 +5,7 @@
 
 ## 产品一句话
 
-mwf 是一个给编程 agent 用的、项目内的 **wiki 引擎**：记忆是 `.mwf/` 下互相 `[[链接]]` 的 Markdown 页面，由宿主 agent 编写；mwf 负责存储、链接、目录、BM25 搜索、lint，并通过 hooks 把相关记忆注入会话。mwf 不调用 LLM。
+mwf 是一个给编程 agent 用的、项目内的 **wiki 引擎**：记忆是 `.mwf/` 下用标准 Markdown 相对链接互相引用的页面，由宿主 agent 编写；mwf 负责存储、链接、目录、BM25 搜索、lint，并通过 hooks 把相关记忆注入会话。mwf 不调用 LLM。
 
 ## crate 依赖图
 
