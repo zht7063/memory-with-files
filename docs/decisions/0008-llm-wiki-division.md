@@ -6,7 +6,7 @@
 
 记忆是一组互相 `[[链接]]` 的 Markdown 页面，有一个总目录页。检索时 agent 先读目录、顺链接阅读，再用 BM25 关键词搜索补漏。
 
-**mwf 本身不调用任何 LLM API。** 编写、整理、合并页面都由宿主 agent（Claude Code / Codex 等）完成。mwf 只提供：
+**mwf 本身不调用任何 LLM API。** 编写、整理、合并页面的内容都由宿主 agent（Claude Code / Codex 等）决定，但写入必须通过 mwf 命令（见 [0016](0016-all-writes-through-mwf.md)）。mwf 只提供：
 
 - 页面存储
 - `[[链接]]` 解析与反向链接计算
