@@ -6,21 +6,17 @@
 - 第 2 轮 → ADR 0008–0015
 - 第 3 轮 → ADR 0016–0022
 - 第 4 轮 → ADR 0023–0031、[cli.md](cli.md)
+- 第 5 轮 → ADR 0032–0037（链接语法、相关性阈值转入第 6 轮）
 
-## 第 5 轮（进行中）
+## 第 6 轮（进行中）
 
 | # | 问题 | 推荐 | 依赖 |
 | --- | --- | --- | --- |
-| R5-1 | frontmatter 语法 | YAML `---` 块，只支持我们用到的子集（标量字符串、`[a, b]` 列表），在 `mwf-domain` 手写解析与渲染，不引 YAML 库 | 0017, 0027 |
-| R5-2 | 链接语法与悬空链接 | `[[slug]]` 与 `[[slug\|显示文字]]`；链接到不存在的页面允许写入但在输出中警告，lint 记 warning | 0016, 0017 |
-| R5-3 | 读写一致性与锁等待 | 读命令不加锁（原子 rename 保证读到完整文件）；写命令等锁最多 2 秒，超时 `LOCK_TIMEOUT` | 0013 |
-| R5-4 | 大小限制 | 单页正文 ≤ 100 KB；`patch` 的 old/new 各 ≤ 100 KB；stdin 读取上限 1 MB | 0023 |
-| R5-5 | 会话状态存放 | `.mwf/.state/<session_id>.json`（不进 git）；每次 hook 顺带清理 7 天前的文件 | 0030 |
-| R5-6 | 相关性阈值 | 命中的不同查询词（去停用词后）≥ 2 个才算相关，再按 BM25 排序；`config.toml` 的 `[hooks]`：`recall_min_terms = 2`、`recall_top_k = 3`、`stop_reminder = true`、`session_start_max_chars = 8000` | 0011, 0030 |
-| R5-7 | lint 规则与级别 | error：frontmatter 不合法、slug 与文件名不符、存量 secret；warning：悬空链接、孤立页（无入链）、active task 30 天未更新、`index.md` 过期 | 0016, 0025, 0027 |
-| R5-8 | skill 组织 | 一个 `mwf` skill：SKILL.md（何时读、何时写、wiki 维护原则、task 交接约定）+ `references/commands.md`；不再做斜杠命令 | 0008, 0023, 0028 |
-| R5-9 | lifecycle 安全 | 改宿主文件前备份；幂等；卸载只删带 `mwf hook` 标记的条目；`--dry-run`；拒绝经符号链接写入 | 0031 |
-| R5-10 | hook 命令里的可执行路径 | 写 `mwf`（依赖 PATH）；`install` 时检查 PATH 上的 `mwf` 就是当前二进制，否则写当前二进制的绝对路径并提示 | 0004, 0031 |
+| R6-1 | 链接语法 | 改用标准 Markdown 链接 + 相对路径：页面间 `[文字](slug.md)`（同目录），`index.md` 里 `[文字](pages/slug.md)`；可带 `#锚点`；取代 `[[slug]]` | 0017 |
+| R6-2 | 哪些链接算"内部链接" | 无 scheme、以 `.md` 结尾、解析后落在 `.mwf/pages/` 内的相对链接；其余（http、代码文件路径等）一律视为外部，不参与反向链接与 lint | R6-1 |
+| R6-3 | 确认保留 BM25 | 保留：第 2 轮不做的是"把索引存成文件"，BM25 检索本身保留（0003、0011） | 0011 |
+| R6-4 | BM25 打分细节 | 字段加权：title ×3、summary ×2、tags ×2、正文 ×1；k1 = 1.2，b = 0.75；archived 默认不参与 | R6-3 |
+| R6-5 | hook 的相关性门槛 | 去停用词后，prompt 至少 2 个不同词命中才算相关，再按 BM25 排序取前 3；配置 `recall_min_terms`、`recall_top_k`、`stop_reminder`、`session_start_max_chars` | R6-3 |
 
 ## 后续轮次（等待前置决策）
 
