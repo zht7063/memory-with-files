@@ -1,11 +1,14 @@
 use thiserror::Error;
 
 /// Errors of the pure domain rules. `mwf-app` maps them to CLI error codes (docs/cli.md).
+///
+/// Messages never contain the rejected input (field name, line and expected form only), so a
+/// credential pasted into the wrong place is not echoed back by the CLI or lint (ADR 0025).
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum DomainError {
     /// `INVALID_SLUG`.
-    #[error("invalid slug {0:?}: use only a-z, 0-9 and -")]
-    InvalidSlug(String),
+    #[error("invalid slug: use one or more of a-z, 0-9 and -")]
+    InvalidSlug,
     /// `INVALID_FIELD`: a frontmatter field is missing or has a bad value.
     #[error("invalid frontmatter field `{field}`: {reason}")]
     InvalidField { field: String, reason: String },
@@ -13,8 +16,8 @@ pub enum DomainError {
     #[error("invalid frontmatter at line {line}: {reason}")]
     Frontmatter { line: usize, reason: String },
     /// A timestamp that is not `YYYY-MM-DDTHH:MM:SSZ`.
-    #[error("invalid timestamp {0:?}: expected YYYY-MM-DDTHH:MM:SSZ")]
-    InvalidTimestamp(String),
+    #[error("invalid timestamp: expected a real UTC time as YYYY-MM-DDTHH:MM:SSZ")]
+    InvalidTimestamp,
     /// `Timestamp::from_unix_secs` past 9999-12-31T23:59:59Z.
     #[error("unix time {0} is after year 9999")]
     TimestampOutOfRange(u64),

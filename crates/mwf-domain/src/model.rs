@@ -17,7 +17,7 @@ impl Slug {
         if valid {
             Ok(Slug(s.to_owned()))
         } else {
-            Err(DomainError::InvalidSlug(s.to_owned()))
+            Err(DomainError::InvalidSlug)
         }
     }
 
@@ -73,7 +73,7 @@ impl FromStr for PageType {
             .ok_or_else(|| {
                 field(
                     "type",
-                    format!("{s:?} is not one of preference, decision, knowledge, incident, task"),
+                    "must be one of preference, decision, knowledge, incident, task",
                 )
             })
     }
@@ -101,10 +101,7 @@ impl FromStr for Status {
         match s {
             "active" => Ok(Status::Active),
             "archived" => Ok(Status::Archived),
-            _ => Err(field(
-                "status",
-                format!("{s:?} is not one of active, archived"),
-            )),
+            _ => Err(field("status", "must be one of active, archived")),
         }
     }
 }
@@ -121,7 +118,7 @@ const MAX_UNIX_SECS: u64 = 253_402_300_799;
 impl Timestamp {
     /// Accepts exactly `YYYY-MM-DDTHH:MM:SSZ` with a real calendar date.
     pub fn parse(s: &str) -> Result<Timestamp, DomainError> {
-        let bad = || DomainError::InvalidTimestamp(s.to_owned());
+        let bad = || DomainError::InvalidTimestamp;
         let b = s.as_bytes();
         let shape = b.len() == 20
             && b.iter().enumerate().all(|(i, &c)| match i {
@@ -319,10 +316,7 @@ mod tests {
             assert_eq!(Slug::parse(ok).unwrap().as_str(), ok);
         }
         for bad in ["", "Use", "a_b", "a b", "a.md", "über", "a/b"] {
-            assert_eq!(
-                Slug::parse(bad),
-                Err(DomainError::InvalidSlug(bad.to_owned()))
-            );
+            assert_eq!(Slug::parse(bad), Err(DomainError::InvalidSlug));
         }
     }
 

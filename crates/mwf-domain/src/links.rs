@@ -3,8 +3,9 @@
 //! A link is `[text](dest)` or `[text](dest "title")`, with `dest` optionally in `<…>`. It is
 //! **internal** when `dest` has no scheme, the path before `#` ends in `.md`, and the path,
 //! resolved from `.mwf/pages/`, is `.mwf/pages/<slug>.md` for a valid slug. Everything else is
-//! external. Links inside fenced code blocks and inline code spans, images, and escaped
-//! brackets are skipped. Indented code blocks are not recognised.
+//! external. Links inside fenced code blocks (also in blockquotes and list items), indented
+//! code blocks, inline code spans, images, and escaped brackets are skipped. Code spans and
+//! links do not cross a paragraph.
 
 use std::ops::Range;
 
@@ -72,53 +73,166 @@ fn scan(body: &str) -> Vec<RawLink> {
     links
 }
 
-/// Byte ranges of `body` outside fenced code blocks.
+/// An open fenced code block.
+struct Fence {
+    ch: u8,
+    len: usize,
+    /// Blockquote depth it was opened at; fewer `>` markers close it with its container.
+    quotes: usize,
+}
+
+/// Byte ranges of `body` that hold inline content: one range per paragraph or ATX heading,
+/// outside fenced and indented code blocks. Code spans and links never cross a range.
+///
+/// A line-based subset of CommonMark blocks: blockquote markers are stripped first; a fence
+/// closes at a matching fence or when its blockquote ends (or at the end of the body); an
+/// indented line (4 or more columns past the open list item's content, if any) that does not
+/// continue a paragraph is indented code.
 fn prose_segments(body: &str) -> Vec<Range<usize>> {
     let mut segments = Vec::new();
-    let mut start = 0;
+    let mut para: Option<Range<usize>> = None;
+    let mut fence: Option<Fence> = None;
+    // Content column of the open list item, and the blockquote depth both belong to.
+    let mut list: Option<usize> = None;
+    let mut depth = 0;
     let mut pos = 0;
-    // The fence character and length of the open code block.
-    let mut fence: Option<(u8, usize)> = None;
     for line in body.split_inclusive('\n') {
         let line_start = pos;
         pos += line.len();
-        let Some((ch, len, info)) = fence_line(line) else {
+        let (quotes, prefix) = strip_quotes(line);
+        let rest = &line[prefix..];
+        if let Some(open) = &fence {
+            if quotes >= open.quotes {
+                let (indent, trimmed) = indentation(rest);
+                if let Some((ch, len, info)) = fence_line(trimmed)
+                    && indent < 4
+                    && ch == open.ch
+                    && len >= open.len
+                    && info.trim().is_empty()
+                {
+                    fence = None;
+                }
+                continue;
+            }
+            fence = None;
+        }
+        if quotes != depth {
+            segments.extend(para.take());
+            list = None;
+            depth = quotes;
+        }
+        let (indent, trimmed) = indentation(rest);
+        if trimmed.trim().is_empty() {
+            segments.extend(para.take());
             continue;
-        };
-        match fence {
-            None if !(ch == b'`' && info.contains('`')) => {
-                segments.push(start..line_start);
-                fence = Some((ch, len));
+        }
+        let marker = list_marker(trimmed);
+        if let Some(content) = list
+            && indent < content
+            && marker.is_none()
+            && para.is_none()
+        {
+            list = None;
+        }
+        let code_from = list.map_or(4, |content| content + 4);
+        if indent >= code_from {
+            // Indented code, unless it continues a paragraph (lazy continuation).
+            if let Some(p) = &mut para {
+                p.end = pos;
             }
-            Some((open_ch, open_len))
-                if ch == open_ch && len >= open_len && info.trim().is_empty() =>
-            {
-                fence = None;
-                start = pos;
-            }
-            _ => {}
+            continue;
+        }
+        if let Some((ch, len, info)) = fence_line(trimmed)
+            && !(ch == b'`' && info.contains('`'))
+        {
+            segments.extend(para.take());
+            fence = Some(Fence { ch, len, quotes });
+            continue;
+        }
+        if let Some(width) = marker {
+            segments.extend(para.take());
+            list = Some(indent + width);
+            para = Some(line_start..pos);
+        } else if is_atx_heading(trimmed) {
+            segments.extend(para.take());
+            segments.push(line_start..pos);
+        } else if let Some(p) = &mut para {
+            p.end = pos;
+        } else {
+            para = Some(line_start..pos);
         }
     }
-    if fence.is_none() {
-        segments.push(start..body.len());
-    }
+    segments.extend(para);
     segments
 }
 
-/// For a line that is a code fence (up to 3 spaces, then 3 or more `` ` `` or `~`), its fence
+/// The blockquote depth of a line and the byte length of its `>` markers.
+fn strip_quotes(line: &str) -> (usize, usize) {
+    let b = line.as_bytes();
+    let (mut depth, mut at) = (0, 0);
+    loop {
+        let spaces = b[at..].iter().take_while(|&&c| c == b' ').count();
+        if spaces > 3 || b.get(at + spaces) != Some(&b'>') {
+            return (depth, at);
+        }
+        at += spaces + 1;
+        if b.get(at) == Some(&b' ') {
+            at += 1;
+        }
+        depth += 1;
+    }
+}
+
+/// The indentation of a line in columns (tabs stop every 4) and the line without it.
+fn indentation(line: &str) -> (usize, &str) {
+    let mut cols = 0;
+    for (i, c) in line.char_indices() {
+        match c {
+            ' ' => cols += 1,
+            '\t' => cols += 4 - cols % 4,
+            _ => return (cols, &line[i..]),
+        }
+    }
+    (cols, "")
+}
+
+/// For a list item line (without indentation), the width of its marker and following spaces.
+fn list_marker(line: &str) -> Option<usize> {
+    let b = line.as_bytes();
+    let digits = b.iter().take_while(|c| c.is_ascii_digit()).count();
+    let marker = match b.first()? {
+        b'-' | b'*' | b'+' => 1,
+        _ if (1..=9).contains(&digits) && matches!(b.get(digits), Some(b'.' | b')')) => digits + 1,
+        _ => return None,
+    };
+    let spaces = b[marker..].iter().take_while(|&&c| c == b' ').count();
+    match b.get(marker) {
+        None | Some(b'\n' | b'\r') => Some(marker + 1),
+        Some(b' ') if spaces > 4 => Some(marker + 1),
+        Some(b' ') => Some(marker + spaces),
+        Some(b'\t') => Some(marker + 1),
+        _ => None,
+    }
+}
+
+fn is_atx_heading(line: &str) -> bool {
+    let hashes = line.bytes().take_while(|&c| c == b'#').count();
+    (1..=6).contains(&hashes)
+        && matches!(
+            line.as_bytes().get(hashes),
+            None | Some(b' ' | b'\t' | b'\n' | b'\r')
+        )
+}
+
+/// For a line without indentation that is a code fence (3 or more `` ` `` or `~`), its fence
 /// character, fence length and the rest of the line.
 fn fence_line(line: &str) -> Option<(u8, usize, &str)> {
-    let indent = line.bytes().take_while(|&b| b == b' ').count();
-    if indent > 3 {
-        return None;
-    }
-    let rest = &line[indent..];
-    let ch = *rest.as_bytes().first()?;
+    let ch = *line.as_bytes().first()?;
     if ch != b'`' && ch != b'~' {
         return None;
     }
-    let len = rest.bytes().take_while(|&b| b == ch).count();
-    (len >= 3).then(|| (ch, len, &rest[len..]))
+    let len = line.bytes().take_while(|&b| b == ch).count();
+    (len >= 3).then(|| (ch, len, &line[len..]))
 }
 
 fn scan_prose(body: &str, segment: Range<usize>, links: &mut Vec<RawLink>) {
@@ -239,11 +353,16 @@ fn parse_link(body: &str, start: usize, end: usize) -> Option<(Option<RawLink>, 
         i += 1;
     }
     if let Some(&quote @ (b'"' | b'\'')) = b.get(i) {
-        let to = i + 1 + body[i + 1..end].find([quote as char, '\n'])?;
-        if b[to] != quote {
-            return None;
+        i += 1;
+        loop {
+            match *b.get(i).filter(|_| i < end)? {
+                b'\n' => return None,
+                b'\\' => i += 2,
+                c if c == quote => break,
+                _ => i += 1,
+            }
         }
-        i = to + 1;
+        i += 1;
         while b.get(i) == Some(&b' ') {
             i += 1;
         }
@@ -270,7 +389,8 @@ fn classify(dest: &str) -> Option<(Slug, Option<String>, usize)> {
         Some((path, anchor)) => (path, Some(anchor.to_owned())),
         None => (dest, None),
     };
-    if has_scheme(path) || path.starts_with('/') {
+    // A query means the destination is not a page file; reject it before normalising the path.
+    if has_scheme(path) || path.starts_with('/') || path.contains('?') {
         return None;
     }
     let stem = path.strip_suffix(".md")?;
@@ -420,5 +540,78 @@ still code [e](still.md)
             rewrite_links(body, &slug("ye-mian"), &slug("page")),
             "中文 [链接 文字](目录.md) [页面](page.md)：结束"
         );
+    }
+
+    #[test]
+    fn indented_code_blocks_are_skipped() {
+        assert_eq!(targets("    [a](a.md)\n"), Vec::<String>::new());
+        assert_eq!(targets("\t[a](a.md)\n"), Vec::<String>::new());
+        assert_eq!(targets("p\n\n    [a](code.md)\n\nreal [b](b.md)\n"), ["b"]);
+        assert_eq!(targets("# H\n    [a](code.md)\n"), Vec::<String>::new());
+        // An indented line right after a paragraph line continues the paragraph.
+        assert_eq!(targets("p\n    [c](cont.md)\n"), ["cont"]);
+        // Inside a list item, code needs 4 columns past the item's content.
+        assert_eq!(targets("- item\n\n    [l](list.md)\n"), ["list"]);
+        assert_eq!(
+            targets("- item\n\n      [c](code.md)\n"),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            targets("1. item\n\n   [l](list.md)\n\nafter\n\n    [c](code.md)\n"),
+            ["list"]
+        );
+        let body = "    [a](old.md)\n\n[b](old.md)\n";
+        assert_eq!(
+            rewrite_links(body, &slug("old"), &slug("new")),
+            "    [a](old.md)\n\n[b](new.md)\n"
+        );
+        assert_eq!(unlink(body, &slug("old")), "    [a](old.md)\n\nb\n");
+    }
+
+    #[test]
+    fn fences_in_blockquotes_and_list_items_are_skipped() {
+        assert_eq!(
+            targets("> ~~~\n> [q](quoted.md)\n> ~~~\n[r](r.md)\n"),
+            ["r"]
+        );
+        assert_eq!(
+            targets("> > ```\n> > [q](q.md)\n> > ```\n> [r](r.md)\n"),
+            ["r"]
+        );
+        // Leaving the blockquote closes its fence.
+        assert_eq!(targets("> ```\n> [q](q.md)\n\nafter [r](r.md)\n"), ["r"]);
+        assert_eq!(
+            targets("- x\n  ```\n  [f](f.md)\n  ```\n- [g](g.md)\n"),
+            ["g"]
+        );
+        assert_eq!(targets("> quoted [a](a.md)\n"), ["a"]);
+    }
+
+    #[test]
+    fn code_spans_do_not_cross_paragraphs() {
+        assert_eq!(targets("a `tick\n\n[p](p.md) and `x`\n"), ["p"]);
+        assert_eq!(targets("# Title `x\n[p](p.md) `\n"), ["p"]);
+        // Within one paragraph a span may cross a line break.
+        assert_eq!(targets("a `x\n[p](p.md)` [q](q.md)\n"), ["q"]);
+    }
+
+    #[test]
+    fn titles_with_escaped_quotes_and_queries() {
+        assert_eq!(
+            targets(r#"[a](a.md "say \"hi\"") [b](b.md 'it\'s')"#),
+            ["a", "b"]
+        );
+        assert_eq!(
+            rewrite_links(r#"[a](a.md "\"t\"")"#, &slug("a"), &slug("c")),
+            r#"[a](c.md "\"t\"")"#
+        );
+        for body in [
+            "[x](?/../a.md)",
+            "[x](q?x/../a.md)",
+            "[x](a.md?v=1#s)",
+            "[x](?a.md)",
+        ] {
+            assert_eq!(targets(body), Vec::<String>::new(), "{body}");
+        }
     }
 }

@@ -20,8 +20,8 @@ struct RawFields<'a> {
     updated: Option<(usize, &'a str)>,
 }
 
-/// Parses a page file. `tags` may be omitted (empty) and `status` defaults to `active`; every
-/// other field is required, unknown and duplicate fields are errors, and the result passes
+/// Parses a page file. `tags` may be omitted (empty); every other field is required (ADR 0017;
+/// `status` defaults to `active` only when `mwf-app` creates a page), unknown and duplicate fields are errors, and the result passes
 /// [`Frontmatter::check`]. The body is everything after the closing `---` line, unchanged.
 pub fn parse_page(slug: Slug, text: &str) -> Result<Page, DomainError> {
     let (fm, body_start) = parse_frontmatter(text)?;
@@ -72,7 +72,12 @@ pub(crate) fn parse_frontmatter(text: &str) -> Result<(Frontmatter, usize), Doma
             "status" => &mut raw.status,
             "created" => &mut raw.created,
             "updated" => &mut raw.updated,
-            _ => return Err(bad(line_no, &format!("unknown field `{key}`"))),
+            _ => {
+                return Err(bad(
+                    line_no,
+                    "unknown field; allowed: title, type, summary, tags, status, created, updated",
+                ));
+            }
         };
         if slot.is_some() {
             return Err(bad(line_no, &format!("duplicate field `{key}`")));
@@ -98,10 +103,7 @@ pub(crate) fn parse_frontmatter(text: &str) -> Result<(Frontmatter, usize), Doma
             None => Vec::new(),
             Some((line, value)) => parse_list(value).map_err(|reason| bad(line, reason))?,
         },
-        status: match raw.status {
-            None => Status::Active,
-            slot => scalar("status", slot)?.parse::<Status>()?,
-        },
+        status: scalar("status", raw.status)?.parse::<Status>()?,
         created: timestamp("created", raw.created)?,
         updated: timestamp("updated", raw.updated)?,
     };
@@ -149,11 +151,18 @@ fn parse_scalar(value: &str) -> Result<String, &'static str> {
     Ok(value.to_owned())
 }
 
-/// Rejects plain values that YAML would read as something other than this exact string.
+/// Rejects plain values that are not a plain YAML scalar or that YAML would cut short. A plain
+/// value YAML reads as a number or boolean (such as `0x10`) is still taken as that text.
 fn check_plain(value: &str) -> Result<(), &'static str> {
-    let unsupported = value.starts_with([
-        '\'', '{', '}', ']', '&', '*', '!', '|', '>', '%', '@', '`', '#',
-    ]) || value.contains(" #")
+    // `-`, `?` and `:` start a plain scalar only when followed by a non-space character.
+    let indicator = ["-", "?", ":"]
+        .iter()
+        .any(|i| value == *i || value.starts_with(&format!("{i} ")));
+    let unsupported = indicator
+        || value.starts_with([
+            '\'', ',', '[', '{', '}', ']', '&', '*', '!', '|', '>', '%', '@', '`', '#',
+        ])
+        || value.contains(" #")
         || value.contains(": ")
         || value.ends_with(':');
     if unsupported {
@@ -230,23 +239,21 @@ fn render_scalar(s: &str, in_list: bool) -> String {
     }
 }
 
-/// Plain is used only when YAML reads it back as the same string; this is stricter than
-/// [`check_plain`], so everything rendered plain parses.
+/// Allowlist: a value is rendered plain only when it starts with a letter, holds none of the
+/// characters that need care, and is not a YAML 1.1 boolean or null. Starting with a letter
+/// rules out every number form (`42`, `0x10`, `0o7`, `1e3`, `.inf`, `1:20`), dates and
+/// indicators. Everything rendered plain passes [`check_plain`].
 fn needs_quotes(s: &str, in_list: bool) -> bool {
     const RESERVED: [&str; 10] = [
         "true", "false", "yes", "no", "on", "off", "y", "n", "null", "~",
     ];
-    s.is_empty()
+    !s.starts_with(char::is_alphabetic)
         || s.trim() != s
-        || s.starts_with([
-            '-', '?', ':', ',', '[', ']', '{', '}', '#', '&', '*', '!', '|', '>', '\'', '"', '%',
-            '@', '`',
-        ])
+        || s.contains(['"', '\\', '`'])
         || s.contains(": ")
         || s.contains(" #")
         || s.ends_with(':')
         || RESERVED.iter().any(|r| s.eq_ignore_ascii_case(r))
-        || s.parse::<f64>().is_ok()
         || (in_list && s.contains([',', '[', ']', '{', '}']))
 }
 
@@ -345,18 +352,80 @@ mod tests {
     fn renders_plain_when_safe_and_quotes_otherwise() {
         let text = render_page(&page("Plain title: no", "a \"b\"", &["x, y", "ok"]));
         assert!(text.contains("\ntitle: \"Plain title: no\"\n"), "{text}");
-        assert!(text.contains("\nsummary: a \"b\"\n"), "{text}");
+        assert!(text.contains("\nsummary: \"a \\\"b\\\"\"\n"), "{text}");
         assert!(text.contains("\ntags: [\"x, y\", ok]\n"), "{text}");
         assert!(render_page(&page("t", "s", &[])).contains("\ntags: []\n"));
     }
 
     #[test]
-    fn optional_fields_default() {
-        let text = "---\ntitle: t\ntype: task\nsummary: s\ncreated: 2026-11-20T10:00:00Z\nupdated: 2026-11-20T10:00:00Z\n---\n";
+    fn tags_are_optional_but_status_is_required() {
+        let text = "---\ntitle: t\ntype: task\nsummary: s\nstatus: active\ncreated: 2026-11-20T10:00:00Z\nupdated: 2026-11-20T10:00:00Z\n---\n";
         let p = parse_page(slug(), text).unwrap();
         assert!(p.fm.tags.is_empty());
-        assert_eq!(p.fm.status, Status::Active);
         assert_eq!(p.body, "");
+        assert_eq!(field_error(&text.replace("status: active\n", "")), "status");
+    }
+
+    #[test]
+    fn strings_yaml_reads_as_other_types_are_quoted() {
+        for s in [
+            "0x10",
+            "0o17",
+            "017",
+            "42",
+            "-1",
+            "+1",
+            "1e3",
+            ".5",
+            ".inf",
+            ".NaN",
+            "1:20",
+            "2026-11-20",
+            "true",
+            "False",
+            "YES",
+            "n",
+            "null",
+            "~",
+            "-",
+            "- item",
+            "?",
+            ": x",
+            ",x",
+            "😀 emoji",
+        ] {
+            let text = render_page(&page(s, "s", &[s]));
+            assert!(text.contains(&format!("\ntitle: \"{s}\"\n")), "{text}");
+            assert!(text.contains(&format!("\ntags: [\"{s}\"]\n")), "{text}");
+            assert_eq!(parse_page(slug(), &text).unwrap(), page(s, "s", &[s]));
+        }
+        for s in [
+            "Use BM25",
+            "x1",
+            "don't panic",
+            "C# tips",
+            "中文标题",
+            "a-b, c",
+        ] {
+            assert!(
+                render_page(&page(s, "s", &[])).contains(&format!("\ntitle: {s}\n")),
+                "{s}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_illegal_plain_starts() {
+        for value in ["- item", "-", "? key", ":", ": x", ",x", "`x`"] {
+            let text = format!("---\ntitle: {value}\ntype: task\n---\n");
+            assert_eq!(line_error(&text), 2, "{value}");
+            let text = format!("---\ntags: [{value}]\ntitle: t\ntype: task\nsummary: s\n---\n");
+            assert_eq!(line_error(&text), 2, "tags {value}");
+        }
+        // Indicators followed by a non-space character are plain scalars.
+        let text = "---\ntitle: -x\ntype: task\nsummary: ?y\nstatus: active\ncreated: 2026-11-20T10:00:00Z\nupdated: 2026-11-20T10:00:00Z\n---\n";
+        let p = parse_page(slug(), text).unwrap();
+        assert_eq!((p.fm.title.as_str(), p.fm.summary.as_str()), ("-x", "?y"));
     }
 
     #[test]
@@ -371,14 +440,14 @@ mod tests {
 
     #[test]
     fn rejects_malformed_blocks_with_line_numbers() {
-        let fields = "title: t\ntype: task\nsummary: s\ncreated: 2026-11-20T10:00:00Z\nupdated: 2026-11-20T10:00:00Z\n";
+        let fields = "title: t\ntype: task\nsummary: s\nstatus: active\ncreated: 2026-11-20T10:00:00Z\nupdated: 2026-11-20T10:00:00Z\n";
         assert_eq!(line_error("no frontmatter\n"), 1);
         assert_eq!(line_error(""), 1);
-        assert_eq!(line_error(&format!("---\n{fields}")), 6);
-        assert_eq!(line_error(&format!("---\n{fields}owner: me\n---\n")), 7);
-        assert_eq!(line_error(&format!("---\n{fields}title: again\n---\n")), 7);
-        assert_eq!(line_error(&format!("---\n{fields}just text\n---\n")), 7);
-        assert_eq!(line_error(&format!("---\n{fields}tags:[a]\n---\n")), 7);
+        assert_eq!(line_error(&format!("---\n{fields}")), 7);
+        assert_eq!(line_error(&format!("---\n{fields}owner: me\n---\n")), 8);
+        assert_eq!(line_error(&format!("---\n{fields}title: again\n---\n")), 8);
+        assert_eq!(line_error(&format!("---\n{fields}just text\n---\n")), 8);
+        assert_eq!(line_error(&format!("---\n{fields}tags:[a]\n---\n")), 8);
         assert_eq!(line_error(&format!("---\n {fields}---\n")), 2);
         for bad_value in [
             "title: a: b",
@@ -410,11 +479,12 @@ mod tests {
 
     #[test]
     fn rejects_missing_and_invalid_fields() {
-        let base = "title: t\ntype: task\nsummary: s\ncreated: 2026-11-20T10:00:00Z\nupdated: 2026-11-20T10:00:00Z\n";
+        let base = "title: t\ntype: task\nsummary: s\nstatus: active\ncreated: 2026-11-20T10:00:00Z\nupdated: 2026-11-20T10:00:00Z\n";
         for (name, line) in [
             ("title", "title: t\n"),
             ("type", "type: task\n"),
             ("summary", "summary: s\n"),
+            ("status", "status: active\n"),
             ("created", "created: 2026-11-20T10:00:00Z\n"),
             ("updated", "updated: 2026-11-20T10:00:00Z\n"),
         ] {
@@ -425,7 +495,7 @@ mod tests {
         assert_eq!(field_error(&swap("type: task", "type: note")), "type");
         assert_eq!(field_error(&swap("type: task", "type: Task")), "type");
         assert_eq!(
-            field_error(&swap("summary: s\n", "summary: s\nstatus: gone\n")),
+            field_error(&swap("status: active", "status: gone")),
             "status"
         );
         assert_eq!(

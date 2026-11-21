@@ -2,8 +2,13 @@
 //! (`src/core/secrets.ts` on `main`): well-known credential formats plus `name = value`
 //! assignments whose value looks random. Findings carry only the rule, line and a redacted
 //! sample, never the matched text.
+//!
+//! The 1.x patterns are JavaScript regexes without the `u` flag, where `\b`, `\w` and `i`
+//! case folding are ASCII-only while `\s` is Unicode. The ports below keep that: `(?-u:\b)`,
+//! explicit ASCII classes, and `(?i-u:…)` around the case-insensitive literals, so a key right
+//! next to CJK prose still matches and `K` (U+212A KELVIN SIGN) does not stand in for `k`.
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::sync::LazyLock;
 
 use regex::Regex;
@@ -33,61 +38,85 @@ const RULE_SOURCES: [RuleSource; 19] = [
     ),
     (
         "aws-access-key-id",
-        r"\b(?:AKIA|ASIA|AGPA|AIDA|AROA|ANPA|ANVA|AIPA)[A-Z0-9]{16}\b",
+        r"(?-u:\b)(?:AKIA|ASIA|AGPA|AIDA|AROA|ANPA|ANVA|AIPA)[A-Z0-9]{16}(?-u:\b)",
         None,
     ),
     (
         "aws-secret-access-key",
-        r#"(?i)aws_?secret_?access_?key["']?\s*[:=]\s*["']?([A-Za-z0-9/+=]{40,})"#,
+        r#"(?i-u:aws_?secret_?access_?key)["']?\s*[:=]\s*["']?([A-Za-z0-9/+=]{40,})"#,
         // The regex crate has no lookahead: take the whole run and require exactly 40.
         Some(|v| v.len() == 40),
     ),
-    ("github-token", r"\bgh[pousr]_[A-Za-z0-9]{36,255}\b", None),
     (
-        "github-fine-grained-token",
-        r"\bgithub_pat_[A-Za-z0-9_]{22,255}\b",
+        "github-token",
+        r"(?-u:\b)gh[pousr]_[A-Za-z0-9]{36,255}(?-u:\b)",
         None,
     ),
-    ("gitlab-token", r"\bglpat-[A-Za-z0-9_-]{20,}\b", None),
-    ("slack-token", r"\bxox[abprs]-[A-Za-z0-9-]{10,}\b", None),
+    (
+        "github-fine-grained-token",
+        r"(?-u:\b)github_pat_[A-Za-z0-9_]{22,255}(?-u:\b)",
+        None,
+    ),
+    (
+        "gitlab-token",
+        r"(?-u:\b)glpat-[A-Za-z0-9_-]{20,}(?-u:\b)",
+        None,
+    ),
+    (
+        "slack-token",
+        r"(?-u:\b)xox[abprs]-[A-Za-z0-9-]{10,}(?-u:\b)",
+        None,
+    ),
     (
         "slack-webhook",
         r"https://hooks\.slack\.com/services/T[A-Z0-9]+/B[A-Z0-9]+/[A-Za-z0-9]+",
         None,
     ),
-    ("stripe-key", r"\b[sr]k_live_[A-Za-z0-9]{16,}\b", None),
-    ("anthropic-key", r"\bsk-ant-[A-Za-z0-9_-]{20,}", None),
+    (
+        "stripe-key",
+        r"(?-u:\b)[sr]k_live_[A-Za-z0-9]{16,}(?-u:\b)",
+        None,
+    ),
+    ("anthropic-key", r"(?-u:\b)sk-ant-[A-Za-z0-9_-]{20,}", None),
     (
         "openai-key",
-        r"\bsk-(?:proj-[A-Za-z0-9_-]{20,}|[A-Za-z0-9]{32,})",
+        r"(?-u:\b)sk-(?:proj-[A-Za-z0-9_-]{20,}|[A-Za-z0-9]{32,})",
         None,
     ),
-    ("google-api-key", r"\bAIza[0-9A-Za-z_-]{35}\b", None),
+    (
+        "google-api-key",
+        r"(?-u:\b)AIza[0-9A-Za-z_-]{35}(?-u:\b)",
+        None,
+    ),
     (
         "sendgrid-key",
-        r"\bSG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}\b",
+        r"(?-u:\b)SG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}(?-u:\b)",
         None,
     ),
-    ("npm-token", r"\bnpm_[A-Za-z0-9]{36}\b", None),
-    ("huggingface-token", r"\bhf_[A-Za-z0-9]{34,}\b", None),
+    ("npm-token", r"(?-u:\b)npm_[A-Za-z0-9]{36}(?-u:\b)", None),
+    (
+        "huggingface-token",
+        r"(?-u:\b)hf_[A-Za-z0-9]{34,}(?-u:\b)",
+        None,
+    ),
     (
         "jwt",
-        r"\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}",
+        r"(?-u:\b)eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}",
         None,
     ),
     (
         "authorization-header",
-        r#"(?i)authorization["']?\s*[:=]\s*["']?(?:bearer|basic|token)\s+([A-Za-z0-9._~+/=-]{16,})"#,
+        r#"(?i-u:authorization)["']?\s*[:=]\s*["']?(?i-u:bearer|basic|token)\s+([A-Za-z0-9._~+/=-]{16,})"#,
         Some(looks_random),
     ),
     (
         "url-credentials",
-        r#"(?i)\b[a-z][a-z0-9+.-]*://[^\s:/@'"]+:([^\s:/@'"]{4,})@[^\s/'"]+"#,
+        r#"(?-u:\b)(?i-u:[a-z][a-z0-9+.-]*)://[^\s:/@'"]+:([^\s:/@'"]{4,})@[^\s/'"]+"#,
         Some(|v| !is_placeholder(v) && !v.starts_with(['<', '{', '$', '*'])),
     ),
     (
         "secret-assignment",
-        r#"(?i)\b[\w.-]*(?:api[_-]?key|secret|token|passw(?:or)?d|passwd|private[_-]?key|access[_-]?key|credential)[\w.-]*["']?\s*[:=]\s*["']?([A-Za-z0-9/+_.=!@#$%^&*-]{16,})"#,
+        r#"(?-u:\b)[A-Za-z0-9_.-]*(?i-u:api[_-]?key|secret|token|passw(?:or)?d|passwd|private[_-]?key|access[_-]?key|credential)[A-Za-z0-9_.-]*["']?\s*[:=]\s*["']?([A-Za-z0-9/+_.=!@#$%^&*-]{16,})"#,
         Some(looks_random),
     ),
 ];
@@ -103,13 +132,16 @@ static RULES: LazyLock<Vec<Rule>> = LazyLock::new(|| {
 
 static PLACEHOLDER: LazyLock<Option<Regex>> = LazyLock::new(|| {
     Regex::new(
-        r"(?i)^(?:x{4,}|\*{4,}|\.{3,}|<[^>]*>|\$\{[^}]*\}|\{\{[^}]*\}\}|%[A-Z_]+%|your[-_ ]?.*|example.*|changeme.*|change[-_]me.*|placeholder.*|redacted.*|dummy.*|sample.*|todo.*|none|null|secret|password|passwd|token|api[-_]?key)$",
+        // Matched against the ASCII-lowercased value: case-insensitive for ASCII only, as in 1.x.
+        r"^(?:x{4,}|\*{4,}|\.{3,}|<[^>]*>|\$\{[^}]*\}|\{\{[^}]*\}\}|%[a-z_]+%|your[-_ ]?.*|example.*|changeme.*|change[-_]me.*|placeholder.*|redacted.*|dummy.*|sample.*|todo.*|none|null|secret|password|passwd|token|api[-_]?key)$",
     )
     .ok()
 });
 
 fn is_placeholder(v: &str) -> bool {
-    PLACEHOLDER.as_ref().is_some_and(|re| re.is_match(v))
+    PLACEHOLDER
+        .as_ref()
+        .is_some_and(|re| re.is_match(&v.to_ascii_lowercase()))
 }
 
 fn entropy(s: &str) -> f64 {
@@ -168,13 +200,24 @@ pub fn scan_all(text: &str) -> Vec<SecretFinding> {
     scan(text).into_iter().map(|(f, _)| f).collect()
 }
 
-/// Likely secrets in `after` that were not already in `before` (same rule and same matched
-/// text). Re-saving or trimming a page that already holds one stays possible (ADR 0025).
+/// Likely secrets in `after` beyond those already in `before`, compared as a multiset of
+/// (rule, matched text): each occurrence in `before` covers one occurrence in `after`, in order.
+/// Moving, keeping or deleting an existing secret is allowed; copying it to a second place is
+/// new content and is reported (ADR 0025).
 pub fn scan_added(before: &str, after: &str) -> Vec<SecretFinding> {
-    let old: HashSet<(&str, &str)> = scan(before).into_iter().map(|(f, m)| (f.rule, m)).collect();
+    let mut old: HashMap<(&str, &str), usize> = HashMap::new();
+    for (f, m) in scan(before) {
+        *old.entry((f.rule, m)).or_default() += 1;
+    }
     scan(after)
         .into_iter()
-        .filter(|(f, m)| !old.contains(&(f.rule, *m)))
+        .filter(|(f, m)| match old.get_mut(&(f.rule, *m)) {
+            Some(n) if *n > 0 => {
+                *n -= 1;
+                false
+            }
+            _ => true,
+        })
         .map(|(f, _)| f)
         .collect()
 }
@@ -347,5 +390,77 @@ mod tests {
         let other = j(&["ghp", "_", &RAND36.to_lowercase()]);
         assert_eq!(scan_added(&before, &other).len(), 1);
         assert_eq!(scan_added("", &a), scan_all(&a));
+    }
+
+    #[test]
+    fn scan_added_reports_a_copied_secret() {
+        let a = j(&["ghp", "_", RAND36]);
+        let before = format!("old {a}\n");
+        let added = scan_added(&before, &format!("old {a}\ncopy {a}\n"));
+        assert_eq!(added.len(), 1);
+        assert_eq!((added[0].rule, added[0].line), ("github-token", 2));
+        // Two before, two after in other places: nothing new.
+        let two = format!("{a}\n{a}\n");
+        assert!(scan_added(&two, &format!("x\n{a} {a}\n")).is_empty());
+        assert_eq!(scan_added(&two, &format!("{a}\n{a}\n{a}\n")).len(), 1);
+    }
+
+    #[test]
+    fn secrets_next_to_cjk_prose_match_as_in_1x() {
+        let cases: Vec<(&str, String)> = vec![
+            (
+                "aws-access-key-id",
+                j(&["密钥", "AKIA", "Z7Q2M4N6P8R1T3V5", "，用于部署"]),
+            ),
+            ("github-token", j(&["令牌", "ghp", "_", RAND36, "已过期"])),
+            ("npm-token", j(&["见", "npm", "_", RAND36, "。"])),
+            (
+                "jwt",
+                j(&[
+                    "凭证",
+                    "eyJ",
+                    "hbGciOiJIUzI1",
+                    ".eyJ",
+                    "zdWIiOiIxMjM0",
+                    ".",
+                    "SflKxwRJSMeKKF2QT4fw",
+                ]),
+            ),
+            (
+                "secret-assignment",
+                j(&["配置", "DB_PASSWORD=", "Zq8xK2mN7pR4vT9wB3cD", "；"]),
+            ),
+            (
+                "url-credentials",
+                j(&[
+                    "连接",
+                    "postgres://admin:",
+                    "Hunter2pass",
+                    "@db.internal/app",
+                ]),
+            ),
+        ];
+        for (rule, text) in cases {
+            assert!(rules(&text).contains(&rule), "{rule}: {:?}", rules(&text));
+        }
+        // Unicode whitespace still separates, as JS `\s` does.
+        let ideographic_space = j(&["api_key\u{3000}=\u{3000}", "Zq8xK2mN7pR4vT9wB3cD"]);
+        assert_eq!(rules(&ideographic_space), ["secret-assignment"]);
+    }
+
+    #[test]
+    fn case_folding_is_ascii_only_as_in_1x() {
+        // U+212A KELVIN SIGN folds to `k` under Unicode rules but not in a JS regex without `u`.
+        let kelvin = j(&[
+            "AWS_SECRET_ACCESS_\u{212A}EY = ",
+            "wJalrXUtnFEMI/K7MDENG/bPxRfiCYzq8xK2mN7p",
+        ]);
+        assert!(scan_all(&kelvin).is_empty(), "{:?}", rules(&kelvin));
+        let upper = j(&[
+            "AWS_SECRET_ACCESS_KEY = ",
+            "wJalrXUtnFEMI/K7MDENG/bPxRfiCYzq8xK2mN7p",
+        ]);
+        assert!(rules(&upper).contains(&"aws-secret-access-key"));
+        assert!(scan_all("TOKEN = YOUR-TOKEN-HERE-12345678").is_empty());
     }
 }

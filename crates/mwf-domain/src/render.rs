@@ -47,8 +47,9 @@ pub fn render_index(pages: &[&Page]) -> String {
 }
 
 /// Renders one `log.md` line without the trailing newline, such as
-/// `2026-11-20T10:00:00Z new use-bm25 "Use BM25 for search"`. `"` and `\` in the title are
-/// escaped with `\`.
+/// `2026-11-20T10:00:00Z new use-bm25 "Use BM25 for search"`. The result is always one
+/// physical line: in the title, `"` and `\` are escaped with `\`, CR and LF become `\r` and
+/// `\n`, and other control characters and Unicode line separators become `\u{…}`.
 pub fn render_log_line(ts: &Timestamp, op: &LogOp, slug: &Slug, title: &str) -> String {
     let op = match op {
         LogOp::New => "new".to_owned(),
@@ -61,8 +62,20 @@ pub fn render_log_line(ts: &Timestamp, op: &LogOp, slug: &Slug, title: &str) -> 
         LogOp::Rename { from } => format!("rename {from}->"),
     };
     let sep = if op.ends_with("->") { "" } else { " " };
-    let title = title.replace('\\', "\\\\").replace('"', "\\\"");
-    format!("{ts} {op}{sep}{slug} \"{title}\"")
+    let mut quoted = String::with_capacity(title.len());
+    for c in title.chars() {
+        match c {
+            '\\' => quoted.push_str("\\\\"),
+            '"' => quoted.push_str("\\\""),
+            '\n' => quoted.push_str("\\n"),
+            '\r' => quoted.push_str("\\r"),
+            c if c.is_control() || matches!(c, '\u{2028}' | '\u{2029}') => {
+                quoted.push_str(&format!("\\u{{{:x}}}", u32::from(c)));
+            }
+            c => quoted.push(c),
+        }
+    }
+    format!("{ts} {op}{sep}{slug} \"{quoted}\"")
 }
 
 fn escape_link_text(s: &str) -> String {
@@ -148,6 +161,12 @@ mod tests {
             render_log_line(&ts(), &LogOp::Delete, &slug, "say \"hi\" \\ bye"),
             "2026-11-20T10:00:00Z delete use-bm25 \"say \\\"hi\\\" \\\\ bye\""
         );
+        let line = render_log_line(&ts(), &LogOp::Set, &slug, "a\nb\r\nc\td\u{2028}e");
+        assert_eq!(
+            line,
+            "2026-11-20T10:00:00Z set use-bm25 \"a\\nb\\r\\nc\\u{9}d\\u{2028}e\""
+        );
+        assert_eq!(line.lines().count(), 1);
         for (op, word) in [
             (LogOp::Write, "write"),
             (LogOp::Patch, "patch"),

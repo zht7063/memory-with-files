@@ -163,4 +163,30 @@ mod tests {
         );
         assert!(!issues[0].message.contains(&key[4..]));
     }
+
+    #[test]
+    fn issues_never_echo_the_rejected_input() {
+        let key = ["ghp", "_", "Zq8xK2mN7pR4vT9wB3cD6fG1hJ5kL0sAeYuI"].concat();
+        let good = page("task", "active", "2026-11-20T00:00:00Z", "");
+        let texts = [
+            good.replace("type: task", &format!("type: {key}")),
+            good.replace("status: active", &format!("status: {key}")),
+            good.replace("updated: 2026-11-20T00:00:00Z", &format!("updated: {key}")),
+            good.replace("title: t\n", &format!("title: t\n{key}: x\n")),
+            good.replace("title: t\n", &format!("title: t\n{key}\n")),
+            good.replace("title: t\n", &format!("title: t\ntitle: {key}\n")),
+            good.replace("tags", "x")
+                .replace("title: t\n", &format!("title: t\ntags: [{key}\n")),
+        ];
+        for text in &texts {
+            let issues = validate(&key, text, &now());
+            let found: Vec<&str> = issues.iter().map(|i| i.rule).collect();
+            assert!(found.contains(&"invalid_slug"), "{found:?}");
+            assert!(found.contains(&"invalid_frontmatter"), "{found:?}");
+            assert!(found.contains(&"secret"), "{found:?}");
+            for issue in &issues {
+                assert!(!issue.message.contains(&key[4..]), "{}", issue.message);
+            }
+        }
+    }
 }
