@@ -1,0 +1,4 @@
+# MSRV = latest stable when implementation started (docs/decisions/0012-toolchain-platforms.md).
+[toolchain]
+channel = "1.100.0"
+components = ["rustfmt", "clippy"]

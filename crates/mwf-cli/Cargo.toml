@@ -1,0 +1,15 @@
+[package]
+name = "mwf-cli"
+description = "MWF command-line parsing and output rendering"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+mwf-app.workspace = true
+
+[lints]
+workspace = true
