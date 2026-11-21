@@ -14,4 +14,6 @@ workspace = true
 [dependencies]
 regex = "1.13.2"
 sha2 = "0.11.1"
-thiserror = "2.0.21"
+# Cargo.lock holds 2.0.18: 2.0.19+ uses syn 3 while divan (mwf-search bench) uses syn 2, and
+# deny.toml rejects duplicate major versions.
+thiserror = "2"
