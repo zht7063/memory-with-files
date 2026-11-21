@@ -7,7 +7,10 @@ use divan::{Bencher, black_box};
 use mwf_search::{Doc, Index};
 
 const PAGES: usize = 5_000;
-const QUERY: &str = "数据库迁移 deploy pipeline 回滚";
+/// The query is a page title, so it shares terms with many pages and the
+/// benchmark scores postings, sorts candidates, and returns a full `limit`.
+const QUERY_PAGE: usize = 42;
+const LIMIT: usize = 10;
 
 fn main() {
     divan::main();
@@ -119,26 +122,42 @@ fn corpus(sentences: usize) -> Vec<Page> {
 /// size, 0047), then 1 and 1.8 KB.
 const SIZES: [usize; 3] = [2, 5, 10];
 
+/// Builds the corpus and checks, outside the timed region, that the query
+/// returns a full page of hits.
+fn corpus_and_query(sentences: usize) -> (Vec<Page>, String) {
+    let pages = corpus(sentences);
+    let query = pages[QUERY_PAGE].title.clone();
+    let hits = Index::build(pages.iter().map(Page::doc)).search(&query, LIMIT);
+    assert_eq!(
+        hits.len(),
+        LIMIT,
+        "benchmark query {query:?} must fill the limit"
+    );
+    (pages, query)
+}
+
 #[divan::bench(args = SIZES, sample_count = 20)]
 fn build_and_search(bencher: Bencher, sentences: usize) {
-    let pages = corpus(sentences);
+    let (pages, query) = corpus_and_query(sentences);
     bencher.bench(|| {
         let index = Index::build(pages.iter().map(Page::doc));
-        index.search(black_box(QUERY), 10)
+        index.search(black_box(&query), LIMIT)
     });
 }
 
 #[divan::bench(args = SIZES)]
 fn search(bencher: Bencher, sentences: usize) {
-    let pages = corpus(sentences);
+    let (pages, query) = corpus_and_query(sentences);
     let index = Index::build(pages.iter().map(Page::doc));
-    bencher.bench(|| index.search(black_box(QUERY), 10));
+    bencher.bench(|| index.search(black_box(&query), LIMIT));
 }
 
 #[divan::bench(args = SIZES)]
 fn similar_to(bencher: Bencher, sentences: usize) {
     let pages = corpus(sentences);
     let index = Index::build(pages.iter().map(Page::doc));
-    let page = &pages[42];
+    let page = &pages[QUERY_PAGE];
+    let hits = index.similar_to(&page.body, &[&page.id], 3);
+    assert_eq!(hits.len(), 3, "similar_to must fill the limit");
     bencher.bench(|| index.similar_to(black_box(&page.body), &[&page.id], 3));
 }

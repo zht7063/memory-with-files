@@ -144,19 +144,34 @@ fn cjk_key(first: char, second: Option<char>) -> u64 {
     u64::from(first) << 32 | u64::from(second.unwrap_or('\0'))
 }
 
+/// Letters, marks, and iteration marks of the Han, Hiragana, Katakana, and
+/// Hangul scripts. Unicode blocks also hold punctuation and symbols, such as
+/// `・` (U+30FB) and `゛` (U+309B), so only their letter ranges count;
+/// those characters end a run like any other punctuation.
 fn is_cjk(c: char) -> bool {
     matches!(c as u32,
         0x1100..=0x11FF       // Hangul Jamo
-        | 0x3040..=0x309F     // Hiragana
-        | 0x30A0..=0x30FF     // Katakana
-        | 0x3130..=0x318F     // Hangul Compatibility Jamo
+        | 0x3005..=0x3007     // 々 〆 〇
+        | 0x3021..=0x3029     // Hangzhou numerals
+        | 0x3031..=0x3035     // vertical kana repeat marks
+        | 0x3038..=0x303C     // 〸 〹 〺 〻 〼
+        | 0x3041..=0x3096     // Hiragana letters
+        | 0x3099..=0x309A     // combining (semi-)voiced sound marks
+        | 0x309D..=0x309F     // ゝ ゞ ゟ
+        | 0x30A1..=0x30FA     // Katakana letters
+        | 0x30FC..=0x30FF     // ー ヽ ヾ ヿ
+        | 0x3131..=0x318E     // Hangul Compatibility Jamo
         | 0x31F0..=0x31FF     // Katakana Phonetic Extensions
         | 0x3400..=0x4DBF     // CJK Unified Ideographs Extension A
         | 0x4E00..=0x9FFF     // CJK Unified Ideographs
-        | 0xAC00..=0xD7AF     // Hangul Syllables
-        | 0xF900..=0xFAFF     // CJK Compatibility Ideographs
-        | 0xFF66..=0xFF9F     // Halfwidth Katakana
-        | 0x20000..=0x3FFFF // Supplementary and Tertiary Ideographic Planes
+        | 0xA960..=0xA97C     // Hangul Jamo Extended-A
+        | 0xAC00..=0xD7A3     // Hangul Syllables
+        | 0xD7B0..=0xD7FB     // Hangul Jamo Extended-B
+        | 0xF900..=0xFAD9     // CJK Compatibility Ideographs
+        | 0xFF66..=0xFF9F     // Halfwidth Katakana letters and sound marks
+        | 0xFFA0..=0xFFDC     // Halfwidth Hangul letters
+        | 0x20000..=0x2FA1F   // CJK Unified Ideographs Extensions B to F, I, and compatibility supplement
+        | 0x30000..=0x323AF // CJK Unified Ideographs Extensions G and H
     )
 }
 
@@ -401,6 +416,16 @@ mod tests {
         assert_eq!(terms("東京へ"), ["東京", "京へ"]);
         assert_eq!(terms("배포 실패"), ["배포", "실패"]);
         assert_eq!(terms("𠀀𠀁"), ["𠀀𠀁"]);
+    }
+
+    #[test]
+    fn cjk_punctuation_ends_a_run_and_iteration_marks_join_it() {
+        assert!(terms("・").is_empty());
+        assert_eq!(terms("カ・ナ"), ["カ", "ナ"]);
+        assert_eq!(terms("テスト・ケース"), ["テス", "スト", "ケー", "ース"]);
+        assert_eq!(terms("時々刻々"), ["時々", "々刻", "刻々"]);
+        assert_eq!(terms("「部署」『迁移』"), ["部署", "迁移"]);
+        assert_eq!(terms("ゝ゛ゞ"), ["ゝ", "ゞ"]);
     }
 
     #[test]
