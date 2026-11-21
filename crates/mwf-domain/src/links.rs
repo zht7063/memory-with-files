@@ -73,39 +73,137 @@ fn scan(body: &str) -> Vec<RawLink> {
     links
 }
 
-/// An open fenced code block.
+/// A block container a line can be inside (CommonMark).
+enum Container {
+    /// A blockquote: each line continues it with a `>` marker.
+    Quote,
+    /// A list item: each non-blank line continues it when indented to `content` columns.
+    Item { content: usize },
+}
+
+/// An open fenced code block. It belongs to the whole container stack open at its start and
+/// closes at a matching fence line or when one of those containers ends.
 struct Fence {
     ch: u8,
     len: usize,
-    /// Blockquote depth it was opened at; fewer `>` markers close it with its container.
-    quotes: usize,
+}
+
+/// A position in a line, with its column (tabs stop every 4 columns).
+#[derive(Clone, Copy)]
+struct Cursor<'a> {
+    line: &'a str,
+    pos: usize,
+    col: usize,
+}
+
+impl<'a> Cursor<'a> {
+    fn rest(&self) -> &'a str {
+        &self.line[self.pos..]
+    }
+
+    fn is_blank(&self) -> bool {
+        self.rest().trim().is_empty()
+    }
+
+    /// Columns of whitespace at the cursor.
+    fn indent(&self) -> usize {
+        let mut col = self.col;
+        for b in self.rest().bytes() {
+            match b {
+                b' ' => col += 1,
+                b'\t' => col += 4 - col % 4,
+                _ => break,
+            }
+        }
+        col - self.col
+    }
+
+    /// Skips whitespace up to column `target`.
+    fn skip_to(&mut self, target: usize) {
+        while self.col < target {
+            match self.rest().as_bytes().first() {
+                Some(b' ') => self.col += 1,
+                Some(b'\t') => self.col += 4 - self.col % 4,
+                _ => return,
+            }
+            self.pos += 1;
+        }
+    }
+
+    fn advance(&mut self, bytes: usize) {
+        self.pos += bytes;
+        self.col += bytes;
+    }
+
+    /// Skips the indentation (less than 4 columns) and returns the text after it, if any.
+    fn after_indent(&self) -> Option<Cursor<'a>> {
+        let indent = self.indent();
+        (indent < 4).then(|| {
+            let mut c = *self;
+            c.skip_to(c.col + indent);
+            c
+        })
+    }
+
+    /// Consumes a blockquote marker `>` and one following space.
+    fn quote_marker(&mut self) -> bool {
+        match self.after_indent() {
+            Some(mut c) if c.rest().starts_with('>') => {
+                c.advance(1);
+                if c.rest().starts_with(' ') {
+                    c.advance(1);
+                }
+                *self = c;
+                true
+            }
+            _ => false,
+        }
+    }
 }
 
 /// Byte ranges of `body` that hold inline content: one range per paragraph or ATX heading,
 /// outside fenced and indented code blocks. Code spans and links never cross a range.
 ///
-/// A line-based subset of CommonMark blocks: blockquote markers are stripped first; a fence
-/// closes at a matching fence or when its blockquote ends (or at the end of the body); an
-/// indented line (4 or more columns past the open list item's content, if any) that does not
-/// continue a paragraph is indented code.
+/// A line-based subset of CommonMark blocks. Each line first continues the open blockquotes
+/// (`>`) and list items (indentation to the item's content column; blank lines continue
+/// items), then may open new ones; fences and indented code are judged relative to the
+/// innermost container. A fence ends at a matching fence line, when any container it is in
+/// ends, or at the end of the body.
 fn prose_segments(body: &str) -> Vec<Range<usize>> {
     let mut segments = Vec::new();
     let mut para: Option<Range<usize>> = None;
     let mut fence: Option<Fence> = None;
-    // Content column of the open list item, and the blockquote depth both belong to.
-    let mut list: Option<usize> = None;
-    let mut depth = 0;
+    let mut stack: Vec<Container> = Vec::new();
     let mut pos = 0;
     for line in body.split_inclusive('\n') {
         let line_start = pos;
         pos += line.len();
-        let (quotes, prefix) = strip_quotes(line);
-        let rest = &line[prefix..];
+        let mut cur = Cursor {
+            line,
+            pos: 0,
+            col: 0,
+        };
+        let mut matched = 0;
+        for container in &stack {
+            let continues = match container {
+                Container::Quote => cur.quote_marker(),
+                Container::Item { .. } if cur.is_blank() => true,
+                Container::Item { content } if cur.col + cur.indent() >= *content => {
+                    cur.skip_to(*content);
+                    true
+                }
+                Container::Item { .. } => false,
+            };
+            if !continues {
+                break;
+            }
+            matched += 1;
+        }
+
         if let Some(open) = &fence {
-            if quotes >= open.quotes {
-                let (indent, trimmed) = indentation(rest);
-                if let Some((ch, len, info)) = fence_line(trimmed)
-                    && indent < 4
+            if matched == stack.len() {
+                if let Some(c) = cur.after_indent()
+                    && let Some((ch, len, info)) = fence_line(c.rest())
                     && ch == open.ch
                     && len >= open.len
                     && info.trim().is_empty()
@@ -115,45 +213,59 @@ fn prose_segments(body: &str) -> Vec<Range<usize>> {
                 continue;
             }
             fence = None;
+            stack.truncate(matched);
         }
-        if quotes != depth {
+
+        if matched < stack.len() {
+            // A paragraph line may continue lazily without its container markers.
+            let lazy = para.is_some() && !cur.is_blank() && !starts_block(&cur);
+            if lazy {
+                if let Some(p) = &mut para {
+                    p.end = pos;
+                }
+                continue;
+            }
             segments.extend(para.take());
-            list = None;
-            depth = quotes;
+            stack.truncate(matched);
         }
-        let (indent, trimmed) = indentation(rest);
-        if trimmed.trim().is_empty() {
+
+        // New containers.
+        loop {
+            if cur.quote_marker() {
+                segments.extend(para.take());
+                stack.push(Container::Quote);
+                continue;
+            }
+            if let Some(mut c) = cur.after_indent()
+                && let Some(width) = list_marker(c.rest())
+            {
+                segments.extend(para.take());
+                c.advance(width);
+                stack.push(Container::Item { content: c.col });
+                cur = c;
+                continue;
+            }
+            break;
+        }
+
+        // The leaf block.
+        if cur.is_blank() {
             segments.extend(para.take());
             continue;
         }
-        let marker = list_marker(trimmed);
-        if let Some(content) = list
-            && indent < content
-            && marker.is_none()
-            && para.is_none()
-        {
-            list = None;
-        }
-        let code_from = list.map_or(4, |content| content + 4);
-        if indent >= code_from {
-            // Indented code, unless it continues a paragraph (lazy continuation).
+        let Some(leaf) = cur.after_indent() else {
+            // Indented code, unless it continues a paragraph.
             if let Some(p) = &mut para {
                 p.end = pos;
             }
             continue;
-        }
-        if let Some((ch, len, info)) = fence_line(trimmed)
+        };
+        if let Some((ch, len, info)) = fence_line(leaf.rest())
             && !(ch == b'`' && info.contains('`'))
         {
             segments.extend(para.take());
-            fence = Some(Fence { ch, len, quotes });
-            continue;
-        }
-        if let Some(width) = marker {
-            segments.extend(para.take());
-            list = Some(indent + width);
-            para = Some(line_start..pos);
-        } else if is_atx_heading(trimmed) {
+            fence = Some(Fence { ch, len });
+        } else if is_atx_heading(leaf.rest()) {
             segments.extend(para.take());
             segments.push(line_start..pos);
         } else if let Some(p) = &mut para {
@@ -166,34 +278,15 @@ fn prose_segments(body: &str) -> Vec<Range<usize>> {
     segments
 }
 
-/// The blockquote depth of a line and the byte length of its `>` markers.
-fn strip_quotes(line: &str) -> (usize, usize) {
-    let b = line.as_bytes();
-    let (mut depth, mut at) = (0, 0);
-    loop {
-        let spaces = b[at..].iter().take_while(|&&c| c == b' ').count();
-        if spaces > 3 || b.get(at + spaces) != Some(&b'>') {
-            return (depth, at);
-        }
-        at += spaces + 1;
-        if b.get(at) == Some(&b' ') {
-            at += 1;
-        }
-        depth += 1;
-    }
-}
-
-/// The indentation of a line in columns (tabs stop every 4) and the line without it.
-fn indentation(line: &str) -> (usize, &str) {
-    let mut cols = 0;
-    for (i, c) in line.char_indices() {
-        match c {
-            ' ' => cols += 1,
-            '\t' => cols += 4 - cols % 4,
-            _ => return (cols, &line[i..]),
-        }
-    }
-    (cols, "")
+/// Whether the text at `cur` starts a block that cannot continue a paragraph lazily.
+fn starts_block(cur: &Cursor<'_>) -> bool {
+    cur.after_indent().is_some_and(|c| {
+        let t = c.rest();
+        t.starts_with('>')
+            || list_marker(t).is_some()
+            || fence_line(t).is_some()
+            || is_atx_heading(t)
+    })
 }
 
 /// For a list item line (without indentation), the width of its marker and following spaces.
@@ -613,5 +706,48 @@ still code [e](still.md)
         ] {
             assert_eq!(targets(body), Vec::<String>::new(), "{body}");
         }
+    }
+
+    /// The last link in `body` is the prose link `[p](a.md)`; every other `a.md` is code.
+    fn assert_only_prose_link(body: &str) {
+        assert_eq!(targets(body), ["a"], "{body:?}");
+        let at = body.rfind("[p](a.md)").unwrap();
+        let (code, prose) = body.split_at(at);
+        let rewritten = format!("{code}{}", prose.replacen("(a.md)", "(b.md)", 1));
+        assert_eq!(
+            rewrite_links(body, &slug("a"), &slug("b")),
+            rewritten,
+            "{body:?}"
+        );
+        let unlinked = format!("{code}{}", prose.replacen("[p](a.md)", "p", 1));
+        assert_eq!(unlink(body, &slug("a")), unlinked, "{body:?}");
+    }
+
+    #[test]
+    fn fences_are_judged_relative_to_their_containers() {
+        for body in [
+            // Fence opened on the list item's first line, closing fence indented in the item.
+            "- ~~~\n  [c](a.md)\n  ~~~\n[p](a.md)\n",
+            "- ~~~\n  [c](a.md)\n     ~~~\n[p](a.md)\n",
+            // Ordered item with content at column 5: fence lines at column 5 are not code.
+            "1.   ~~~\n     [c](a.md)\n     ~~~\n\n[p](a.md)\n",
+            "10.  ```\n     [c](a.md)\n     ```\n     [p](a.md)\n",
+            // An unclosed fence ends with its list item.
+            "- ~~~\n  [c](a.md)\n\n  [c](a.md)\n[p](a.md)\n",
+            "- ```\n  [c](a.md)\n- [p](a.md)\n",
+            // An extra `>` inside a quoted fence is code, not a deeper quote.
+            "> ~~~\n> > [c](a.md)\n> ~~~\n[p](a.md)\n",
+            "> ```\n> > [c](a.md)\n> > ```\n> [c](a.md)\n> ```\n[p](a.md)\n",
+            // Fence in a quote in a list item.
+            "- > ~~~\n  > [c](a.md)\n  > ~~~\n  > [p](a.md)\n",
+        ] {
+            assert_only_prose_link(body);
+        }
+    }
+
+    #[test]
+    fn lazy_continuation_keeps_paragraph_in_container() {
+        assert_eq!(targets("> quoted\nlazy [p](p.md)\n"), ["p"]);
+        assert_eq!(targets("- item\nlazy `x\n- [p](p.md)`\n"), ["p"]);
     }
 }
