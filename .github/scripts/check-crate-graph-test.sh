@@ -16,7 +16,7 @@ run_case() {
   (cd "$dir/repo" && "$setup" "$dir")
   if "$dir/repo/.github/scripts/check-crate-graph.sh" >"$dir/out" 2>&1; then got=pass; else got=fail; fi
   if [ "$got" = "$want" ]; then
-    echo "ok: $name ($got: $(head -n 1 "$dir/out"))"
+    echo "ok: $name ($got: $(grep -m 1 -E '^(error|crate graph)' "$dir/out"))"
   else
     echo "FAILED: $name: want $want, got $got" >&2
     sed 's/^/  /' "$dir/out" >&2
@@ -35,6 +35,17 @@ outside_same_name() {
   sed -i.bak 's|^mwf-domain.workspace = true$|mwf-domain = { path = "../../../outside/mwf-domain" }|' \
     crates/mwf-store/Cargo.toml
   grep -q outside crates/mwf-store/Cargo.toml
+}
+
+# A version-only dev-dependency that [patch.crates-io] resolves to the member.
+patched_dev_dependency() {
+  printf '\n[dev-dependencies]\nmwf-domain = "2.0.0-alpha.0"\n' >>crates/mwf-search/Cargo.toml
+  printf '\n[patch.crates-io]\nmwf-domain = { path = "crates/mwf-domain" }\n' >>Cargo.toml
+}
+
+# An optional dependency that only a feature turns on.
+optional_dependency() {
+  printf '\n[dependencies]\nmwf-domain = { workspace = true, optional = true }\n' >>crates/mwf-search/Cargo.toml
 }
 
 # Mermaid accepts a trailing semicolon, so this is an edge the crates do not have.
@@ -71,6 +82,8 @@ node_not_in_workspace() {
 
 run_case unchanged pass unchanged
 run_case outside-same-name fail outside_same_name
+run_case patched-dev-dependency fail patched_dev_dependency
+run_case optional-dependency fail optional_dependency
 run_case edge-with-semicolon fail edge_with_semicolon
 run_case undeclared-edge fail undeclared_edge
 run_case edge-in-other-diagram pass edge_in_other_diagram

@@ -39,20 +39,23 @@ parsed=$(
 expected_nodes=$(sed -n 's/^node //p' <<<"$parsed" | sort -u)
 expected_edges=$(sed -n 's/^edge //p' <<<"$parsed" | sort -u)
 
-# A dependency is an edge only when it resolves to a workspace member, matched by
-# the member's directory, so an outside package with a member's name does not
-# count. Every dependency kind counts, dev-dependencies included.
-metadata=$(cargo metadata --format-version 1 --no-deps --offline)
-actual_nodes=$(jq -r '.packages[].name' <<<"$metadata" | sort -u)
+# Edges come from Cargo's resolved graph with all features on, so a dependency
+# counts when Cargo resolves it to a workspace member by package ID: through a
+# path, `workspace = true`, or `[patch]`, but not an outside package with a
+# member's name. Every dependency kind counts, dev-dependencies included, on
+# every target platform.
+metadata=$(cargo metadata --format-version 1 --all-features)
+actual_nodes=$(jq -r '.workspace_members as $ws | .packages[] | select(.id as $id | $ws | index($id)) | .name' <<<"$metadata" | sort -u)
 actual_edges=$(
   jq -r '
-    (.packages | map({ key: (.manifest_path | rtrimstr("/Cargo.toml")), value: .name }) | from_entries) as $members
-    | .packages[]
-    | .name as $from
-    | .dependencies[]
-    | select(.path != null)
-    | $members[.path] // empty
-    | "\($from) -> \(.)"' <<<"$metadata" |
+    .workspace_members as $ws
+    | (.packages | map({ key: .id, value: .name }) | from_entries) as $names
+    | .resolve.nodes[]
+    | select(.id as $id | $ws | index($id))
+    | $names[.id] as $from
+    | .deps[]
+    | select(.pkg as $pkg | $ws | index($pkg))
+    | "\($from) -> \($names[.pkg])"' <<<"$metadata" |
     sort -u
 )
 
