@@ -1,6 +1,7 @@
-//! 5,000-page search benchmark (docs/decisions/0011, 0021). A search builds
-//! the index from every page and then ranks, so `build_and_search` is the
-//! number that must stay under about 100 ms.
+//! 5,000-page search benchmark (docs/decisions/0011, 0021, 0047). A search
+//! builds the index from every page and then ranks, so `build_and_search` is
+//! the number to watch: it must stay under about 100 ms at the reference page
+//! size of about 0.5 KB (`sentences = 2`). The larger sizes are for reference.
 
 use divan::{Bencher, black_box};
 use mwf_search::{Doc, Index};
@@ -114,7 +115,8 @@ fn corpus(sentences: usize) -> Vec<Page> {
     (0..PAGES).map(|i| generator.page(i, sentences)).collect()
 }
 
-/// Sentence pairs per page body: about 0.5, 1, and 1.8 KB per page in all.
+/// Sentence pairs per page body: about 0.5 KB per page in all (the reference
+/// size, 0047), then 1 and 1.8 KB.
 const SIZES: [usize; 3] = [2, 5, 10];
 
 #[divan::bench(args = SIZES, sample_count = 20)]

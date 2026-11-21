@@ -42,7 +42,7 @@ pub const B: f32 = 0.75;
 
 ## 性能
 
-`benches/search.rs`（`cargo bench -p mwf-search`）用 5000 个合成页面（拉丁词与随机汉字各半）测“建索引 + 一次检索”，按正文大小分三档。一次检索都会现建索引（0011），所以耗时随语料总量线性增长；在 4 vCPU 的 orb 上（2026-11），每页约 0.5 KB 时中位数 84 ms，约 1 KB 时 196 ms，约 1.8 KB 时 375 ms；已建好索引上的单次 `search` 约 4 µs。
+`benches/search.rs`（`cargo bench -p mwf-search`）用 5000 个合成页面（拉丁词与随机汉字各半）测“建索引 + 一次检索”，按正文大小分三档。一次检索都会现建索引（0011），所以耗时随语料总量线性增长；在 4 vCPU 的 orb 上（2026-11），每页约 0.5 KB 时中位数 84 ms，约 1 KB 时 196 ms，约 1.8 KB 时 375 ms；已建好索引上的单次 `search` 约 4 µs。100 ms 目标以每页约 0.5 KB 为参考，其余两档只作参考（[0047](../decisions/0047-search-benchmark-page-size.md)）。
 
 ## 依赖
 
