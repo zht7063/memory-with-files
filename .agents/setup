@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Rust toolchain for the v2 implementation (docs/decisions/0012-toolchain-platforms.md).
+# Cold run installs rustup and stable; warm run only confirms the components.
+
+export RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
+export CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
+start=$SECONDS
+if [ -x "$CARGO_HOME/bin/rustup" ]; then
+  echo "[setup] rustup present; checking components"
+  "$CARGO_HOME/bin/rustup" component add rustfmt clippy
+else
+  echo "[setup] installing rustup and stable toolchain"
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs |
+    sh -s -- -y --no-modify-path --profile minimal --default-toolchain stable -c rustfmt -c clippy
+fi
+echo "[setup] rust toolchain ready in $((SECONDS - start))s"
+
+# Bash login shells (Amp and supervised services) read ~/.bash_profile, not ~/.profile.
+profile_marker="# memory-with-files Rust toolchain"
+if ! grep -Fqx "$profile_marker" "$HOME/.bash_profile" 2>/dev/null; then
+  printf '\n%s\n[ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"\n' "$profile_marker" >> "$HOME/.bash_profile"
+fi
