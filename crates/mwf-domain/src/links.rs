@@ -77,7 +77,9 @@ fn scan(body: &str) -> Vec<RawLink> {
 enum Container {
     /// A blockquote: each line continues it with a `>` marker.
     Quote,
-    /// A list item: each non-blank line continues it when indented to `content` columns.
+    /// A list item: each non-blank line continues it when indented `content` columns past
+    /// where its parent container's content starts (not an absolute column, since a parent
+    /// blockquote's marker may sit at a different column on each line).
     Item { content: usize },
 }
 
@@ -188,8 +190,8 @@ fn prose_segments(body: &str) -> Vec<Range<usize>> {
             let continues = match container {
                 Container::Quote => cur.quote_marker(),
                 Container::Item { .. } if cur.is_blank() => true,
-                Container::Item { content } if cur.col + cur.indent() >= *content => {
-                    cur.skip_to(*content);
+                Container::Item { content } if cur.indent() >= *content => {
+                    cur.skip_to(cur.col + *content);
                     true
                 }
                 Container::Item { .. } => false,
@@ -237,11 +239,23 @@ fn prose_segments(body: &str) -> Vec<Range<usize>> {
                 continue;
             }
             if let Some(mut c) = cur.after_indent()
-                && let Some(width) = list_marker(c.rest())
+                && let Some(marker) = list_marker(c.rest())
             {
                 segments.extend(para.take());
-                c.advance(width);
-                stack.push(Container::Item { content: c.col });
+                c.advance(marker);
+                // Content starts after 1 to 4 columns of padding; with none (an empty item)
+                // or more (indented code in the item) it is one column after the marker.
+                // Only padding that exists in the line is consumed.
+                let padding = c.indent();
+                let content = if c.is_blank() {
+                    c.col + 1
+                } else {
+                    c.skip_to(c.col + if padding > 4 { 1 } else { padding });
+                    c.col
+                };
+                stack.push(Container::Item {
+                    content: content - cur.col,
+                });
                 cur = c;
                 continue;
             }
@@ -289,7 +303,8 @@ fn starts_block(cur: &Cursor<'_>) -> bool {
     })
 }
 
-/// For a list item line (without indentation), the width of its marker and following spaces.
+/// For a list item line (without indentation), the byte length of its marker (`-`, `*`, `+`,
+/// or 1 to 9 digits and `.` or `)`), which must be followed by whitespace or the line end.
 fn list_marker(line: &str) -> Option<usize> {
     let b = line.as_bytes();
     let digits = b.iter().take_while(|c| c.is_ascii_digit()).count();
@@ -298,14 +313,7 @@ fn list_marker(line: &str) -> Option<usize> {
         _ if (1..=9).contains(&digits) && matches!(b.get(digits), Some(b'.' | b')')) => digits + 1,
         _ => return None,
     };
-    let spaces = b[marker..].iter().take_while(|&&c| c == b' ').count();
-    match b.get(marker) {
-        None | Some(b'\n' | b'\r') => Some(marker + 1),
-        Some(b' ') if spaces > 4 => Some(marker + 1),
-        Some(b' ') => Some(marker + spaces),
-        Some(b'\t') => Some(marker + 1),
-        _ => None,
-    }
+    matches!(b.get(marker), None | Some(b' ' | b'\t' | b'\n' | b'\r')).then_some(marker)
 }
 
 fn is_atx_heading(line: &str) -> bool {
@@ -749,5 +757,36 @@ still code [e](still.md)
     fn lazy_continuation_keeps_paragraph_in_container() {
         assert_eq!(targets("> quoted\nlazy [p](p.md)\n"), ["p"]);
         assert_eq!(targets("- item\nlazy `x\n- [p](p.md)`\n"), ["p"]);
+    }
+
+    #[test]
+    fn empty_list_item_at_end_without_newline() {
+        for body in [
+            "-",
+            "[p](a.md)\n-",
+            "[p](a.md)\n\n1.",
+            "> [p](a.md)\n> -",
+            "- [p](a.md)\n  *",
+        ] {
+            let n = usize::from(body.contains("[p]"));
+            assert_eq!(internal_links(body).len(), n, "{body:?}");
+            assert_eq!(
+                rewrite_links(body, &slug("a"), &slug("b")),
+                body.replacen("a.md", "b.md", 1)
+            );
+            assert_eq!(unlink(body, &slug("a")), body.replacen("[p](a.md)", "p", 1));
+        }
+        assert_only_prose_link("- ~~~\n  [c](a.md)\n-\n[p](a.md)\n");
+    }
+
+    #[test]
+    fn list_content_is_relative_to_its_parent_quote() {
+        for body in [
+            "   > - ~~~\n>   [c](a.md)\n>   ~~~\n\n[p](a.md)\n",
+            "> - ~~~\n   >   [c](a.md)\n >   ~~~\n\n[p](a.md)\n",
+            ">  1. ```\n>     [c](a.md)\n>     ```\n>     [p](a.md)\n",
+        ] {
+            assert_only_prose_link(body);
+        }
     }
 }
