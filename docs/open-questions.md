@@ -12,6 +12,7 @@
 | 6 | Markdown 链接、BM25 打分与 hook 门槛 | ADR 0038–0039 |
 | 7 | LLM wiki 工作流 | ADR 0040 |
 | 8 | search 叶子化、依赖策略、错误与时钟、实施与分支 | ADR 0041–0044、[crates/](crates/)、[implementation-plan.md](implementation-plan.md) |
+| 9 | 默认分支切换、开工前文档补正 | ADR 0045–0046 |
 
 ## 当前未决问题
 

@@ -10,7 +10,7 @@
 pub struct Slug(String);              // [a-z0-9-]，Slug::parse(&str) -> Result<Slug, DomainError>
 pub enum PageType { Preference, Decision, Knowledge, Incident, Task }   // 顺序即 index 分组顺序
 pub enum Status { Active, Archived }
-pub struct Timestamp(String);         // RFC3339 UTC，由调用方传入
+pub struct Timestamp(String);         // RFC3339 UTC，由调用方传入；Timestamp::from_unix_secs(u64)（0046）
 pub struct Frontmatter { title, page_type, summary, tags: Vec<String>, status, created, updated }
 pub struct Page { slug: Slug, fm: Frontmatter, body: String }
 pub struct Rev(String);               // 文件内容 sha256 的前 12 个十六进制字符；Rev::of(&[u8])

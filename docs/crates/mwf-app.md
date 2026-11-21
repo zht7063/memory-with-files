@@ -7,7 +7,7 @@
 ## 公开 API（草案）
 
 ```rust
-pub struct App { project: Project, clock: Box<dyn Clock> }   // Clock 可注入，测试用固定时间
+pub struct App { project: Project, clock: Box<dyn Clock> }   // Clock 可注入，测试用固定时间；系统时钟用 SystemTime + Timestamp::from_unix_secs（0046）
 impl App {
     pub fn open(cwd: &Path) -> Result<App, AppError>;
     pub fn init(cwd: &Path, local: bool) -> Result<InitOut, AppError>;

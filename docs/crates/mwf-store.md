@@ -33,7 +33,7 @@ pub enum GitMode { Track, Local }
 
 ## 依赖
 
-`mwf-domain`（`Slug`、`Timestamp`）、`toml`、`serde`、`thiserror`。
+`mwf-domain`（`Slug`、`Timestamp`）、`toml`、`serde`、`serde_json`（会话状态，[0046](../decisions/0046-pre-p0-doc-fixes.md)）、`thiserror`。
 
 ## 禁止
 

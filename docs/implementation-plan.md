@@ -19,7 +19,7 @@ docs/
 
 | 阶段 | 内容 | 完成标志 |
 | --- | --- | --- |
-| **P0 骨架** | workspace、全部空 crate 与依赖边、`rust-toolchain.toml`、CI（fmt / clippy / test / 依赖图检查：解析 `cargo metadata`，断言与 architecture.md 一致） | CI 绿；违反依赖规则的 PR 会失败 |
+| **P0 骨架** | workspace、全部空 crate 与依赖边、`rust-toolchain.toml`、CI（fmt / clippy / test / `cargo-deny`（`deny.toml`，见 [0046](decisions/0046-pre-p0-doc-fixes.md)）/ 依赖图检查：解析 `cargo metadata`，断言与 architecture.md 一致） | CI 绿；违反依赖规则的 PR 会失败 |
 | **P1 纯计算** | domain：Slug、frontmatter、链接、patch、secret 扫描、index/log 渲染、validate；search：分词、BM25、similar_to、5000 页基准 | 单元测试覆盖全部规则；基准 < 100 ms |
 | **P2 可用的 CLI** | store：项目定位、init、原子写、锁、配置、log、trash；app：全部读写操作与 lint；cli：全部命令与 `--json`；端到端 + 快照测试 | 在真实仓库里能 `init` / `new` / `patch` / `search` / `lint`；发 `2.0.0-alpha.1`（仅 GitHub Release，手动） |
 | **P3 hooks 与 skill** | hooks：四个事件 × 两个宿主、fence、预算、会话状态、PreToolUse 守卫；assets：`mwf` skill 文本 | 用假宿主输入的端到端测试；在 Claude Code、Codex 里手动走一遍 |

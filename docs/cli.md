@@ -16,7 +16,7 @@ mwf init [--local]
 
 ```
 mwf show <slug>                         frontmatter、正文、rev、出链、反向链接
-mwf search <query> [--type T]... [--tag t]... [--limit N]
+mwf search <query> [--type T]... [--tag t]... [--status active|archived|all] [--limit N]
                                         BM25 结果：slug、title、summary、score、rev
 mwf list [--type T]... [--tag t]... [--status active|archived|all]
 mwf index [--rebuild]                   打印目录；--rebuild 重新生成 index.md
