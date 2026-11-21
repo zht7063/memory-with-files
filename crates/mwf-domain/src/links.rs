@@ -90,12 +90,15 @@ struct Fence {
     len: usize,
 }
 
-/// A position in a line, with its column (tabs stop every 4 columns).
+/// A position in a line, with its column (tabs stop every 4 columns). A container prefix can
+/// end inside a tab (CommonMark treats a tab as the spaces up to the next stop); then the byte
+/// at `pos` is that tab and `partial` columns of it are still unconsumed.
 #[derive(Clone, Copy)]
 struct Cursor<'a> {
     line: &'a str,
     pos: usize,
     col: usize,
+    partial: usize,
 }
 
 impl<'a> Cursor<'a> {
@@ -107,10 +110,11 @@ impl<'a> Cursor<'a> {
         self.rest().trim().is_empty()
     }
 
-    /// Columns of whitespace at the cursor.
+    /// Columns of whitespace at the cursor, including the rest of a partly consumed tab.
     fn indent(&self) -> usize {
-        let mut col = self.col;
-        for b in self.rest().bytes() {
+        let mut col = self.col + self.partial;
+        let from = self.pos + usize::from(self.partial > 0);
+        for b in self.line[from..].bytes() {
             match b {
                 b' ' => col += 1,
                 b'\t' => col += 4 - col % 4,
@@ -120,18 +124,30 @@ impl<'a> Cursor<'a> {
         col - self.col
     }
 
-    /// Skips whitespace up to column `target`.
+    /// Skips whitespace up to column `target`, stopping inside a tab if `target` falls there.
     fn skip_to(&mut self, target: usize) {
         while self.col < target {
-            match self.rest().as_bytes().first() {
-                Some(b' ') => self.col += 1,
-                Some(b'\t') => self.col += 4 - self.col % 4,
-                _ => return,
+            if self.partial == 0 {
+                match self.rest().as_bytes().first() {
+                    Some(b' ') => {
+                        self.col += 1;
+                        self.pos += 1;
+                        continue;
+                    }
+                    Some(b'\t') => self.partial = 4 - self.col % 4,
+                    _ => return,
+                }
             }
-            self.pos += 1;
+            let take = self.partial.min(target - self.col);
+            self.col += take;
+            self.partial -= take;
+            if self.partial == 0 {
+                self.pos += 1;
+            }
         }
     }
 
+    /// Moves past `bytes` non-whitespace bytes; only called with no partly consumed tab.
     fn advance(&mut self, bytes: usize) {
         self.pos += bytes;
         self.col += bytes;
@@ -147,13 +163,13 @@ impl<'a> Cursor<'a> {
         })
     }
 
-    /// Consumes a blockquote marker `>` and one following space.
+    /// Consumes a blockquote marker `>` and one following column of space or tab.
     fn quote_marker(&mut self) -> bool {
         match self.after_indent() {
             Some(mut c) if c.rest().starts_with('>') => {
                 c.advance(1);
-                if c.rest().starts_with(' ') {
-                    c.advance(1);
+                if c.rest().starts_with([' ', '\t']) {
+                    c.skip_to(c.col + 1);
                 }
                 *self = c;
                 true
@@ -184,6 +200,7 @@ fn prose_segments(body: &str) -> Vec<Range<usize>> {
             line,
             pos: 0,
             col: 0,
+            partial: 0,
         };
         let mut matched = 0;
         for container in &stack {
@@ -787,6 +804,29 @@ still code [e](still.md)
             ">  1. ```\n>     [c](a.md)\n>     ```\n>     [p](a.md)\n",
         ] {
             assert_only_prose_link(body);
+        }
+    }
+
+    #[test]
+    fn tabs_after_container_markers_keep_their_remaining_columns() {
+        // `-` then a tab (to column 4) and two spaces: one padding column, then 4 of indent.
+        for code in [
+            "-\t  [c](a.md)\n\n[p](a.md)\n",
+            "-     [c](a.md)\n\n[p](a.md)\n",
+            ">\t  [c](a.md)\n\n[p](a.md)\n",
+            ">     [c](a.md)\n\n[p](a.md)\n",
+            "- x\n\n\t  [c](a.md)\n\n[p](a.md)\n",
+        ] {
+            assert_only_prose_link(code);
+        }
+        // Less indentation after the tab is ordinary content.
+        for prose in [
+            "-\t[p](a.md)\n",
+            "-\t [p](a.md)\n",
+            ">\t[p](a.md)\n",
+            ">\t [p](a.md)\n",
+        ] {
+            assert_only_prose_link(prose);
         }
     }
 }
