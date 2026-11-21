@@ -6,14 +6,19 @@
 
 ```
 Cargo.toml              workspace，统一 version = "2.0.0-alpha.N"、edition = "2024"、rust-version
-rust-toolchain.toml
+rust-toolchain.toml     固定 MSRV（1.100.0，0012）
+clippy.toml             测试中允许 unwrap / expect / panic（0043）
+deny.toml               cargo-deny 策略（0046）
 crates/
   mwf-domain/  mwf-search/  mwf-store/  mwf-app/
   mwf-cli/  mwf-hooks/  mwf-lifecycle/  mwf-assets/
   mwf/                  bin；tests/ 下是端到端测试
 docs/
 .github/workflows/      ci.yml（P0）、release.yml（P4，由 dist 生成）
+.github/scripts/        check-crate-graph.sh：cargo metadata 的 workspace 内依赖（含 dev）须与 architecture.md 的 mermaid 边完全一致
 ```
+
+P0 的空 crate 用 `use <dep> as _;` 声明依赖边（Cargo 默认对未使用的依赖告警），真正使用后删除。
 
 ## 阶段
 

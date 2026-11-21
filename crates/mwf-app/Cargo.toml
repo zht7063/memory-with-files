@@ -1,0 +1,18 @@
+[package]
+name = "mwf-app"
+description = "MWF use cases, DTOs and error codes"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+mwf-domain.workspace = true
+mwf-store.workspace = true
+mwf-search.workspace = true
+mwf-assets.workspace = true
+
+[lints]
+workspace = true

@@ -9,7 +9,7 @@ mwf 是一个给编程 agent 用的、项目内的 **wiki 引擎**：记忆是 `
 
 ## crate 依赖图
 
-箭头表示"依赖"（A → B：A 的 `Cargo.toml` 里有 B）。
+箭头表示"依赖"（A → B：A 的 `Cargo.toml` 里有 B）。CI 的 `.github/scripts/check-crate-graph.sh` 断言 workspace 内的依赖与下图的 `-->` 边完全一致，改依赖必须同时改这张图。
 
 ```mermaid
 flowchart TD

@@ -1,0 +1,16 @@
+[package]
+name = "mwf-hooks"
+description = "MWF host hook handling"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+mwf-app.workspace = true
+mwf-assets.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,27 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "2.0.0-alpha.0"
+edition = "2024"
+rust-version = "1.100"
+license = "MIT"
+repository = "https://github.com/zht7063/memory-with-files"
+publish = false
+
+[workspace.dependencies]
+mwf-domain = { path = "crates/mwf-domain" }
+mwf-search = { path = "crates/mwf-search" }
+mwf-store = { path = "crates/mwf-store" }
+mwf-app = { path = "crates/mwf-app" }
+mwf-cli = { path = "crates/mwf-cli" }
+mwf-hooks = { path = "crates/mwf-hooks" }
+mwf-lifecycle = { path = "crates/mwf-lifecycle" }
+mwf-assets = { path = "crates/mwf-assets" }
+
+# Library crates do not panic; unwrap/expect/panic are allowed only in tests (docs/decisions/0043, clippy.toml).
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
