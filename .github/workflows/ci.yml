@@ -45,3 +45,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: .github/scripts/check-crate-graph.sh
+      - run: .github/scripts/check-crate-graph-test.sh

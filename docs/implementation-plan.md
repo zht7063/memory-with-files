@@ -15,7 +15,7 @@ crates/
   mwf/                  bin；tests/ 下是端到端测试
 docs/
 .github/workflows/      ci.yml（P0）、release.yml（P4，由 dist 生成）
-.github/scripts/        check-crate-graph.sh：cargo metadata 的 workspace 内依赖（含 dev）须与 architecture.md 的 mermaid 边完全一致
+.github/scripts/        check-crate-graph.sh：workspace 的 crate 与 workspace 内依赖（含 dev）须与 architecture.md 拓扑图的节点和边完全一致；check-crate-graph-test.sh 是它的回归测试
 ```
 
 P0 的空 crate 用 `use <dep> as _;` 声明依赖边（Cargo 默认对未使用的依赖告警），真正使用后删除。
