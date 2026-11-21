@@ -14,7 +14,7 @@ use crate::FxHasher;
 ///
 /// - Text outside CJK scripts is split on Unicode word boundaries (UAX #29)
 ///   and lowercased: `"Deploy mwf-search"` → `deploy`, `mwf`, `search`.
-/// - Each run of CJK characters (Han, Hiragana, Katakana, Hangul) yields its
+/// - Each run of CJK characters (Han, Hiragana, Katakana, Hangul, Bopomofo) yields its
 ///   overlapping character bigrams: `"部署失败"` → `部署`, `署失`, `失败`. A run
 ///   of a single character yields that character. Any other character, such
 ///   as punctuation, a space, or a Latin letter, ends the run.
@@ -144,8 +144,9 @@ fn cjk_key(first: char, second: Option<char>) -> u64 {
     u64::from(first) << 32 | u64::from(second.unwrap_or('\0'))
 }
 
-/// Letters, marks, and iteration marks of the Han, Hiragana, Katakana, and
-/// Hangul scripts. Unicode blocks also hold punctuation and symbols, such as
+/// Letters, marks, and iteration marks of the Han, Hiragana, Katakana,
+/// Hangul, and Bopomofo scripts, including supplementary-plane kana and Han
+/// extensions. Unicode blocks also hold punctuation and symbols, such as
 /// `・` (U+30FB) and `゛` (U+309B), so only their letter ranges count;
 /// those characters end a run like any other punctuation.
 fn is_cjk(c: char) -> bool {
@@ -160,7 +161,9 @@ fn is_cjk(c: char) -> bool {
         | 0x309D..=0x309F     // ゝ ゞ ゟ
         | 0x30A1..=0x30FA     // Katakana letters
         | 0x30FC..=0x30FF     // ー ヽ ヾ ヿ
+        | 0x3105..=0x312F     // Bopomofo
         | 0x3131..=0x318E     // Hangul Compatibility Jamo
+        | 0x31A0..=0x31BF     // Bopomofo Extended
         | 0x31F0..=0x31FF     // Katakana Phonetic Extensions
         | 0x3400..=0x4DBF     // CJK Unified Ideographs Extension A
         | 0x4E00..=0x9FFF     // CJK Unified Ideographs
@@ -170,8 +173,9 @@ fn is_cjk(c: char) -> bool {
         | 0xF900..=0xFAD9     // CJK Compatibility Ideographs
         | 0xFF66..=0xFF9F     // Halfwidth Katakana letters and sound marks
         | 0xFFA0..=0xFFDC     // Halfwidth Hangul letters
+        | 0x1AFF0..=0x1B16F   // Kana Extended-B, Kana Supplement, Kana Extended-A, Small Kana Extension
         | 0x20000..=0x2FA1F   // CJK Unified Ideographs Extensions B to F, I, and compatibility supplement
-        | 0x30000..=0x323AF // CJK Unified Ideographs Extensions G and H
+        | 0x30000..=0x3347F // CJK Unified Ideographs Extensions G, H, and J
     )
 }
 
@@ -416,6 +420,10 @@ mod tests {
         assert_eq!(terms("東京へ"), ["東京", "京へ"]);
         assert_eq!(terms("배포 실패"), ["배포", "실패"]);
         assert_eq!(terms("𠀀𠀁"), ["𠀀𠀁"]);
+        // Kana Supplement (U+1B001) and Han Extension J (U+323B0).
+        assert_eq!(terms("あ\u{1B001}い"), ["あ\u{1B001}", "\u{1B001}い"]);
+        assert_eq!(terms("山\u{323B0}川"), ["山\u{323B0}", "\u{323B0}川"]);
+        assert_eq!(terms("ㄅㄆ"), ["ㄅㄆ"]);
     }
 
     #[test]
