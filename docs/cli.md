@@ -19,7 +19,7 @@ mwf show <slug>                         frontmatter、正文、rev、出链、�
 mwf search <query> [--type T]... [--tag t]... [--status active|archived|all] [--limit N]
                                         BM25 结果：slug、title、summary、score、rev
 mwf list [--type T]... [--tag t]... [--status active|archived|all]
-mwf index [--rebuild]                   打印目录；--rebuild 重新生成 index.md
+mwf index [--rebuild]                   打印由当前页面渲染的目录；--rebuild 同时重写 index.md（0049）
 mwf log [-n N]                          最近 N 条写操作（默认 20）
 mwf lint                                检查全部页面；有 error 时退出 1
 ```
@@ -63,4 +63,10 @@ mwf uninstall --host claude|codex
 | `SECRET_DETECTED` | 新增内容疑似密钥 |
 | `HAS_BACKLINKS` | `delete` 时仍有入链 |
 | `LOCK_TIMEOUT` | 等写锁超时 |
+| `INVALID_PAGE` | 要读或改的页面文件本身不合法；运行 `mwf lint`（[0049](decisions/0049-app-defaults.md)） |
+| `INVALID_CONFIG` | `.mwf/config.toml` 不合法（0049） |
+| `TOO_LARGE` | 正文或 `patch` 的 old / new 超过 100 KB（[0033](decisions/0033-consistency-and-limits.md)、0049） |
+| `CHANGED` | `.mwf` 或 `.mwf/.lock` 在使用中被替换（[0048](decisions/0048-init-layout-and-ignore-rules.md)） |
+| `WRONG_FILE_TYPE` | `.mwf/` 下的路径是符号链接或类型不对（0048） |
+| `IO` | 其他文件系统错误 |
 | `USAGE` | 参数错误（退出码 2） |

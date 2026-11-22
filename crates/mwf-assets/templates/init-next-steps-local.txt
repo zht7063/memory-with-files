@@ -1,0 +1,6 @@
+mwf created .mwf/ and added /.mwf/ to .gitignore; the wiki stays on this machine.
+
+Next:
+  mwf install --host claude   (or --host codex) so sessions load and save memories
+  mwf new <slug> --type <type> --title "..." --summary "..." < body.md
+  mwf lint
