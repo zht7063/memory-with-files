@@ -93,6 +93,8 @@ pub(crate) struct Snapshot {
     /// The contents; `None` when the file (or a directory on the way) did not exist.
     pub(crate) bytes: Option<Vec<u8>>,
     file: Option<Id>,
+    /// The file's permissions, from the descriptor that was read: a rewrite keeps these.
+    mode: Option<fs::Permissions>,
     /// The base, then each directory below it that existed, in order.
     dirs: Vec<Id>,
 }
@@ -106,6 +108,7 @@ pub(crate) fn read(base: &Path, rel: &Path) -> Result<Snapshot, Error> {
     let mut snap = Snapshot {
         bytes: None,
         file: None,
+        mode: None,
         dirs: vec![id(&meta)],
     };
     let comps: Vec<_> = rel.components().collect();
@@ -125,11 +128,13 @@ pub(crate) fn read(base: &Path, rel: &Path) -> Result<Snapshot, Error> {
     }
     let meta = fs::symlink_metadata(&cur).map_err(|e| Error::io(&cur, &e))?;
     let mut file = open_checked(&cur, &meta)?;
+    let opened = file.metadata().map_err(|e| Error::io(&cur, &e))?;
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes)
         .map_err(|e| Error::io(&cur, &e))?;
     snap.bytes = Some(bytes);
-    snap.file = Some(id(&meta));
+    snap.file = Some(id(&opened));
+    snap.mode = Some(opened.permissions());
     Ok(snap)
 }
 
@@ -314,22 +319,38 @@ pub(crate) fn write(
         ".",
         &format!(".mwf-tmp-{}", std::process::id()),
     )?;
+    let tmp_id = f
+        .metadata()
+        .map(|m| id(&m))
+        .map_err(|e| Error::io(&tmp, &e))?;
+    // The temporary name still names the file mwf created and holds open.
+    let ours = || {
+        fs::symlink_metadata(&tmp)
+            .ok()
+            .filter(Metadata::is_file)
+            .is_some_and(|m| id(&m) == tmp_id)
+    };
+    let mut renamed = false;
     let result = (|| {
         f.write_all(new)
-            .and_then(|()| {
-                if old.bytes.is_some() {
-                    let perms = fs::symlink_metadata(&path)?.permissions();
-                    f.set_permissions(perms)?;
-                }
-                f.sync_all()
+            .and_then(|()| match &old.mode {
+                // The mode the file had when it was read, never one from the path now.
+                Some(mode) => f.set_permissions(mode.clone()),
+                None => Ok(()),
             })
+            .and_then(|()| f.sync_all())
             .map_err(|e| Error::io(&tmp, &e))?;
         before_commit();
         pins.hold()?;
         verify(base, rel, old)?;
         pins.hold()?;
+        if !ours() {
+            return Err(changed(&tmp));
+        }
         if old.bytes.is_some() {
-            fs::rename(&tmp, &path).map_err(|e| Error::io(&path, &e))
+            fs::rename(&tmp, &path).map_err(|e| Error::io(&path, &e))?;
+            renamed = true;
+            Ok(())
         } else {
             // A link never replaces a file that appeared in the meantime.
             match fs::hard_link(&tmp, &path) {
@@ -339,9 +360,9 @@ pub(crate) fn write(
             }
         }
     })();
-    // After a rename the name is gone; otherwise it is removed only through the same
-    // directory. If that no longer holds, the 0600 temporary file is left where it is.
-    if fs::symlink_metadata(&tmp).is_ok() {
+    // After a rename the temporary name is no longer mwf's; otherwise it is removed only while
+    // it still names mwf's file, through the same held directory. If not, the file stays.
+    if !renamed && ours() {
         let _ = pins.unlink(&tmp);
     }
     result?;
@@ -770,5 +791,74 @@ mod tests {
             .find(|n| n.starts_with("e.mwf-bak-"))
             .unwrap();
         assert_eq!(mode(&base.join(bak)), 0o600);
+    }
+
+    /// The path of the temporary file in `dir`, if there is one.
+    fn tmp_in(dir: &Path) -> Option<PathBuf> {
+        fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .find(|p| p.to_string_lossy().contains(".mwf-tmp-"))
+    }
+
+    #[test]
+    fn a_replaced_temporary_file_is_neither_published_nor_unlinked() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().to_path_buf();
+        for existing in [true, false] {
+            let rel = Path::new(if existing { "e" } else { "n" });
+            if existing {
+                put(&base, "e", b"old", false).unwrap();
+            }
+            let snap = read(&base, rel).unwrap();
+            let b = base.clone();
+            let err = with_seam(
+                move || {
+                    let tmp = tmp_in(&b).unwrap();
+                    fs::rename(&tmp, b.join("mwf-own-tmp")).unwrap();
+                    fs::write(&tmp, "planted").unwrap();
+                },
+                || write(&base, rel, &snap, b"new", false).unwrap_err(),
+            );
+            assert_eq!(err.code, "CHANGED", "{}", err.message);
+            // The target is untouched and the planted file is still there.
+            assert_eq!(read(&base, rel).unwrap().bytes, snap.bytes);
+            let planted = tmp_in(&base).unwrap();
+            assert_eq!(fs::read(&planted).unwrap(), b"planted");
+            fs::remove_file(planted).unwrap();
+            fs::remove_file(base.join("mwf-own-tmp")).unwrap();
+        }
+    }
+
+    #[test]
+    fn after_a_rename_the_temporary_name_is_left_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path();
+        put(base, "e", b"old", false).unwrap();
+        put(base, "e", b"new", false).unwrap();
+        assert_eq!(names(base), ["e"]);
+        assert_eq!(fs::read(base.join("e")).unwrap(), b"new");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_mode_comes_from_the_file_that_was_read() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().to_path_buf();
+        let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        fs::write(base.join("e"), "1").unwrap();
+        fs::set_permissions(base.join("e"), fs::Permissions::from_mode(0o600)).unwrap();
+        let snap = read(&base, Path::new("e")).unwrap();
+        // Made world-readable after it was read: the temporary file never gets that mode.
+        fs::set_permissions(base.join("e"), fs::Permissions::from_mode(0o666)).unwrap();
+        let seen = std::rc::Rc::new(std::cell::Cell::new(0));
+        let (s, b) = (seen.clone(), base.clone());
+        with_seam(
+            move || s.set(mode(&tmp_in(&b).unwrap())),
+            || write(&base, Path::new("e"), &snap, b"2", false).unwrap(),
+        );
+        assert_eq!(seen.get(), 0o600);
+        assert_eq!(mode(&base.join("e")), 0o600);
     }
 }
