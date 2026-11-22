@@ -1,6 +1,6 @@
 # CLI 规格
 
-> 状态：命令集合已接受（[0023](decisions/0023-write-commands-and-rev.md)、[0028](decisions/0028-read-commands-and-output.md)）；P2 已实现项目、读、写命令（`crates/mwf-cli`），输出格式见 [0050](decisions/0050-cli-output-and-usage-errors.md)。宿主集成命令在 P3 / P4 实现。
+> 状态：命令集合已接受（[0023](decisions/0023-write-commands-and-rev.md)、[0028](decisions/0028-read-commands-and-output.md)）；P2 已实现项目、读、写命令（`crates/mwf-cli`），输出格式见 [0050](decisions/0050-cli-output-and-usage-errors.md)。宿主集成命令：`hook` 在 P3 实现（[0051](decisions/0051-hook-apis-and-session-state.md)），`install` / `uninstall` 在 P4 实现（[0052](decisions/0052-install-and-uninstall.md)）。
 
 所有命令：从当前目录向上查找 `.mwf/`（`init` 除外）；`--json`（全局选项，子命令前后都可）输出结构化结果；退出码 0 / 1 / 2。
 
@@ -49,9 +49,16 @@ mwf delete <slug> [--unlink]                                       移入 .mwf/t
 ```
 mwf hook <event> --host claude|codex     由宿主调用；读 stdin JSON，输出一行 JSON，总是退出 0
                                          event：session-start | prompt | stop | pre-tool（0051）
-mwf install --host claude|codex
-mwf uninstall --host claude|codex
+mwf install --host claude|codex [--dry-run]
+mwf uninstall --host claude|codex [--dry-run]
 ```
+
+`install` 把四个 hook（每个事件一条 `mwf hook <event> --host <host>`，超时 10 s）加入宿主的用户级 hooks 文件，并写入 `mwf` skill；`uninstall` 只删除这些。`--dry-run` 只打印将要做的改动。文件位置（0031、0052）：
+
+- `claude`：`$CLAUDE_CONFIG_DIR`（默认 `~/.claude`）下的 `settings.json` 与 `skills/mwf/`。
+- `codex`：`$CODEX_HOME`（默认 `~/.codex`）下的 `hooks.json`；skill 在 `~/.agents/skills/mwf/`。安装后在 Codex 的 `/hooks` 中信任 mwf 的 hooks。
+
+修改或删除已有文件前备份为同目录的 `<文件名>.mwf-bak-<时间>`；写入是原子的；基准目录（`HOME`、`CLAUDE_CONFIG_DIR`、`CODEX_HOME`）之下的符号链接一律拒绝；不读写任何项目的 `.mwf/`。退出码与 `--json` 同上；输出格式见 0052。
 
 ## 错误码
 
@@ -72,7 +79,9 @@ mwf uninstall --host claude|codex
 | `INVALID_PAGE` | 要读或改的页面文件本身不合法；运行 `mwf lint`（[0049](decisions/0049-app-defaults.md)） |
 | `INVALID_CONFIG` | `.mwf/config.toml` 不合法（0049） |
 | `TOO_LARGE` | 正文或 `patch` 的 old / new 超过 100 KB（[0033](decisions/0033-consistency-and-limits.md)、0049）；stdin 或 `--old-file` / `--new-file` 超过 1 MB（0050） |
-| `CHANGED` | `.mwf` 或 `.mwf/.lock` 在使用中被替换（[0048](decisions/0048-init-layout-and-ignore-rules.md)） |
-| `WRONG_FILE_TYPE` | `.mwf/` 下的路径是符号链接或类型不对（0048） |
+| `CHANGED` | `.mwf` 或 `.mwf/.lock` 在使用中被替换（[0048](decisions/0048-init-layout-and-ignore-rules.md)）；`install` / `uninstall` 时宿主文件在写入前被别人改了（0052） |
+| `WRONG_FILE_TYPE` | `.mwf/` 下的路径是符号链接或类型不对（0048）；宿主的文件或目录是符号链接或类型不对（0052） |
+| `HOST_CONFIG_INVALID` | 宿主的 `settings.json` / `hooks.json` 不是严格 JSON 或形状不对；不改动任何文件（0052） |
+| `INVALID_ENV` | `HOME`、`CLAUDE_CONFIG_DIR`、`CODEX_HOME` 未设置、不是绝对路径或不是目录（0052） |
 | `IO` | 其他文件系统错误 |
 | `USAGE` | 参数错误（退出码 2） |

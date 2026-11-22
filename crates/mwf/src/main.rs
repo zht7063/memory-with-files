@@ -1,12 +1,9 @@
 //! The `mwf` binary only dispatches the first argument to an adapter
-//! (docs/crates/adapters.md): `hook` goes to mwf-hooks, everything else to mwf-cli.
-//! `install` / `uninstall` (mwf-lifecycle, P4) are routed here once that adapter exists.
+//! (docs/crates/adapters.md): `hook` goes to mwf-hooks, `install` / `uninstall` to
+//! mwf-lifecycle, everything else to mwf-cli.
 
 use std::ffi::OsString;
 use std::process::ExitCode;
-
-// Dependency edge from docs/architecture.md; the real use replaces it in P4.
-use mwf_lifecycle as _;
 
 fn main() -> ExitCode {
     let mut stdin = std::io::stdin().lock();
@@ -17,6 +14,19 @@ fn main() -> ExitCode {
         return mwf_hooks::run(
             args[2..].to_vec(),
             &mut mwf_hooks::Io {
+                stdin: &mut stdin,
+                stdout: &mut stdout,
+                stderr: &mut stderr,
+            },
+        );
+    }
+    if args
+        .get(1)
+        .is_some_and(|a| a == "install" || a == "uninstall")
+    {
+        return mwf_lifecycle::run(
+            args[1..].to_vec(),
+            &mut mwf_lifecycle::Io {
                 stdin: &mut stdin,
                 stdout: &mut stdout,
                 stderr: &mut stderr,

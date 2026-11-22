@@ -1,0 +1,59 @@
+---
+source: crates/mwf/tests/lifecycle.rs
+expression: self.transcript
+---
+$ mwf install
+[stderr] error: the following required arguments were not provided: --host <HOST>
+[stderr] 
+[stderr] Usage: mwf install --host <HOST> [--dry-run] [--json]
+[stderr] 
+[stderr] For more information, try '--help'.
+[exit 2]
+
+$ mwf install --host pi --json
+{"ok":false,"error":{"code":"USAGE","message":"invalid value for '--host <HOST>': use claude or codex\n\nUsage: mwf install --host <HOST> [--dry-run] [--json]\n\nFor more information, try '--help'.\n"}}
+[exit 2]
+
+$ mwf uninstall --host claude --force
+[stderr] error: unexpected option
+[stderr] 
+[stderr] Usage: mwf uninstall --host <HOST> [--dry-run] [--json]
+[stderr] 
+[stderr] For more information, try '--help'.
+[exit 2]
+
+$ mwf uninstall --help
+Remove mwf's hooks and the mwf skill from a host; project wikis (.mwf/) stay
+
+Usage: mwf uninstall --host <HOST> [--dry-run] [--json]
+
+Options:
+      --host <HOST>  claude or codex
+      --dry-run      Print what would change; write nothing
+      --json         Print `{"ok": true, "data": …}` or `{"ok": false, "error": …}` instead of text
+  -h, --help         Print help
+
+Files:
+  claude  $CLAUDE_CONFIG_DIR (default ~/.claude): settings.json and skills/mwf/
+  codex   $CODEX_HOME (default ~/.codex): hooks.json; and ~/.agents/skills/mwf/
+[exit 0]
+
+$ mwf install --host claude
+[stderr] error[HOST_CONFIG_INVALID]: [HOME]/.claude/settings.json is not valid JSON: expected a string key (line 3, column 1); fix it and run the command again (nothing was changed)
+[exit 1]
+
+$ mwf install --host claude --json
+{"ok":false,"error":{"code":"HOST_CONFIG_INVALID","message":"[HOME]/.claude/settings.json is not valid JSON: expected a string key (line 3, column 1); fix it and run the command again (nothing was changed)"}}
+[exit 1]
+
+$ mwf uninstall --host claude
+[stderr] error[HOST_CONFIG_INVALID]: [HOME]/.claude/settings.json has an unexpected shape: "hooks"."Stop" is not an array; fix it and run the command again (nothing was changed)
+[exit 1]
+
+$ mwf install --host codex
+[stderr] error[WRONG_FILE_TYPE]: [HOME]/.codex is a symbolic link, and mwf does not write through links; nothing was changed
+[exit 1]
+
+$ mwf install --host claude
+[stderr] error[INVALID_ENV]: CLAUDE_CONFIG_DIR must be an absolute path
+[exit 1]

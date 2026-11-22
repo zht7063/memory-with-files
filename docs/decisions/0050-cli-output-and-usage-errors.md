@@ -1,6 +1,7 @@
 # 0050 CLI 的输出格式、用法错误与 stdin 上限
 
 - 状态：已接受（2026-11-22）；细化 [0028](0028-read-commands-and-output.md)、[0033](0033-consistency-and-limits.md)、[0049](0049-app-defaults.md)
+- 注：`install` / `uninstall` 的输出、用法错误与 bin 分发见 [0052](0052-install-and-uninstall.md)。
 
 ## 背景
 

@@ -10,6 +10,12 @@ publish.workspace = true
 
 [dependencies]
 mwf-assets.workspace = true
+# Without `preserve_order`: Cargo unifies features across the workspace, and the order would
+# change the JSON mwf-hooks prints. Host files keep their key order through src/json.rs.
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = "3.27.0"
 
 [lints]
 workspace = true

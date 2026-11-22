@@ -1,6 +1,6 @@
 # mwf command reference
 
-Run the read and write commands from anywhere inside the project; they find `.mwf/` by walking up from the current directory. `mwf init` is different: it must run at the root of the git repository. Add `--json` to a read, write or `init` command for one line of `{"ok":true,"data":…}` or `{"ok":false,"error":{"code":…,"message":…}}`. Exit codes: 0 success, 1 failure (or `mwf lint` found an error), 2 usage error. `mwf hook` follows the host's hook protocol instead (see below).
+Run the read and write commands from anywhere inside the project; they find `.mwf/` by walking up from the current directory. `mwf init` is different: it must run at the root of the git repository. Add `--json` to a read, write, `init`, `install` or `uninstall` command for one line of `{"ok":true,"data":…}` or `{"ok":false,"error":{"code":…,"message":…}}`. Exit codes: 0 success, 1 failure (or `mwf lint` found an error), 2 usage error. `mwf hook` follows the host's hook protocol instead (see below).
 
 `<type>` is one of `preference`, `decision`, `knowledge`, `incident`, `task`. `<slug>` uses lowercase letters, digits and `-`.
 
@@ -45,7 +45,7 @@ EOF
 | Command | Does |
 | --- | --- |
 | `mwf init [--local]` | Creates `.mwf/` at the root of the git repository; `--local` keeps it out of git. Run it only when the user asks. |
-| `mwf install --host claude\|codex` / `mwf uninstall --host claude\|codex` | Adds or removes the hooks and this skill for a host. The user runs these. |
+| `mwf install --host claude\|codex [--dry-run]` / `mwf uninstall --host claude\|codex [--dry-run]` | Adds or removes the hooks and this skill for a host, in the user's home directory; `--dry-run` only prints what would change. The user runs these. |
 | `mwf hook <event> --host claude\|codex` | Called by the host's hooks, not by you. Reads the host's hook JSON on stdin, prints one line of the host's hook JSON (not the `{"ok":…}` envelope) and always exits 0. |
 
 ## Errors to handle
