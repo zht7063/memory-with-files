@@ -36,7 +36,7 @@ impl App {
 }
 
 pub struct AppError { code: ErrorCode, message: String, details: serde_json::Value }
-pub enum ErrorCode { NotInitialized, NotGitRoot, NotFound, AlreadyExists, InvalidSlug, InvalidField,
+pub enum ErrorCode { NotInitialized, NotGitRoot, AlreadyInitialized, NotFound, AlreadyExists, InvalidSlug, InvalidField,
                      RevMismatch, PatchNoMatch, PatchAmbiguous, SecretDetected, HasBacklinks, LockTimeout, Io }
 ```
 
