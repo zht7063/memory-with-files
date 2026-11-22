@@ -432,11 +432,12 @@ pub(crate) fn remove(
         ".",
         &format!(".mwf-del-{}", std::process::id()),
     )?;
+    // The placeholder stays open until the function returns: an open file keeps its inode,
+    // so no file created after it can get the same (dev, inode) and pass for it.
     let placeholder_id = placeholder
         .metadata()
         .map(|m| id(&m))
         .map_err(|e| Error::io(&aside, &e))?;
-    drop(placeholder);
     // The set-aside name is renamed over and unlinked only while it is still mwf's
     // placeholder: a file put there by someone else is never overwritten or deleted.
     let cleanup = || {
@@ -479,6 +480,7 @@ pub(crate) fn remove(
     }
     pins.unlink(&aside)?;
     pins.sync();
+    drop(placeholder);
     Ok(bak)
 }
 
@@ -962,5 +964,39 @@ mod tests {
             .find(|n| n.contains(".mwf-del-"))
             .unwrap();
         assert_eq!(fs::read(base.join(planted)).unwrap(), b"planted");
+    }
+
+    #[test]
+    fn a_placeholder_unlinked_and_recreated_never_passes_for_mwfs() {
+        // While mwf holds the placeholder open its inode cannot be reused, so a file created
+        // in its place always has another identity. Many rounds, as inode reuse is likely.
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().to_path_buf();
+        for round in 0..100 {
+            put(&base, "f", b"old", false).unwrap();
+            let snap = read(&base, Path::new("f")).unwrap();
+            let b = base.clone();
+            BEFORE_ASIDE.with(|s| {
+                *s.borrow_mut() = Some(Box::new(move || {
+                    let aside = fs::read_dir(&b)
+                        .unwrap()
+                        .map(|e| e.unwrap().path())
+                        .find(|p| p.to_string_lossy().contains(".mwf-del-"))
+                        .unwrap();
+                    fs::remove_file(&aside).unwrap();
+                    fs::write(&aside, "planted").unwrap();
+                }))
+            });
+            let err = remove(&base, Path::new("f"), &snap, false).unwrap_err();
+            BEFORE_ASIDE.with(|s| *s.borrow_mut() = None);
+            assert_eq!(err.code, "CHANGED", "round {round}: {}", err.message);
+            assert_eq!(fs::read(base.join("f")).unwrap(), b"old", "round {round}");
+            let planted = names(&base)
+                .into_iter()
+                .find(|n| n.contains(".mwf-del-"))
+                .unwrap();
+            assert_eq!(fs::read(base.join(&planted)).unwrap(), b"planted");
+            fs::remove_file(base.join(planted)).unwrap();
+        }
     }
 }
