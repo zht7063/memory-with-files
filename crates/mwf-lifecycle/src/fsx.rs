@@ -139,9 +139,10 @@ pub(crate) fn read(base: &Path, rel: &Path) -> Result<Snapshot, Error> {
 }
 
 /// `base/rel` is still the file `old` saw (or still absent): same contents, same inode.
+/// A change of mode counts: rewriting would put the old mode back over the user's.
 fn verify(base: &Path, rel: &Path, old: &Snapshot) -> Result<(), Error> {
     let now = read(base, rel)?;
-    if now.bytes == old.bytes && now.file == old.file {
+    if now.bytes == old.bytes && now.file == old.file && now.mode == old.mode {
         Ok(())
     } else {
         Err(changed(&base.join(rel)))
@@ -231,6 +232,30 @@ fn sync(dir: Option<&File>) {
 thread_local! {
     pub(crate) static BEFORE_COMMIT: std::cell::RefCell<Option<Box<dyn Fn()>>> =
         std::cell::RefCell::new(None);
+}
+
+// The same, right before a removal renames the file onto its set-aside name.
+#[cfg(test)]
+thread_local! {
+    pub(crate) static BEFORE_ASIDE: std::cell::RefCell<Option<Box<dyn Fn()>>> =
+        std::cell::RefCell::new(None);
+}
+
+fn before_aside() {
+    #[cfg(test)]
+    BEFORE_ASIDE.with(|f| {
+        if let Some(f) = &*f.borrow() {
+            f();
+        }
+    });
+}
+
+/// `path` names, without following a link, the regular file whose identity is `want`.
+fn is_file_with_id(path: &Path, want: Id) -> bool {
+    fs::symlink_metadata(path)
+        .ok()
+        .filter(Metadata::is_file)
+        .is_some_and(|m| id(&m) == want)
 }
 
 fn before_commit() {
@@ -407,22 +432,50 @@ pub(crate) fn remove(
         ".",
         &format!(".mwf-del-{}", std::process::id()),
     )?;
+    let placeholder_id = placeholder
+        .metadata()
+        .map(|m| id(&m))
+        .map_err(|e| Error::io(&aside, &e))?;
     drop(placeholder);
-    pins.hold()?;
+    // The set-aside name is renamed over and unlinked only while it is still mwf's
+    // placeholder: a file put there by someone else is never overwritten or deleted.
+    let cleanup = || {
+        if is_file_with_id(&aside, placeholder_id) {
+            let _ = pins.unlink(&aside);
+        }
+    };
+    before_aside();
+    if let Err(e) = pins.hold() {
+        cleanup();
+        return Err(e);
+    }
+    if !is_file_with_id(&aside, placeholder_id) {
+        return Err(changed(&aside));
+    }
     if let Err(e) = fs::rename(&path, &aside) {
-        let _ = pins.unlink(&aside);
+        cleanup();
         return Err(Error::io(&path, &e));
     }
     let moved = fs::symlink_metadata(&aside)
         .ok()
         .filter(Metadata::is_file)
         .and_then(|m| fs::read(&aside).ok().map(|b| (b, id(&m))));
-    if moved.as_ref().map(|(b, i)| (b.as_slice(), Some(*i))) != Some((bytes, old.file)) {
+    let Some(old_id) = old.file else {
+        return Err(changed(&path));
+    };
+    if moved.as_ref().map(|(b, i)| (b.as_slice(), *i)) != Some((bytes, old_id)) {
         // Someone else's file: put it back without overwriting anything new.
-        if pins.hold().is_ok() && fs::hard_link(&aside, &path).is_ok() {
+        if let Some((_, moved_id)) = moved
+            && pins.hold().is_ok()
+            && fs::hard_link(&aside, &path).is_ok()
+            && is_file_with_id(&aside, moved_id)
+        {
             let _ = pins.unlink(&aside);
         }
         return Err(changed(&path));
+    }
+    if !is_file_with_id(&aside, old_id) {
+        return Err(changed(&aside));
     }
     pins.unlink(&aside)?;
     pins.sync();
@@ -842,23 +895,72 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn the_mode_comes_from_the_file_that_was_read() {
+    fn a_mode_changed_after_reading_is_not_overwritten() {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let base = dir.path().to_path_buf();
         let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
-        fs::write(base.join("e"), "1").unwrap();
-        fs::set_permissions(base.join("e"), fs::Permissions::from_mode(0o600)).unwrap();
+        let set = |p: &Path, m| fs::set_permissions(p, fs::Permissions::from_mode(m)).unwrap();
+        let e = base.join("e");
+        fs::write(&e, "1").unwrap();
+        set(&e, 0o644);
+        // Tightened between plan and apply: the write refuses instead of loosening it again.
         let snap = read(&base, Path::new("e")).unwrap();
-        // Made world-readable after it was read: the temporary file never gets that mode.
-        fs::set_permissions(base.join("e"), fs::Permissions::from_mode(0o666)).unwrap();
-        let seen = std::rc::Rc::new(std::cell::Cell::new(0));
-        let (s, b) = (seen.clone(), base.clone());
-        with_seam(
-            move || s.set(mode(&tmp_in(&b).unwrap())),
-            || write(&base, Path::new("e"), &snap, b"2", false).unwrap(),
+        set(&e, 0o600);
+        let err = write(&base, Path::new("e"), &snap, b"2", false).unwrap_err();
+        assert_eq!(err.code, "CHANGED");
+        assert_eq!((mode(&e), fs::read(&e).unwrap()), (0o600, b"1".to_vec()));
+        // Tightened while the temporary file was being written: refused at the commit check.
+        set(&e, 0o644);
+        let snap = read(&base, Path::new("e")).unwrap();
+        let t = e.clone();
+        let err = with_seam(
+            move || fs::set_permissions(&t, fs::Permissions::from_mode(0o600)).unwrap(),
+            || write(&base, Path::new("e"), &snap, b"2", false).unwrap_err(),
         );
-        assert_eq!(seen.get(), 0o600);
-        assert_eq!(mode(&base.join("e")), 0o600);
+        assert_eq!(err.code, "CHANGED");
+        assert_eq!((mode(&e), fs::read(&e).unwrap()), (0o600, b"1".to_vec()));
+        // The same for a removal.
+        set(&e, 0o644);
+        let snap = read(&base, Path::new("e")).unwrap();
+        set(&e, 0o600);
+        assert_eq!(
+            remove(&base, Path::new("e"), &snap, false)
+                .unwrap_err()
+                .code,
+            "CHANGED"
+        );
+        assert!(e.is_file());
+        assert_eq!(names(&base), ["e"]);
+    }
+
+    #[test]
+    fn a_replaced_set_aside_placeholder_is_neither_overwritten_nor_deleted() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().to_path_buf();
+        put(&base, "f", b"old", false).unwrap();
+        let snap = read(&base, Path::new("f")).unwrap();
+        let b = base.clone();
+        BEFORE_ASIDE.with(|s| {
+            *s.borrow_mut() = Some(Box::new(move || {
+                let aside = fs::read_dir(&b)
+                    .unwrap()
+                    .map(|e| e.unwrap().path())
+                    .find(|p| p.to_string_lossy().contains(".mwf-del-"))
+                    .unwrap();
+                // Kept under another name, so its inode cannot be reused for the new file.
+                fs::rename(&aside, b.join("placeholder")).unwrap();
+                fs::write(&aside, "planted").unwrap();
+            }))
+        });
+        let err = remove(&base, Path::new("f"), &snap, false).unwrap_err();
+        BEFORE_ASIDE.with(|s| *s.borrow_mut() = None);
+        assert_eq!(err.code, "CHANGED", "{}", err.message);
+        assert_eq!(fs::read(base.join("f")).unwrap(), b"old");
+        let planted = names(&base)
+            .into_iter()
+            .find(|n| n.contains(".mwf-del-"))
+            .unwrap();
+        assert_eq!(fs::read(base.join(planted)).unwrap(), b"planted");
     }
 }
