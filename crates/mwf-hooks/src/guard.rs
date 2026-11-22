@@ -27,19 +27,13 @@ pub fn patch_paths(patch: &str) -> Vec<&str> {
         .collect()
 }
 
-/// Whether `s` names a `.mwf` directory: `.mwf` (any case, for case-insensitive volumes) as a
-/// whole path component, as in `.mwf`, `.mwf/pages`, `x/.MWF/log.md`, `of=.mwf/a`, but not
-/// `notes.mwf/a` or `.mwfrc`.
+/// Whether the path `s` (one operand, quotes allowed) has a `.mwf` component (any case, for
+/// case-insensitive volumes), as in `.mwf`, `.mwf/pages`, `x/.MWF/log.md`, but not
+/// `notes.mwf/a`, `notes+.mwf/a` or `.mwfrc`.
 pub fn mentions_mwf(s: &str) -> bool {
-    let name_char = |c: char| c.is_alphanumeric() || c == '-' || c == '_' || c == '.';
-    let lower = s.to_ascii_lowercase();
-    lower.match_indices(".mwf").any(|(i, m)| {
-        lower[..i].chars().next_back().is_none_or(|c| !name_char(c))
-            && lower[i + m.len()..]
-                .chars()
-                .next()
-                .is_none_or(|c| !name_char(c))
-    })
+    s.trim_matches(['"', '\''])
+        .split('/')
+        .any(|c| c.eq_ignore_ascii_case(".mwf"))
 }
 
 /// Whether the shell command `cmd` looks like it writes under a `.mwf` directory: a redirect
@@ -47,7 +41,7 @@ pub fn mentions_mwf(s: &str) -> bool {
 /// command of a list or pipeline is checked on its own. Commands run as `mwf …` are allowed,
 /// since mwf is how `.mwf/` is written, but not a redirect the shell does around them.
 pub fn shell_writes_mwf(cmd: &str) -> bool {
-    if !mentions_mwf(cmd) {
+    if !cmd.to_ascii_lowercase().contains(".mwf") {
         return false;
     }
     cmd.replace("&&", "\n")
@@ -166,7 +160,6 @@ mod tests {
             "./.mwf/pages/a.md",
             "x/.MWF/log.md",
             "\".mwf/a\"",
-            "of=.mwf/a",
             "../.mwf",
         ] {
             assert!(mentions_mwf(yes), "{yes}");
@@ -181,6 +174,8 @@ mod tests {
             "my-.mwf/a",
             "x_.mwf",
             "..mwf/a",
+            "notes+.mwf/a",
+            "of=.mwf/a",
         ] {
             assert!(!mentions_mwf(no), "{no}");
         }
@@ -238,6 +233,8 @@ mod tests {
             "rm -rf notes.mwf/old",
             "echo x > build.mwf/out",
             "sed -i s/a/b/ docs/a.mwf/x.md",
+            "rm notes+.mwf/a",
+            "echo x > notes+.mwf/a",
         ] {
             assert!(!shell_writes_mwf(cmd), "{cmd}");
         }

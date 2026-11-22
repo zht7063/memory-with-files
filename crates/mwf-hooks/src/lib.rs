@@ -61,13 +61,14 @@ impl Event {
 /// "claude"]`); the host's JSON comes on stdin. Always [`ExitCode::SUCCESS`]: bad arguments or
 /// input print `{}` and one `mwf hook: …` line on stderr (ADR 0051).
 pub fn run(args: Vec<OsString>, io: &mut Io) -> ExitCode {
-    run_from(args, io, Instant::now())
+    let deadline = Instant::now() + DEADLINE;
+    run_with(args, io, &|| Instant::now() >= deadline)
 }
 
-/// [`run`] with the deadline counted from `start`.
-fn run_from(args: Vec<OsString>, io: &mut Io, start: Instant) -> ExitCode {
+/// [`run`] with `late` saying whether the deadline has passed; tests pass their own.
+fn run_with(args: Vec<OsString>, io: &mut Io, late: &dyn Fn() -> bool) -> ExitCode {
     let stdin = &mut *io.stdin;
-    let out = match panic::catch_unwind(AssertUnwindSafe(|| handle(&args, stdin, start))) {
+    let out = match panic::catch_unwind(AssertUnwindSafe(|| handle(&args, stdin, late))) {
         Ok(Ok(out)) => out,
         Ok(Err(why)) => {
             let _ = writeln!(io.stderr, "mwf hook: {why}");
@@ -88,7 +89,11 @@ fn empty() -> Value {
 }
 
 /// The output of one run; `Err` is bad arguments or input, for stderr.
-fn handle(args: &[OsString], stdin: &mut dyn Read, start: Instant) -> Result<Value, String> {
+fn handle(
+    args: &[OsString],
+    stdin: &mut dyn Read,
+    late: &dyn Fn() -> bool,
+) -> Result<Value, String> {
     let (event, host) = parse_args(args)?;
     let input = read_input(stdin)?;
     let cwd = input
@@ -102,7 +107,7 @@ fn handle(args: &[OsString], stdin: &mut dyn Read, start: Instant) -> Result<Val
         host,
         input: &input,
         cwd: &cwd,
-        deadline: start + DEADLINE,
+        late,
     };
     if hook.late() {
         return Ok(empty());
@@ -216,7 +221,8 @@ struct Hook<'a> {
     host: Host,
     input: &'a Value,
     cwd: &'a Path,
-    deadline: Instant,
+    /// Whether the deadline has passed; asked before each optional step.
+    late: &'a dyn Fn() -> bool,
 }
 
 impl Hook<'_> {
@@ -225,7 +231,7 @@ impl Hook<'_> {
     }
 
     fn late(&self) -> bool {
-        Instant::now() >= self.deadline
+        (self.late)()
     }
 
     /// `{"hookSpecificOutput":{"hookEventName":…,"additionalContext":…}}`, the form both hosts
@@ -312,6 +318,10 @@ impl Hook<'_> {
         if lines.is_empty() {
             return Ok(empty());
         }
+        // Pages go out only once they are recorded, so none is shown twice.
+        if self.late() {
+            return Ok(empty());
+        }
         // A failed save is reported like any app error (ADR 0051), not hidden.
         app.mark_recalled(session, &emitted)?;
         Ok(Self::context(
@@ -344,7 +354,8 @@ impl Hook<'_> {
     }
 
     /// PreToolUse (ADR 0024): refuse edits and shell writes under a `.mwf` directory. Past
-    /// the deadline the tool is allowed, as on any other failure.
+    /// the deadline the tool is allowed, as on any other failure: the deadline is checked
+    /// before each path lookup, since each one walks the filesystem.
     fn pre_tool(&self, app: &App) -> Value {
         if self.late() {
             return empty();
@@ -352,14 +363,28 @@ impl Hook<'_> {
         let tool = self.str("tool_name");
         let input = self.input.get("tool_input").unwrap_or(&Value::Null);
         let field = |k: &str| input.get(k).and_then(Value::as_str).unwrap_or("");
-        let inside = |p: &str| !p.is_empty() && app.is_inside_mwf(self.cwd, Path::new(p));
+        // `None` once past the deadline.
+        let inside = |paths: &[&str]| -> Option<bool> {
+            for p in paths.iter().filter(|p| !p.is_empty()) {
+                if self.late() {
+                    return None;
+                }
+                if app.is_inside_mwf(self.cwd, Path::new(p)) {
+                    return Some(true);
+                }
+            }
+            Some(false)
+        };
         let reason = match (self.host, tool) {
             (Host::Claude, "Edit" | "Write" | "MultiEdit" | "NotebookEdit") => {
                 let path = match field("file_path") {
                     "" => field("notebook_path"),
                     p => p,
                 };
-                inside(path).then_some(mwf_assets::HOOK_DENY_EDIT)
+                match inside(&[path]) {
+                    None => return empty(),
+                    Some(i) => i.then_some(mwf_assets::HOOK_DENY_EDIT),
+                }
             }
             // Codex matches `apply_patch` also as `Edit` and `Write`; the patch is the command.
             (Host::Codex, "apply_patch" | "Edit" | "Write") => {
@@ -367,10 +392,10 @@ impl Hook<'_> {
                     "" => field("patch"),
                     p => p,
                 };
-                guard::patch_paths(patch)
-                    .into_iter()
-                    .any(inside)
-                    .then_some(mwf_assets::HOOK_DENY_EDIT)
+                match inside(&guard::patch_paths(patch)) {
+                    None => return empty(),
+                    Some(i) => i.then_some(mwf_assets::HOOK_DENY_EDIT),
+                }
             }
             (_, "Bash" | "shell" | "exec_command" | "local_shell") => {
                 let command = match input.get("command").or_else(|| input.get("cmd")) {
@@ -447,28 +472,28 @@ mod tests {
         }
     }
 
-    /// Runs one hook in `root` with the deadline counted from `start`; returns stdout.
-    fn hook_at(root: &Path, args: &[&str], input: Value, start: Instant) -> String {
+    /// Runs one hook in `root` with `late` as the deadline check; returns stdout.
+    fn hook_at(root: &Path, args: &[&str], input: Value, late: &dyn Fn() -> bool) -> String {
         let mut input = input;
         input["cwd"] = json!(root.display().to_string());
         let stdin = input.to_string();
         let (mut out, mut err) = (Vec::new(), Vec::new());
-        let code = run_from(
+        let code = run_with(
             os(args),
             &mut Io {
                 stdin: &mut stdin.as_bytes(),
                 stdout: &mut out,
                 stderr: &mut err,
             },
-            start,
+            late,
         );
         assert_eq!(code, ExitCode::SUCCESS);
         assert!(err.is_empty(), "{}", String::from_utf8_lossy(&err));
         String::from_utf8(out).unwrap()
     }
 
-    #[test]
-    fn past_the_deadline_every_event_skips_its_work() {
+    /// A project with one page, in a temporary git root.
+    fn project() -> (tempfile::TempDir, PathBuf) {
         let dir = tempfile::tempdir().unwrap();
         let root = std::fs::canonicalize(dir.path()).unwrap();
         std::fs::create_dir(root.join(".git")).unwrap();
@@ -484,6 +509,24 @@ mod tests {
                 ..Default::default()
             })
             .unwrap();
+        (dir, root)
+    }
+
+    /// Runs the hook with a deadline that passes at its `k`-th check (from 0; never when `k`
+    /// is `usize::MAX`) and returns stdout and the number of checks made.
+    fn hook_late_at(root: &Path, args: &[&str], input: Value, k: usize) -> (String, usize) {
+        let calls = std::cell::Cell::new(0);
+        let late = || {
+            calls.set(calls.get() + 1);
+            calls.get() > k
+        };
+        let out = hook_at(root, args, input, &late);
+        (out, calls.get())
+    }
+
+    #[test]
+    fn past_the_deadline_every_event_skips_its_work() {
+        let (_dir, root) = project();
         let cases = [
             (
                 &["session-start", "--host", "claude"][..],
@@ -502,10 +545,9 @@ mod tests {
                 json!({"tool_name": "Bash", "tool_input": {"command": "rm .mwf/index.md"}}),
             ),
         ];
-        let expired = Instant::now().checked_sub(DEADLINE).unwrap();
         for (args, input) in &cases {
             assert_eq!(
-                hook_at(&root, args, input.clone(), expired),
+                hook_at(&root, args, input.clone(), &|| true),
                 "{}\n",
                 "{args:?}"
             );
@@ -517,10 +559,51 @@ mod tests {
         // The same input within the deadline does the work: the test is not vacuous.
         for (args, input) in &cases {
             assert_ne!(
-                hook_at(&root, args, input.clone(), Instant::now()),
+                hook_at(&root, args, input.clone(), &|| false),
                 "{}\n",
                 "{args:?}"
             );
+        }
+    }
+
+    #[test]
+    fn prompt_shows_pages_only_when_it_records_them() {
+        let (_dir, root) = project();
+        let args = ["prompt", "--host", "claude"];
+        let input =
+            |id: &str| json!({"session_id": id, "prompt": "why do duplicate crate versions fail"});
+        let (full, checks) = hook_late_at(&root, &args, input("full"), usize::MAX);
+        assert!(full.contains("cargo-deny"), "{full}");
+        // Before opening the project, on entry, after `recall`, before `mark_recalled`.
+        assert_eq!(checks, 4);
+        // Whenever the deadline passes, pages go out exactly when they were recorded.
+        for k in 0..checks {
+            let id = format!("late-{k}");
+            let (out, _) = hook_late_at(&root, &args, input(&id), k);
+            let recorded = root.join(format!(".mwf/.state/{id}.json")).exists();
+            assert_eq!(out != "{}\n", recorded, "deadline at check {k}: {out}");
+            assert_eq!(out, "{}\n", "deadline at check {k}");
+        }
+        // The last check is the one between `recall` and `mark_recalled`.
+        let (out, _) = hook_late_at(&root, &args, input("between"), checks - 1);
+        assert_eq!(out, "{}\n");
+        assert!(!root.join(".mwf/.state/between.json").exists());
+    }
+
+    #[test]
+    fn pre_tool_stops_looking_up_patch_paths_at_the_deadline() {
+        let (_dir, root) = project();
+        let args = ["pre-tool", "--host", "codex"];
+        // Only the last path is inside `.mwf/`.
+        let patch = "*** Begin Patch\n*** Add File: src/a.rs\n+a\n*** Add File: src/b.rs\n+b\n*** Add File: .mwf/pages/x.md\n+x\n*** End Patch\n";
+        let input = json!({"tool_name": "apply_patch", "tool_input": {"command": patch}});
+        let (full, checks) = hook_late_at(&root, &args, input.clone(), usize::MAX);
+        assert!(full.contains("\"permissionDecision\":\"deny\""), "{full}");
+        // One check before opening the project, one on entry, one before each of the paths.
+        assert_eq!(checks, 5);
+        for k in 0..checks {
+            let (out, _) = hook_late_at(&root, &args, input.clone(), k);
+            assert_eq!(out, "{}\n", "deadline at check {k}: the tool is allowed");
         }
     }
 
