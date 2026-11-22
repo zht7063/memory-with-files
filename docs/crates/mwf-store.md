@@ -6,7 +6,7 @@
 
 ## 公开 API
 
-P2 已实现（`crates/mwf-store`）除会话状态外的全部内容；与最初草案的差异见下方“实现说明”。
+P2 实现了除会话状态外的全部内容，P3 加入会话状态（[0051](../decisions/0051-hook-apis-and-session-state.md)）；与最初草案的差异见下方“实现说明”。
 
 ```rust
 pub struct Project { root: PathBuf }           // root = 含 .mwf/ 的目录（已 canonicalize）
@@ -21,8 +21,20 @@ impl Project {
     pub fn read_index(&self) -> Result<Option<Vec<u8>>, StoreError>;
     pub fn read_log(&self, n: usize) -> Result<Vec<String>, StoreError>;
     pub fn lock(&self, timeout: Duration) -> Result<WriteGuard<'_>, StoreError>; // File::lock（0013）
-    // P3：pub fn session(&self, id: &str) -> SessionStore<'_>;      // .mwf/.state/（0034）
+    pub fn session(&self, id: &str) -> Option<SessionStore<'_>>;      // .mwf/.state/<id>.json（0034、0051）；id 无安全字符时 None
+    pub fn prune_sessions(&self, now: SystemTime) -> Result<usize, StoreError>; // 删除 mtime 满 7 天的文件
 }
+
+pub struct SessionStore<'p> { … }
+impl SessionStore<'_> {
+    pub fn id(&self) -> &str;                                          // 清理后的 id
+    pub fn load(&self) -> Result<SessionState, StoreError>;            // 缺失或损坏读作空状态
+    pub fn save(&self, state: &SessionState) -> Result<(), StoreError>; // 原子写，不取 .lock
+    pub fn remove(&self) -> Result<(), StoreError>;
+}
+pub struct SessionState { pub recalled: Vec<String>, pub reminded_turn: Option<String> }
+pub fn session_file_id(id: &str) -> Option<String>;  // [A-Za-z0-9_-]，最多 SESSION_ID_MAX = 128
+pub const SESSION_MAX_AGE: Duration;                 // 7 天
 pub const LOCK_WAIT: Duration = Duration::from_secs(2);              // 0033
 
 impl WriteGuard<'_> {                          // 只有持锁才能写；写方法取 &mut self
@@ -64,7 +76,7 @@ pub enum StoreError { NotInitialized { start }, NotGitRoot { path, git_root }, A
 - **`rename_page`**：只移动文件、不改内容；目标已存在为 `PageExists`，不覆盖。
 - **配置**：缺文件、缺表、缺键都取默认值（0039）；未知键、类型错误、顶层键不是表（`hooks = []`、`hooks = [4, 5, false, 9]`）、非 UTF-8 为 `Config` 错误，`message` 只含 TOML 解析器给出的原因，不含原文片段。`mwf-app` 把它映射为 `INVALID_CONFIG`（[0049](../decisions/0049-app-defaults.md)）。
 - **错误**：`StoreError` 用 `thiserror`；`Io` 带出错的路径。各变体对应的 CLI 错误码：`NotInitialized` → `NOT_INITIALIZED`、`NotGitRoot` → `NOT_GIT_ROOT`、`AlreadyInitialized` → `ALREADY_INITIALIZED`、`LockTimeout` → `LOCK_TIMEOUT`、`PageNotFound` → `NOT_FOUND`、`PageExists` → `ALREADY_EXISTS`、`Config` → `INVALID_CONFIG`、`WrongFileType` → `WRONG_FILE_TYPE`、`Changed` → `CHANGED`、`Io` → `IO`（0049）。
-- **会话状态**（`.mwf/.state/`，0034）留到 P3 与 hooks 一起实现；`.mwf/.gitignore` 已忽略 `.state/`。
+- **会话状态**（`.mwf/.state/<id>.json`，0034、[0051](../decisions/0051-hook-apis-and-session-state.md)）：`{"version":1,"recalled":[…],"reminded_turn":…}`；id 只保留 ASCII 字母、数字、`-`、`_`，最多 128 个，防止路径穿越。`.state/` 在第一次 `save` 时创建，与 `pages/`、`trash/` 同样检查文件类型与 `.mwf` 句柄（`ensure_dir` 由 `WriteGuard` 移到 `Project`，会话写入不需要锁）。不存在、不是 JSON、形状或 `version` 不对的文件读作空状态；符号链接或类型不对为 `WrongFileType`。`save` 是原子写，不取 `.mwf/.lock`（每会话一个文件）。`prune_sessions(now)` 删除 mtime 早于 `now` 7 天及以上的普通文件（含临时文件），不动符号链接与目录。`.mwf/.gitignore` 忽略 `.state/`。
 
 ## 依赖
 

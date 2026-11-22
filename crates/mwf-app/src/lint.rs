@@ -42,6 +42,12 @@ impl App {
     /// Checks every page file and the project; never writes. Issues are sorted by page (project
     /// issues first), then rule.
     pub fn lint(&self) -> Result<LintReport, AppError> {
+        self.check(&Corpus::load(&self.project)?, true)
+    }
+
+    /// Every lint rule over `corpus`; `possible_duplicate`, which costs one BM25 query per page,
+    /// only when `duplicates` is set (SessionStart leaves it out, ADR 0051).
+    pub(crate) fn check(&self, corpus: &Corpus, duplicates: bool) -> Result<LintReport, AppError> {
         let now = self.now()?;
         let mut issues = Vec::new();
         // Only a config that does not parse is a finding; a wrong file type, a replaced `.mwf`
@@ -57,7 +63,6 @@ impl App {
             )),
             Err(e) => return Err(e.into()),
         }
-        let corpus = Corpus::load(&self.project)?;
         for e in &corpus.entries {
             let page = Some(e.stem.as_str());
             for f in scan_all(&e.stem) {
@@ -158,7 +163,12 @@ impl App {
             )),
         }
 
-        for (a, b) in duplicates(&corpus) {
+        let pairs = if duplicates {
+            find_duplicates(corpus)
+        } else {
+            Vec::new()
+        };
+        for (a, b) in pairs {
             for (this, other) in [(a, b), (b, a)] {
                 issues.push(issue(
                     Some(this.slug.as_str()),
@@ -188,7 +198,7 @@ impl App {
 
 /// Pairs of active pages (first slug < second) where either covers the other (see
 /// [`DUPLICATE_SIMILARITY`]).
-fn duplicates(corpus: &Corpus) -> Vec<(&Page, &Page)> {
+fn find_duplicates(corpus: &Corpus) -> Vec<(&Page, &Page)> {
     let active: Vec<&Page> = corpus
         .pages()
         .filter(|p| p.fm.status == Status::Active)

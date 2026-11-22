@@ -429,6 +429,7 @@ version = "2.0.0-alpha.0"
 dependencies = [
  "mwf-domain",
  "serde",
+ "serde_json",
  "tempfile",
  "thiserror",
  "toml",

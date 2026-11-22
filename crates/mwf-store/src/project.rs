@@ -244,6 +244,23 @@ impl Project {
         Ok(exists_as(&path, Kind::Dir)?.then_some(path))
     }
 
+    /// `.mwf/<name>/`, created and synced into `.mwf/` when missing.
+    pub(crate) fn ensure_dir(&self, name: &str) -> Result<PathBuf, StoreError> {
+        if let Some(path) = self.store_dir(name)? {
+            return Ok(path);
+        }
+        let path = self.path(name)?;
+        match fs::create_dir(&path) {
+            Ok(()) => sync_dir(&self.checked_mwf()?)?,
+            // Created by something else since the check; it must still be a real directory.
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+                exists_as(&path, Kind::Dir)?;
+            }
+            Err(e) => return Err(io_at(&path)(e)),
+        }
+        Ok(path)
+    }
+
     /// Reads `config.toml`; a missing file means all defaults (ADR 0039).
     pub fn config(&self) -> Result<Config, StoreError> {
         let path = self.path(CONFIG_FILE)?;

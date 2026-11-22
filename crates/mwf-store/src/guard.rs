@@ -1,7 +1,6 @@
 //! Writes, which need the project write lock (ADRs 0013, 0016).
 
 use std::fs::{self, File};
-use std::io;
 use std::path::PathBuf;
 
 use mwf_domain::{Slug, Timestamp};
@@ -62,7 +61,7 @@ impl<'p> WriteGuard<'p> {
     /// Creates or replaces `pages/<slug>.md` atomically; creates `pages/` when missing.
     pub fn write_page(&mut self, slug: &Slug, bytes: &[u8]) -> Result<(), StoreError> {
         self.check_lock()?;
-        self.ensure_dir(PAGES_DIR)?;
+        self.project.ensure_dir(PAGES_DIR)?;
         write_file(&self.project.page_path(slug)?, bytes)
     }
 
@@ -72,7 +71,7 @@ impl<'p> WriteGuard<'p> {
     pub fn move_to_trash(&mut self, slug: &Slug, ts: &Timestamp) -> Result<PathBuf, StoreError> {
         self.check_lock()?;
         let from = self.existing_page(slug)?;
-        let trash = self.ensure_dir(TRASH_DIR)?;
+        let trash = self.project.ensure_dir(TRASH_DIR)?;
         let mut to = trash.join(format!("{slug}.{ts}.md"));
         let mut n = 1;
         while fs::symlink_metadata(&to).is_ok() {
@@ -123,22 +122,5 @@ impl<'p> WriteGuard<'p> {
         } else {
             Err(StoreError::PageNotFound { slug: slug.clone() })
         }
-    }
-
-    /// `.mwf/<name>/`, created and synced into `.mwf/` when missing.
-    fn ensure_dir(&self, name: &str) -> Result<PathBuf, StoreError> {
-        if let Some(path) = self.project.store_dir(name)? {
-            return Ok(path);
-        }
-        let path = self.project.path(name)?;
-        match fs::create_dir(&path) {
-            Ok(()) => sync_dir(&self.project.checked_mwf()?)?,
-            // Created by something else since the check; it must still be a real directory.
-            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
-                exists_as(&path, Kind::Dir)?;
-            }
-            Err(e) => return Err(io_at(&path)(e)),
-        }
-        Ok(path)
     }
 }
