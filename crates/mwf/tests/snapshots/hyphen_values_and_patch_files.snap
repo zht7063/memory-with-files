@@ -1,0 +1,43 @@
+---
+source: crates/mwf/tests/cli.rs
+expression: self.transcript
+---
+$ mwf new todo --type task --title -Todo --summary '- open items'
+< - one
+< - two
+created todo
+rev: [REV]
+[exit 0]
+
+$ mwf patch todo --old '- two' --new '- three'
+updated todo
+rev: [REV]
+[exit 0]
+
+$ mwf patch todo --old-file old.txt --new-file new.txt
+updated todo
+rev: [REV]
+[exit 0]
+
+$ mwf patch todo --old-file missing.txt --new x
+[stderr] error[IO]: cannot read --old-file missing.txt: No such file or directory (os error 2)
+[exit 1]
+
+$ mwf show todo
+slug: todo
+rev: [REV]
+title: -Todo
+type: task
+summary: - open items
+tags:
+status: active
+created: [TIME]
+updated: [TIME]
+
+- first
+- three
+
+links out: none
+
+links in: none
+[exit 0]

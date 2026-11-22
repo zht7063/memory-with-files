@@ -51,6 +51,11 @@ pub struct SearchIn { query, types, tags, status: StatusFilter, limit }       //
 pub struct ListIn { types, tags, status }                                    // types 任一、tags 全部
 pub struct LintReport { issues: Vec<LintIssue>, errors, warnings }           // LintIssue { page: Option<String>, rule, severity, message }
 
+pub fn looks_secret(text: &str) -> bool;         // secret 规则命中；适配器用它隐去回显的输入（0050）
+pub fn shown_slug(slug: &str) -> &str;           // 命中时为 "[slug withheld: looks like a secret]"
+pub fn shown_title(title: &str) -> &str;         // 同上，"[title withheld: …]"
+pub fn shown_summary(summary: &str) -> &str;     // 同上，"[summary withheld: …]"
+
 pub const BODY_MAX_BYTES: usize = 102_400;       // 0033、0049
 pub const RELATED_LIMIT: usize = 3;              // 0040
 pub const RELATED_MIN_TERMS: usize = 2;          // 0049

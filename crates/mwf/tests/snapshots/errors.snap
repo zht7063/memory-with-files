@@ -1,0 +1,107 @@
+---
+source: crates/mwf/tests/cli.rs
+expression: self.transcript
+---
+$ mwf show x
+[stderr] error[NOT_INITIALIZED]: no .mwf/ directory in [ROOT] or any parent directory
+[exit 1]
+
+$ mwf show x --json
+{"ok":false,"error":{"code":"NOT_INITIALIZED","message":"no .mwf/ directory in [ROOT] or any parent directory","details":{"start":"[ROOT]"}}}
+[exit 1]
+
+$ mwf init
+mwf created .mwf/ and added `.mwf/log.md merge=union` to .gitattributes.
+Commit .mwf/ and .gitattributes so the team shares the wiki.
+
+Next:
+  mwf install --host claude   (or --host codex) so sessions load and save memories
+  mwf new <slug> --type <type> --title "..." --summary "..." < body.md
+  mwf lint
+[exit 0]
+
+$ mwf init --json
+{"ok":false,"error":{"code":"ALREADY_INITIALIZED","message":"[ROOT]/.mwf already exists; init changes nothing in an existing project","details":{"path":"[ROOT]/.mwf"}}}
+[exit 1]
+
+$ mwf show Not_A_Slug
+[stderr] error[INVALID_SLUG]: invalid slug: use one or more of a-z, 0-9 and -
+[exit 1]
+
+$ mwf new x --type nonsense --title X --summary x
+[stderr] error[INVALID_FIELD]: invalid frontmatter field `type`: must be one of preference, decision, knowledge, incident, task
+[exit 1]
+
+$ mwf
+[stderr] mwf: a project-local wiki engine for coding agents
+[stderr] 
+[stderr] Usage: mwf [OPTIONS] <COMMAND>
+[stderr] 
+[stderr] Commands:
+[stderr]   init       Create .mwf/ in this git repository root
+[stderr]   show       Print a page: frontmatter, body, rev, links out and links in
+[stderr]   search     BM25 search over pages; the words of QUERY are joined with spaces
+[stderr]   list       List pages by slug
+[stderr]   index      Print the table of contents rendered from the current pages
+[stderr]   log        Print the last N lines of log.md, oldest first
+[stderr]   lint       Check every page; exits 1 when there is an error
+[stderr]   new        Create a page; the body is read from stdin
+[stderr]   write      Replace a page's body with stdin, if REV is still its rev
+[stderr]   patch      Replace the one occurrence of OLD in a page's body with NEW
+[stderr]   set        Change frontmatter fields
+[stderr]   archive    Set a page's status to archived
+[stderr]   unarchive  Set a page's status back to active
+[stderr]   rename     Rename a page and rewrite the links to it
+[stderr]   delete     Move a page to .mwf/trash/
+[stderr]   help       Print this message or the help of the given subcommand(s)
+[stderr] 
+[stderr] Options:
+[stderr]       --json     Print `{"ok": true, "data": …}` or `{"ok": false, "error": …}` instead of text
+[stderr]   -h, --help     Print help
+[stderr]   -V, --version  Print version
+[exit 2]
+
+$ mwf frobnicate
+[stderr] error: unrecognized subcommand 'frobnicate'
+[stderr] 
+[stderr] Usage: mwf [OPTIONS] <COMMAND>
+[stderr] 
+[stderr] For more information, try '--help'.
+[exit 2]
+
+$ mwf frobnicate --json
+{"ok":false,"error":{"code":"USAGE","message":"unrecognized subcommand 'frobnicate'\n\nUsage: mwf [OPTIONS] <COMMAND>\n\nFor more information, try '--help'."}}
+[exit 2]
+
+$ mwf new x
+[stderr] error: the following required arguments were not provided:
+[stderr]   --type <TYPE>
+[stderr]   --title <TITLE>
+[stderr]   --summary <SUMMARY>
+[stderr] 
+[stderr] Usage: mwf new --type <TYPE> --title <TITLE> --summary <SUMMARY> <SLUG>
+[stderr] 
+[stderr] For more information, try '--help'.
+[exit 2]
+
+$ mwf --json new x
+{"ok":false,"error":{"code":"USAGE","message":"the following required arguments were not provided:\n  --type <TYPE>\n  --title <TITLE>\n  --summary <SUMMARY>\n\nUsage: mwf new --type <TYPE> --title <TITLE> --summary <SUMMARY> <SLUG>\n\nFor more information, try '--help'."}}
+[exit 2]
+
+$ mwf list --status gone --json
+{"ok":false,"error":{"code":"USAGE","message":"invalid value 'gone' for '--status <STATUS>'\n  [possible values: active, archived, all]\n\nFor more information, try '--help'."}}
+[exit 2]
+
+$ mwf log -n many
+[stderr] error: invalid value 'many' for '-n <N>': invalid digit found in string
+[stderr] 
+[stderr] For more information, try '--help'.
+[exit 2]
+
+$ mwf patch x --old a --old-file a.txt --new b
+[stderr] error: the argument '--old <OLD>' cannot be used with '--old-file <PATH>'
+[stderr] 
+[stderr] Usage: mwf patch --old <OLD> --new <NEW> <SLUG>
+[stderr] 
+[stderr] For more information, try '--help'.
+[exit 2]

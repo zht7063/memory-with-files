@@ -21,6 +21,9 @@ pub use corpus::{RELATED_LIMIT, RELATED_MIN_TERMS};
 pub use dto::*;
 pub use error::{AppError, ErrorCode};
 pub use lint::DUPLICATE_SIMILARITY;
+pub use redact::{
+    looks_secret, slug as shown_slug, summary as shown_summary, title as shown_title,
+};
 pub use write::BODY_MAX_BYTES;
 
 /// An open project and the clock its writes and lint use.

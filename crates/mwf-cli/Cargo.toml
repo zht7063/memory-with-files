@@ -9,7 +9,12 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+# Exactly 4.6.3: clap_derive 4.6.4+ uses syn 3, and deny.toml rejects duplicate major versions
+# (serde_derive 1.0.228, pinned in mwf-store and mwf-app, uses syn 2). `wrap_help` with the
+# fixed `term_width` in args.rs makes `--help` identical whatever features other crates unify in.
+clap = { version = "=4.6.3", features = ["derive", "wrap_help"] }
 mwf-app.workspace = true
+serde_json = "1"
 
 [lints]
 workspace = true
