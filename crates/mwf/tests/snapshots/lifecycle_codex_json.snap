@@ -1,0 +1,68 @@
+---
+source: crates/mwf/tests/lifecycle.rs
+expression: self.transcript
+---
+$ mwf install --host codex --json
+{"ok":true,"data":{"action":"install","host":"codex","dry_run":false,"command":"[BIN]/mwf","hooks":{"path":"[HOME]/codex-home/hooks.json","status":"created","backup":null,"events":{"SessionStart":"added","UserPromptSubmit":"added","Stop":"added","PreToolUse":"added"}},"skill":{"dir":"[HOME]/.agents/skills/mwf","files":[{"path":"SKILL.md","status":"created","backup":null},{"path":"references/commands.md","status":"created","backup":null}]},"notes":["mwf is not on PATH, so the hooks run [BIN]/mwf; run install again if it moves","Codex runs new or changed hooks only after you trust them: run /hooks in Codex and trust the mwf hooks","the hooks do nothing in a project until `mwf init` creates its .mwf/"]}}
+[exit 0]
+
+--- ~/codex-home/hooks.json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[BIN]/mwf hook session-start --host codex",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[BIN]/mwf hook prompt --host codex",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[BIN]/mwf hook stop --host codex",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "apply_patch|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[BIN]/mwf hook pre-tool --host codex",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
+
+$ mwf install --json --host=codex
+{"ok":true,"data":{"action":"install","host":"codex","dry_run":false,"command":"[BIN]/mwf","hooks":{"path":"[HOME]/codex-home/hooks.json","status":"unchanged","backup":null,"events":{"SessionStart":"unchanged","UserPromptSubmit":"unchanged","Stop":"unchanged","PreToolUse":"unchanged"}},"skill":{"dir":"[HOME]/.agents/skills/mwf","files":[{"path":"SKILL.md","status":"unchanged","backup":null},{"path":"references/commands.md","status":"unchanged","backup":null}]},"notes":["mwf is not on PATH, so the hooks run [BIN]/mwf; run install again if it moves","the hooks do nothing in a project until `mwf init` creates its .mwf/"]}}
+[exit 0]
+
+$ mwf uninstall --host codex --json
+{"ok":true,"data":{"action":"uninstall","host":"codex","dry_run":false,"hooks":{"path":"[HOME]/codex-home/hooks.json","status":"removed","backup":null,"events":{"SessionStart":"removed","UserPromptSubmit":"removed","Stop":"removed","PreToolUse":"removed"}},"skill":{"dir":"[HOME]/.agents/skills/mwf","files":[{"path":"SKILL.md","status":"removed","backup":null},{"path":"references/commands.md","status":"removed","backup":null}]},"notes":["project wikis (.mwf/) were not touched"]}}
+[exit 0]
+
+--- ~/codex-home/hooks.json: absent

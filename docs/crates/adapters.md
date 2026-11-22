@@ -37,14 +37,20 @@ mod guard;  // apply_patch 路径解析、shell 命令尽力检测
 
 ## mwf-lifecycle
 
-**职责**：`mwf install|uninstall --host claude|codex [--dry-run]`。编辑宿主的 `settings.json` / `hooks.json`（四个事件：SessionStart、UserPromptSubmit、Stop、PreToolUse），写入 skill 文件；备份、幂等、只删带 `mwf hook` 标记的条目、拒绝符号链接（0031、0037）。
+**职责**：`mwf install|uninstall --host claude|codex [--dry-run] [--json]`。编辑宿主的 `settings.json` / `hooks.json`（四个事件：SessionStart、UserPromptSubmit、Stop、PreToolUse），写入 `SKILL_FILES`；备份、原子写、幂等、只删 `mwf hook … --host <本宿主>` 条目、拒绝基准目录之下的符号链接（0031、0037）。P4 已实现，细节见 [0052](../decisions/0052-install-and-uninstall.md)。
 
 ```rust
-pub fn install(host: Host, opts: &InstallOpts) -> Result<Report, LifecycleError>;
-pub fn uninstall(host: Host, opts: &InstallOpts) -> Result<Report, LifecycleError>;
+pub struct Io<'a> { pub stdin: &'a mut dyn Read, pub stdout: &'a mut dyn Write, pub stderr: &'a mut dyn Write }
+pub fn run(args: Vec<OsString>, io: &mut Io) -> ExitCode;   // args 从 `install` / `uninstall` 起；退出码 0 / 1 / 2
+mod hooks;  // 认出、加入、删除 mwf 的条目
+mod json;   // 保留键序、原文与排版的 JSON 树（不启用 serde_json 的 preserve_order）
+mod fsx;    // 不经符号链接的读（含文件与目录身份）；持有目录句柄的原子写、先移开再删、0600 备份
 ```
 
-依赖：`mwf-assets`、`serde_json`、`thiserror`。禁止：依赖 app 及以下（不读写记忆数据）。
+- 文件：Claude `$CLAUDE_CONFIG_DIR`（默认 `~/.claude`）的 `settings.json`、`skills/mwf/`；Codex `$CODEX_HOME`（默认 `~/.codex`）的 `hooks.json`，skill 在 `~/.agents/skills/mwf/`。
+- 参数手工解析（不依赖 `clap`）；用法错误的格式同 `mwf-cli`，但不复述参数值。先读入并检查全部文件，再写。
+
+依赖：`mwf-assets`、`serde_json`（`thiserror` 在白名单内，未用到）；开发依赖 `tempfile`。禁止：依赖 app 及以下（不读写记忆数据）、`clap`。
 
 ## mwf-assets
 
@@ -63,4 +69,4 @@ skill 文本是英文（与 CLI 帮助、`init` 提示一致）。单元测试�
 
 ## mwf（bin）
 
-**职责**：读取第一个参数分发：`hook` → mwf-hooks；`install`/`uninstall` → mwf-lifecycle；其余 → mwf-cli。自身无逻辑。`hook` 的分发已在 P3 加入，`install` / `uninstall` 随 P4 加入。端到端测试（`assert_cmd` + `insta` + `tempfile`）放在这个 crate 的 `tests/`，只经由编译出的二进制测试，不以 dev 依赖引入 workspace crate（`check-crate-graph.sh` 计入 dev 边）。
+**职责**：读取第一个参数分发：`hook` → mwf-hooks；`install`/`uninstall` → mwf-lifecycle；其余 → mwf-cli。自身无逻辑。`hook` 的分发在 P3 加入，`install` / `uninstall` 在 P4 加入。端到端测试（`assert_cmd` + `insta` + `tempfile`）放在这个 crate 的 `tests/`，只经由编译出的二进制测试，不以 dev 依赖引入 workspace crate（`check-crate-graph.sh` 计入 dev 边）。

@@ -17,6 +17,7 @@
 | P2 | app 错误码、100 KB 上限、`index` 不带 `--rebuild`、相关页与重复页门槛、lint 细节 | ADR 0049 |
 | P2 | CLI 文本格式、`--json` 信封、用法错误、stdin 上限、`clap` 版本 | ADR 0050 |
 | P3 | hook 事件名与入口、SessionStart 内容与截断、注入的密钥隐去、Stop 提醒、预算与失败输出、会话状态格式、项目根与守卫路径 | ADR 0051 |
+| P4 | install / uninstall 的文件位置（Codex skill 在 `~/.agents/skills`）、条目与识别、保留用户文件、符号链接边界、备份、skill 目录、命令路径、输出与错误码 | ADR 0052 |
 
 ## 当前未决问题
 
