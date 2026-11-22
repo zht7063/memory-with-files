@@ -58,7 +58,7 @@ $ mwf install --host codex --json
 }
 
 $ mwf install --json --host=codex
-{"ok":true,"data":{"action":"install","host":"codex","dry_run":false,"command":"[BIN]/mwf","hooks":{"path":"[HOME]/codex-home/hooks.json","status":"unchanged","backup":null,"events":{"SessionStart":"unchanged","UserPromptSubmit":"unchanged","Stop":"unchanged","PreToolUse":"unchanged"}},"skill":{"dir":"[HOME]/.agents/skills/mwf","files":[{"path":"SKILL.md","status":"unchanged","backup":null},{"path":"references/commands.md","status":"unchanged","backup":null}]},"notes":["mwf is not on PATH, so the hooks run [BIN]/mwf; run install again if it moves","Codex runs new or changed hooks only after you trust them: run /hooks in Codex and trust the mwf hooks","the hooks do nothing in a project until `mwf init` creates its .mwf/"]}}
+{"ok":true,"data":{"action":"install","host":"codex","dry_run":false,"command":"[BIN]/mwf","hooks":{"path":"[HOME]/codex-home/hooks.json","status":"unchanged","backup":null,"events":{"SessionStart":"unchanged","UserPromptSubmit":"unchanged","Stop":"unchanged","PreToolUse":"unchanged"}},"skill":{"dir":"[HOME]/.agents/skills/mwf","files":[{"path":"SKILL.md","status":"unchanged","backup":null},{"path":"references/commands.md","status":"unchanged","backup":null}]},"notes":["mwf is not on PATH, so the hooks run [BIN]/mwf; run install again if it moves","the hooks do nothing in a project until `mwf init` creates its .mwf/"]}}
 [exit 0]
 
 $ mwf uninstall --host codex --json

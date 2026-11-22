@@ -34,7 +34,7 @@ pub(crate) enum Json {
     Object(Vec<(Str, Json)>, Span),
 }
 
-/// A container's text in the file it was parsed from (CRLF as LF), so that an untouched part of
+/// A container's text in the file it was parsed from, line endings and all, so that an untouched part of
 /// the user's file is written back with its own layout. It is used only while the container
 /// still parses from it to the same value, so an edit can never be hidden by a stale span.
 #[derive(Clone, Debug, Default)]
@@ -116,21 +116,22 @@ impl Json {
 
     /// Pretty-printed in the file's `style`, ending as the file did.
     pub(crate) fn pretty(&self, style: &Style) -> String {
+        let eol = if style.crlf { "\r\n" } else { "\n" };
         let mut out = String::new();
-        self.write(&mut out, Some(&style.indent), 0);
+        self.write(&mut out, Some((&style.indent, eol)), 0);
         if style.final_newline {
-            out.push('\n');
-        }
-        if style.crlf {
-            out = out.replace('\n', "\r\n");
+            out.push_str(eol);
         }
         out
     }
 
-    fn write(&self, out: &mut String, indent: Option<&str>, depth: usize) {
+    /// `layout` is the indent unit and line ending, `None` for one line. An untouched
+    /// container is copied from the file as it was, its line endings included.
+    fn write(&self, out: &mut String, layout: Option<(&str, &str)>, depth: usize) {
+        let indent = layout;
         let newline = |out: &mut String, depth: usize| {
-            if let Some(unit) = indent {
-                out.push('\n');
+            if let Some((unit, eol)) = layout {
+                out.push_str(eol);
                 for _ in 0..depth {
                     out.push_str(unit);
                 }
@@ -255,7 +256,7 @@ impl Parser<'_> {
     }
 
     fn span(&self, start: usize) -> Span {
-        Span(Some(self.text[start..self.pos].replace("\r\n", "\n")))
+        Span(Some(self.text[start..self.pos].to_owned()))
     }
 
     fn peek(&self) -> Option<u8> {
@@ -510,5 +511,21 @@ mod tests {
         let c = parse(r#"{"y": [1, {"q": true}], "x": "A"}"#).unwrap();
         assert!(!a.same(&c));
         assert!(!parse("1").unwrap().same(&parse("1.0").unwrap()));
+    }
+
+    #[test]
+    fn untouched_containers_keep_mixed_line_endings() {
+        // Written mostly with CRLF, one array with LF: an edit elsewhere leaves both alone.
+        let text = "{\r\n  \"a\": [\n    1\n  ],\r\n  \"b\": {\r\n    \"c\": 2\r\n  },\r\n  \"d\": 3\r\n}\r\n";
+        let mut v = parse(text).unwrap();
+        assert_eq!(v.pretty(&Style::of(text)), text);
+        let Json::Object(entries, _) = &mut v else {
+            panic!()
+        };
+        entries[2].1 = Json::Number("4".to_owned());
+        assert_eq!(
+            v.pretty(&Style::of(text)),
+            "{\r\n  \"a\": [\n    1\n  ],\r\n  \"b\": {\r\n    \"c\": 2\r\n  },\r\n  \"d\": 4\r\n}\r\n"
+        );
     }
 }

@@ -56,9 +56,11 @@ mwf uninstall --host claude|codex [--dry-run]
 `install` 把四个 hook（每个事件一条 `mwf hook <event> --host <host>`，超时 10 s）加入宿主的用户级 hooks 文件，并写入 `mwf` skill；`uninstall` 只删除这些。`--dry-run` 只打印将要做的改动。文件位置（0031、0052）：
 
 - `claude`：`$CLAUDE_CONFIG_DIR`（默认 `~/.claude`）下的 `settings.json` 与 `skills/mwf/`。
-- `codex`：`$CODEX_HOME`（默认 `~/.codex`）下的 `hooks.json`；skill 在 `~/.agents/skills/mwf/`。安装后在 Codex 的 `/hooks` 中信任 mwf 的 hooks。
+- `codex`：`$CODEX_HOME`（默认 `~/.codex`）下的 `hooks.json`；skill 在 `~/.agents/skills/mwf/`。安装（或更新了 hook）后在 Codex 的 `/hooks` 中信任 mwf 的 hooks。
 
-修改或删除已有文件前备份为同目录的 `<文件名>.mwf-bak-<时间>`；写入是原子的；基准目录（`HOME`、`CLAUDE_CONFIG_DIR`、`CODEX_HOME`）之下的符号链接一律拒绝；不读写任何项目的 `.mwf/`。退出码与 `--json` 同上；输出格式见 0052。
+`install` 只能从名为 `mwf` 的二进制运行（`INVALID_EXECUTABLE`）。hook 命令写 `mwf`，除非 `PATH` 上第一个 `mwf` 不是本二进制、`PATH` 上没有，或其前面有相对目录，这时写本二进制的路径。
+
+修改或删除已有文件前备份为同目录的 `<文件名>.mwf-bak-<时间>`（0600）；写入是原子的，途经的目录在写入前重新核对身份；基准目录（`HOME`、`CLAUDE_CONFIG_DIR`、`CODEX_HOME`）之下的符号链接一律拒绝；不读写任何项目的 `.mwf/`。退出码与 `--json` 同上；输出格式见 0052。
 
 ## 错误码
 
@@ -81,7 +83,8 @@ mwf uninstall --host claude|codex [--dry-run]
 | `TOO_LARGE` | 正文或 `patch` 的 old / new 超过 100 KB（[0033](decisions/0033-consistency-and-limits.md)、0049）；stdin 或 `--old-file` / `--new-file` 超过 1 MB（0050） |
 | `CHANGED` | `.mwf` 或 `.mwf/.lock` 在使用中被替换（[0048](decisions/0048-init-layout-and-ignore-rules.md)）；`install` / `uninstall` 时宿主文件在写入前被别人改了（0052） |
 | `WRONG_FILE_TYPE` | `.mwf/` 下的路径是符号链接或类型不对（0048）；宿主的文件或目录是符号链接或类型不对（0052） |
-| `HOST_CONFIG_INVALID` | 宿主的 `settings.json` / `hooks.json` 不是严格 JSON 或形状不对；不改动任何文件（0052） |
+| `HOST_CONFIG_INVALID` | 宿主的 `settings.json` / `hooks.json` 不是严格 JSON（含只有空白的文件）或形状不对；不改动任何文件（0052） |
+| `INVALID_EXECUTABLE` | `install` 的二进制不叫 `mwf`：hooks 按这个名字认出（0052） |
 | `INVALID_ENV` | `HOME`、`CLAUDE_CONFIG_DIR`、`CODEX_HOME` 未设置、不是绝对路径或不是目录（0052） |
 | `IO` | 其他文件系统错误 |
 | `USAGE` | 参数错误（退出码 2） |

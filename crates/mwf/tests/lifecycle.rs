@@ -199,7 +199,8 @@ fn codex_json_session() {
     fs::create_dir(&codex).unwrap();
     h.vars.push(("CODEX_HOME", codex));
     // Not on PATH: the hooks run the binary by its path.
-    h.path = String::new();
+    fs::create_dir(h.root.join("empty")).unwrap();
+    h.path = h.root.join("empty").display().to_string();
     h.run(&["install", "--host", "codex", "--json"]);
     h.show("codex-home/hooks.json");
     h.run(&["install", "--json", "--host=codex"]);
@@ -207,7 +208,10 @@ fn codex_json_session() {
     h.show("codex-home/hooks.json");
     h.snapshot("lifecycle_codex_json");
     // Nothing of the user's existed, so nothing is left but directories.
-    assert_eq!(h.tree(), [".agents/", ".agents/skills/", "codex-home/"]);
+    assert_eq!(
+        h.tree(),
+        [".agents/", ".agents/skills/", "codex-home/", "empty/"]
+    );
 }
 
 #[test]
@@ -233,6 +237,8 @@ fn errors() {
     h.run(&["install", "--host", "pi", "--json"]);
     h.run(&["uninstall", "--host", "claude", "--force"]);
     h.run(&["uninstall", "--help"]);
+    // `--json` is global: before the command too (ADR 0050).
+    h.run(&["--json", "uninstall", "--host"]);
     fs::create_dir(h.root.join(".claude")).unwrap();
     fs::write(
         h.root.join(".claude/settings.json"),

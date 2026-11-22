@@ -20,8 +20,11 @@ fn main() -> ExitCode {
             },
         );
     }
+    // `--json` is global and may come before the command (ADR 0050).
     if args
-        .get(1)
+        .iter()
+        .skip(1)
+        .find(|a| *a != "--json")
         .is_some_and(|a| a == "install" || a == "uninstall")
     {
         return mwf_lifecycle::run(

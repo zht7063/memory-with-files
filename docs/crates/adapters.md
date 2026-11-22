@@ -44,7 +44,7 @@ pub struct Io<'a> { pub stdin: &'a mut dyn Read, pub stdout: &'a mut dyn Write, 
 pub fn run(args: Vec<OsString>, io: &mut Io) -> ExitCode;   // args 从 `install` / `uninstall` 起；退出码 0 / 1 / 2
 mod hooks;  // 认出、加入、删除 mwf 的条目
 mod json;   // 保留键序、原文与排版的 JSON 树（不启用 serde_json 的 preserve_order）
-mod fsx;    // 不经符号链接的读、原子写、备份
+mod fsx;    // 不经符号链接的读；固定目录身份后的原子写、先移开再删、0600 备份
 ```
 
 - 文件：Claude `$CLAUDE_CONFIG_DIR`（默认 `~/.claude`）的 `settings.json`、`skills/mwf/`；Codex `$CODEX_HOME`（默认 `~/.codex`）的 `hooks.json`，skill 在 `~/.agents/skills/mwf/`。

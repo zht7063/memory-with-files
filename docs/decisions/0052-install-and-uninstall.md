@@ -34,36 +34,39 @@ P4 实现 `mwf-lifecycle` 前，下列细节在已有 ADR 中没有规定：Code
 
 ### 保留用户的文件
 
-- 只接受严格 JSON（RFC 8259）：注释、尾随逗号、BOM、重复键、多余内容都拒绝为 `HOST_CONFIG_INVALID`，信息给出行列，不“修复”；`hooks`、事件、组的形状不对也是 `HOST_CONFIG_INVALID`。两者都在写任何文件之前发现，什么都不改。空文件视同 `{}`。
-- `mwf-lifecycle` 自带一个小的 JSON 树（`src/json.rs`）：保留对象键的顺序、字符串与数字的原样写法；重新输出时沿用文件的缩进单位、换行（LF / CRLF）与末尾换行。**未改动的对象或数组按原文输出**（只在原文重新解析后与当前值完全相同时才用，改动不会被过期的原文掩盖），所以用户写成一行的数组保持一行；mwf 改过的容器按宿主的标准排版输出。
+- 只接受严格 JSON（RFC 8259）：注释、尾随逗号、BOM、重复键、多余内容都拒绝为 `HOST_CONFIG_INVALID`，信息给出行列，不“修复”；`hooks`、事件、组的形状不对也是 `HOST_CONFIG_INVALID`。两者都在写任何文件之前发现，什么都不改。长度为 0 的文件视同 `{}`；只有空白字符的文件不是 JSON，同样是 `HOST_CONFIG_INVALID`。
+- `mwf-lifecycle` 自带一个小的 JSON 树（`src/json.rs`）：保留对象键的顺序、字符串与数字的原样写法；重新输出时沿用文件的缩进单位、换行（LF / CRLF）与末尾换行。**未改动的对象或数组按原文逐字节输出**（含其中的换行符，所以 CRLF 与 LF 混用的文件里未改动的部分保持原样；只在原文重新解析后与当前值完全相同时才用，改动不会被过期的原文掩盖），所以用户写成一行的数组保持一行；mwf 改过的容器按宿主的标准排版输出。
 - 不启用 `serde_json` 的 `preserve_order`：Cargo 在 workspace 内统一 feature，启用后 `mwf-hooks` 用 `json!` 输出的键序会变，并多出 `indexmap` 依赖。
 
 ### 安全
 
 - **符号链接边界**：基准目录本身可以是符号链接（`$HOME` 在 dotfiles 布局里常是链接，`CLAUDE_CONFIG_DIR` 由用户指定）；基准目录之下的每一段（`.claude`、`skills`、`mwf`、`settings.json` …）都用 `lstat` 检查，是符号链接（含悬空链接）或类型不对（该是目录的不是目录、该是文件的不是普通文件）时为 `WRONG_FILE_TYPE`，不写。所以 `~/.claude` 是指向 dotfiles 仓库的链接时 `install --host claude` 会拒绝；设置 `CLAUDE_CONFIG_DIR` 指向真实目录即可。
+- **固定目录身份**：从基准目录到文件所在目录，每一级在第一次检查时记下（设备号, inode），与 `mwf-store` 对 `.mwf/` 的做法相同（0048）；每次建文件、rename、删除之前重新核对整条链。某一级被换成符号链接为 `WRONG_FILE_TYPE`，被换成另一个目录或消失为 `CHANGED`，之后不再写任何东西。
 - **先计划后写入**：hooks 文件与两个 skill 文件全部读入、检查、算出新内容之后才开始写；任何拒绝都发生在第一次写入之前。写入顺序：`install` 先 skill 后 hooks（hooks 生效时 skill 已在），`uninstall` 先 hooks 后 skill。写到一半出 IO 错误时已写的文件保留，重新运行即可（每一步都幂等）。
-- **原子写**：同目录临时文件（`.<名>.mwf-tmp-<pid>`，`create_new`）→ 写入 → 沿用原文件权限 → fsync → 再次核对目标仍是读到的内容（否则 `CHANGED`）→ rename（新文件用 hard link，不会覆盖期间出现的文件）→ fsync 目录。
+- **原子写**：同目录临时文件（`.<名>.mwf-tmp-<pid>`，`create_new`，**创建时即为 0600**，写入任何字节之前）→ 写入 → 已有文件时改为原文件的权限 → fsync → 核对目录链与目标（内容与 inode 都须与读到时相同，否则 `CHANGED`）→ rename（新文件用 hard link，不会覆盖期间出现的文件）→ fsync 目录。新建的宿主文件因此是 0600；已有文件保留原权限。
+- **删除**：核对后先把文件 rename 到同目录的 `.<名>.mwf-del-<pid>`，确认移走的仍是读到的那个文件（内容与 inode）才删除；否则把它放回原处（用 hard link，不覆盖期间出现的新文件）并报 `CHANGED`。所以备份之后、删除之前别人改的内容不会丢。
 - **备份**：修改或删除一个已有文件、且可能丢失用户内容时，先复制到同目录的 `<文件名>.mwf-bak-<Unix 秒>`（重名加 `-1`、`-2` …；`create_new`，权限 0600）。备份永不覆盖、永不删除。不备份的情况：新建文件；内容与本版本 skill 完全相同的 skill 文件被删除；只含 mwf 条目的 hooks 文件被删除。`--json` 与文本输出给出备份路径。
 - **skill 目录归 mwf**：`mwf` 这个 skill 名（0036）下的 `SKILL.md` 与 `references/commands.md` 由 mwf 管理。`install` 写入与本二进制不同的文件前先备份（用户改过的、或旧版本的）；`uninstall` 删除这两个文件（与本版本不同的先备份），再删除变空的 `references/` 与 `mwf/`；目录里有其他文件（含备份）时保留目录并在 notes 中说明。上一级目录（`skills/`、`.agents/`）不删。
 - `--dry-run`：同样读取与检查（同样会报错），输出将要发生的改动，不写任何文件、不建目录、不做备份。
 
 ### hook 命令里的可执行路径（0037）
 
-- `PATH` 上第一个名为 `mwf` 的普通文件（只看绝对路径的目录）与当前二进制 canonicalize 后相同时写 `mwf`。
+- 当前二进制的文件名必须是 `mwf`，否则 `install` 为 `INVALID_EXECUTABLE`，什么都不写：`uninstall` 与之后的 `install` 按文件名 `mwf` 认出条目，改名的二进制写下的条目将无法清理。`uninstall` 不受此限。
+- 按 shell 的顺序查 `PATH`：在找到第一个 `mwf` 之前遇到相对目录（`.`、`bin`、空项即当前目录）时，hook 会因宿主运行它的目录不同而找到不同的 `mwf`，所以写当前二进制的路径并提示；第一个 `mwf` 之后的相对项无影响。第一个 `mwf` 与当前二进制 canonicalize 后相同时写 `mwf`。
 - 否则写 `std::env::current_exe()` 给出的路径，不解析符号链接；需要时按 POSIX shell 单引号引起来（如含空格）。并在 notes 中说明（`PATH` 上没有 mwf，或第一个 mwf 是另一个二进制）。路径不是 UTF-8 时为 `IO`。
 
 ### 参数、输出与退出码
 
-- `mwf install|uninstall --host claude|codex [--dry-run] [--json]`；`--host=<宿主>` 亦可。参数手工解析（0042：`mwf-lifecycle` 不依赖 `clap`），`-h` / `--help` 出现在任何位置都打印帮助到 stdout，退出 0。
+- `mwf install|uninstall --host claude|codex [--dry-run] [--json]`；`--host=<宿主>` 亦可；`--json` 与其他命令一样是全局的，也可写在命令之前（`mwf --json install …`，0050），bin 跳过它找命令。参数手工解析（0042：`mwf-lifecycle` 不依赖 `clap`），`-h` / `--help` 出现在任何位置都打印帮助到 stdout，退出 0。
 - 用法错误退出 2，格式与 0050 相同：纯文本写 stderr `error: <原因>`、`Usage:` 行与 `--help` 提示；`--json` 时 stdout 一行 `{"ok":false,"error":{"code":"USAGE","message":…}}`。信息**从不复述参数的值**（本 crate 没有 secret 扫描器，0025），只说哪一类错误。
 - `mwf --help`（clap）不列出 `install` / `uninstall`，与 `hook` 一样由 bin 在 clap 之前分发；它们各自有 `--help`，命令集合记录在 [cli.md](../cli.md) 与 skill 的命令速查中。
 - 成功：纯文本第一行 `installed mwf for Claude Code` / `uninstalled mwf from Codex`（`--dry-run` 时 `would install … (dry run: nothing was written)`），然后 `hooks: <路径>: <状态>`、每个事件一行、`skill: <目录>`、每个文件一行、`hook command: <命令>`（只在 install）、`note: …`。由 `crates/mwf/tests/snapshots/lifecycle_*.snap` 固定。
 - `--json` 成功：`{"ok":true,"data":{"action","host","dry_run","command"(仅 install),"hooks":{"path","status","backup","events":{<Event>:<状态>}},"skill":{"dir","files":[{"path","status","backup"}]},"notes":[…]}}`，键序如上。文件状态：`created` / `updated` / `unchanged` / `removed` / `absent`；事件状态：`added` / `updated` / `unchanged` / `removed` / `absent`。
-- 失败退出 1：`INVALID_ENV`、`HOST_CONFIG_INVALID`、`WRONG_FILE_TYPE`、`CHANGED`、`IO`（见 [cli.md](../cli.md)）。纯文本 `error[CODE]: message` 写 stderr；`--json` 一行写 stdout。stdout 写不进去时退出 1。
-- notes：`install --host codex` 总是提示在 `/hooks` 中信任 mwf 的 hooks（0024）；`install` 提示没有 `.mwf/` 的项目里 hooks 什么都不做；`uninstall` 说明项目的 `.mwf/` 未被触碰。
+- 失败退出 1：`INVALID_ENV`、`INVALID_EXECUTABLE`、`HOST_CONFIG_INVALID`、`WRONG_FILE_TYPE`、`CHANGED`、`IO`（见 [cli.md](../cli.md)）。纯文本 `error[CODE]: message` 写 stderr；`--json` 一行写 stdout。stdout 写不进去时退出 1。
+- notes：`install --host codex` 在有事件为 `added` / `updated` 时提示在 `/hooks` 中信任 mwf 的 hooks（0024），`--dry-run` 时措辞为“真正安装后”再信任；没有改动时不提示（未改的条目仍受信任）；`install` 提示没有 `.mwf/` 的项目里 hooks 什么都不做；`uninstall` 说明项目的 `.mwf/` 未被触碰。
 
 ## 后果
 
-- [cli.md](../cli.md) 记录参数与新增的错误码 `INVALID_ENV`、`HOST_CONFIG_INVALID`，`WRONG_FILE_TYPE` 与 `CHANGED` 也适用于宿主文件；[crates/adapters.md](../crates/adapters.md) 记录 `mwf_lifecycle::run` 的签名（与 `mwf-hooks` 同形，取代草案的 `install(host, opts)`）与依赖（`mwf-assets`、`serde_json`；白名单里的 `thiserror` 未用到）。
-- 安装后 Codex 用户须在 `/hooks` 中信任新 hook；重复 `install` 不改动已信任的条目。
+- [cli.md](../cli.md) 记录参数与新增的错误码 `INVALID_ENV`、`INVALID_EXECUTABLE`、`HOST_CONFIG_INVALID`，`WRONG_FILE_TYPE` 与 `CHANGED` 也适用于宿主文件；[crates/adapters.md](../crates/adapters.md) 记录 `mwf_lifecycle::run` 的签名（与 `mwf-hooks` 同形，取代草案的 `install(host, opts)`）与依赖（`mwf-assets`、`serde_json`；白名单里的 `thiserror` 未用到）。
+- 安装或更新后 Codex 用户须在 `/hooks` 中信任新的或改过的 hook；重复 `install` 不改动已信任的条目，也不再提示。
 - `~/.claude` 或 `~/.codex` 是符号链接的用户需设置 `CLAUDE_CONFIG_DIR` / `CODEX_HOME`；Codex 的 skill 位置不受影响。

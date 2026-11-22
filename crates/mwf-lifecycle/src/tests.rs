@@ -236,7 +236,8 @@ fn hook_command_is_the_binary_path_unless_path_finds_it() {
     fs::create_dir(h.root.join("other")).unwrap();
     fs::write(h.root.join("other/mwf"), "").unwrap();
     // Not on PATH.
-    h.env.path = Some("".into());
+    fs::create_dir(h.root.join("empty")).unwrap();
+    h.env.path = Some(h.root.join("empty").into());
     let out = h.ok(&["install", "--host", "claude", "--dry-run"]);
     let exe = h.root.join("bin/mwf").display().to_string();
     assert!(out.contains(&format!("hook command: {exe}\n")), "{out}");
@@ -433,4 +434,110 @@ fn unwritable_stdout_exits_1() {
         &h.env,
     );
     assert_eq!(code, ExitCode::from(1));
+}
+
+#[test]
+fn a_relative_path_entry_before_mwf_means_the_binary_path() {
+    let mut h = Home::new();
+    let exe = h.root.join("bin/mwf").display().to_string();
+    let bin = h.root.join("bin").display().to_string();
+    // `.`, `bin` and an empty entry (the current directory) before the real mwf could each
+    // find another mwf depending on where the host runs the hook.
+    for path in [
+        format!(".:{bin}"),
+        format!("tools:{bin}"),
+        format!(":{bin}"),
+        format!("{bin}:"),
+    ] {
+        h.env.path = Some(path.clone().into());
+        let out = h.ok(&["install", "--host", "codex", "--dry-run"]);
+        let shadowed = !path.starts_with(&bin);
+        assert_eq!(
+            out.contains(&format!("hook command: {exe}\n")),
+            shadowed,
+            "{path}: {out}"
+        );
+        assert_eq!(
+            out.contains("PATH has a relative directory"),
+            shadowed,
+            "{path}: {out}"
+        );
+        if !shadowed {
+            // A relative entry after the match cannot shadow it.
+            assert!(out.contains("hook command: mwf\n"), "{path}: {out}");
+        }
+    }
+}
+
+#[test]
+fn install_refuses_a_binary_not_named_mwf() {
+    let mut h = Home::new();
+    fs::write(h.root.join("bin/mwf-dev"), "").unwrap();
+    h.env.exe = Ok(h.root.join("bin/mwf-dev"));
+    let (code, out, err) = h.run(&["install", "--host", "claude", "--json"]);
+    assert_eq!(code, 1);
+    assert!(err.is_empty());
+    assert!(
+        out.starts_with("{\"ok\":false,\"error\":{\"code\":\"INVALID_EXECUTABLE\",\"message\":"),
+        "{out}"
+    );
+    assert!(out.contains("bin/mwf-dev"), "{out}");
+    assert!(h.tree().is_empty());
+    // Uninstall does not need the binary's name: it works from any binary.
+    h.ok(&["uninstall", "--host", "claude"]);
+}
+
+#[test]
+fn a_blank_hooks_file_is_not_json_but_an_empty_one_is_an_empty_document() {
+    let h = Home::new();
+    fs::create_dir(h.root.join(".claude")).unwrap();
+    for blank in [" ", "\n", "\t\r\n"] {
+        fs::write(h.root.join(".claude/settings.json"), blank).unwrap();
+        let (code, _, err) = h.run(&["install", "--host", "claude"]);
+        assert_eq!(code, 1, "{blank:?}");
+        assert!(err.starts_with("error[HOST_CONFIG_INVALID]: "), "{err}");
+        assert!(err.contains("expected a JSON value"), "{err}");
+        assert_eq!(
+            fs::read_to_string(h.root.join(".claude/settings.json")).unwrap(),
+            blank
+        );
+    }
+    fs::write(h.root.join(".claude/settings.json"), "").unwrap();
+    let out = h.ok(&["install", "--host", "claude"]);
+    assert!(out.contains("settings.json: updated"), "{out}");
+}
+
+#[test]
+fn json_may_come_before_the_command() {
+    let h = Home::new();
+    let (code, out, _) = h.run(&["--json", "install", "--host", "codex", "--dry-run"]);
+    assert_eq!(code, 0);
+    assert!(
+        out.starts_with("{\"ok\":true,\"data\":{\"action\":\"install\""),
+        "{out}"
+    );
+    let (code, out, _) = h.run(&["--json", "uninstall", "--host"]);
+    assert_eq!(code, 2);
+    assert!(out.contains("Usage: mwf uninstall"), "{out}");
+}
+
+#[test]
+fn the_codex_trust_note_follows_what_changes() {
+    let h = Home::new();
+    let trust = "note: Codex runs new or changed hooks only after you trust them: ";
+    let out = h.ok(&["install", "--host", "codex", "--dry-run"]);
+    assert!(
+        out.contains(&format!("{trust}after a real install, run /hooks")),
+        "{out}"
+    );
+    let out = h.ok(&["install", "--host", "codex"]);
+    assert!(
+        out.contains(&format!("{trust}run /hooks in Codex")),
+        "{out}"
+    );
+    // Nothing changed: the hooks stay trusted, so no note.
+    let out = h.ok(&["install", "--host", "codex"]);
+    assert!(!out.contains("run /hooks"), "{out}");
+    let out = h.ok(&["install", "--host", "codex", "--dry-run"]);
+    assert!(!out.contains("run /hooks"), "{out}");
 }

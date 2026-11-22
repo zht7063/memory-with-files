@@ -108,7 +108,11 @@ pub fn run(args: Vec<OsString>, io: &mut Io) -> ExitCode {
 
 fn run_with(args: &[OsString], io: &mut Io, env: &Env) -> ExitCode {
     let json = args.iter().any(|a| a == "--json");
-    let action = match args.first().and_then(|a| a.to_str()) {
+    let action = match args
+        .iter()
+        .find(|a| *a != "--json")
+        .and_then(|a| a.to_str())
+    {
         Some("uninstall") => Action::Uninstall,
         _ => Action::Install,
     };
@@ -201,7 +205,8 @@ fn parse(args: &[OsString]) -> Result<Parsed, String> {
     if args.iter().any(|a| a == "-h" || a == "--help") {
         return Ok(Parsed::Help);
     }
-    let mut it = args.iter();
+    // `--json` may come before the command too, as for the other commands (ADR 0050).
+    let mut it = args.iter().filter(|a| *a != "--json");
     let action = match it.next().and_then(|a| a.to_str()) {
         Some("install") => Action::Install,
         Some("uninstall") => Action::Uninstall,
@@ -321,8 +326,12 @@ fn layout(host: Host, env: &Env) -> Result<Layout, Error> {
     })
 }
 
-/// The program the hook commands run (ADR 0037): `mwf` when the first `mwf` on `PATH` is this
-/// binary, else this binary's path as the OS reports it, without resolving links.
+/// The program the hook commands run (ADRs 0037, 0052): `mwf` when the first `mwf` that a
+/// shell would find on `PATH` is this binary, else this binary's path as the OS reports it,
+/// without resolving links. A relative `PATH` entry (`.`, `bin`, or an empty entry, which means
+/// the current directory) before the first absolute match makes `mwf` depend on the directory
+/// the host runs the hook in, so the path is used then too. The binary must be named `mwf`:
+/// `uninstall` and a later `install` recognise their hooks by that name.
 fn program(env: &Env) -> Result<(String, Option<String>), Error> {
     let exe = env
         .exe
@@ -337,17 +346,41 @@ fn program(env: &Env) -> Result<(String, Option<String>), Error> {
             ),
         )
     })?;
-    let on_path = env.path.as_ref().and_then(|p| {
-        std::env::split_paths(p)
-            .filter(|d| d.is_absolute())
-            .map(|d| d.join("mwf"))
-            .find(|c| c.is_file())
-    });
+    if exe.file_name().is_none_or(|n| n != "mwf") {
+        return Err(Error::new(
+            "INVALID_EXECUTABLE",
+            format!(
+                "this binary is {exe_str}; install only from a binary named mwf, because uninstall finds the hooks by that name"
+            ),
+        ));
+    }
     let same = |a: &Path| match (fs::canonicalize(a), fs::canonicalize(exe)) {
         (Ok(a), Ok(b)) => a == b,
         _ => false,
     };
-    Ok(match on_path {
+    let mut found = None;
+    for dir in env
+        .path
+        .as_ref()
+        .map(std::env::split_paths)
+        .into_iter()
+        .flatten()
+    {
+        if !dir.is_absolute() {
+            return Ok((
+                exe_str.to_owned(),
+                Some(format!(
+                    "PATH has a relative directory before any mwf, so which mwf a hook finds depends on where it runs; the hooks run {exe_str}"
+                )),
+            ));
+        }
+        let candidate = dir.join("mwf");
+        if candidate.is_file() {
+            found = Some(candidate);
+            break;
+        }
+    }
+    Ok(match found {
         Some(p) if same(&p) => ("mwf".to_owned(), None),
         Some(p) => (
             exe_str.to_owned(),
@@ -423,7 +456,8 @@ fn plan_hooks(
         None => None,
     };
     let (mut doc, style) = match text {
-        Some(t) if !t.trim().is_empty() => (
+        // An empty file is an empty document; anything else must be JSON, even blank space.
+        Some(t) if !t.is_empty() => (
             json::parse(t)
                 .map_err(|e| host_config_invalid(&path, &format!("is not valid JSON: {e}")))?,
             Style::of(t),
@@ -548,12 +582,20 @@ fn execute(cmd: &Command, env: &Env) -> Result<Report, Error> {
             }
         }
     }
+    let hooks_change = events
+        .iter()
+        .any(|(_, s)| matches!(s, Status::Added | Status::Updated));
     match (cmd.action, cmd.host) {
-        (Action::Install, Host::Codex) => notes.push(
-            "Codex runs new or changed hooks only after you trust them: run /hooks in Codex and trust the mwf hooks"
-                .to_owned(),
+        // Unchanged entries stay trusted; only new or changed ones need /hooks (ADR 0024).
+        (Action::Install, Host::Codex) if hooks_change => notes.push(
+            if cmd.dry_run {
+                "Codex runs new or changed hooks only after you trust them: after a real install, run /hooks in Codex and trust the mwf hooks"
+            } else {
+                "Codex runs new or changed hooks only after you trust them: run /hooks in Codex and trust the mwf hooks"
+            }
+            .to_owned(),
         ),
-        (Action::Install, Host::Claude) => {}
+        (Action::Install, _) => {}
         (Action::Uninstall, _) => {
             notes.push("project wikis (.mwf/) were not touched".to_owned());
         }

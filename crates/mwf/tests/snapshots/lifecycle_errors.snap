@@ -38,6 +38,10 @@ Files:
   codex   $CODEX_HOME (default ~/.codex): hooks.json; and ~/.agents/skills/mwf/
 [exit 0]
 
+$ mwf --json uninstall --host
+{"ok":false,"error":{"code":"USAGE","message":"a value is required for '--host <HOST>'\n\nUsage: mwf uninstall --host <HOST> [--dry-run] [--json]\n\nFor more information, try '--help'.\n"}}
+[exit 2]
+
 $ mwf install --host claude
 [stderr] error[HOST_CONFIG_INVALID]: [HOME]/.claude/settings.json is not valid JSON: expected a string key (line 3, column 1); fix it and run the command again (nothing was changed)
 [exit 1]
