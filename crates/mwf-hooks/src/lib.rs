@@ -61,7 +61,11 @@ impl Event {
 /// "claude"]`); the host's JSON comes on stdin. Always [`ExitCode::SUCCESS`]: bad arguments or
 /// input print `{}` and one `mwf hook: …` line on stderr (ADR 0051).
 pub fn run(args: Vec<OsString>, io: &mut Io) -> ExitCode {
-    let start = Instant::now();
+    run_from(args, io, Instant::now())
+}
+
+/// [`run`] with the deadline counted from `start`.
+fn run_from(args: Vec<OsString>, io: &mut Io, start: Instant) -> ExitCode {
     let stdin = &mut *io.stdin;
     let out = match panic::catch_unwind(AssertUnwindSafe(|| handle(&args, stdin, start))) {
         Ok(Ok(out)) => out,
@@ -100,6 +104,9 @@ fn handle(args: &[OsString], stdin: &mut dyn Read, start: Instant) -> Result<Val
         cwd: &cwd,
         deadline: start + DEADLINE,
     };
+    if hook.late() {
+        return Ok(empty());
+    }
     let app = match App::open(&cwd) {
         Ok(app) => app,
         Err(e) if e.code == ErrorCode::NotInitialized => return Ok(empty()),
@@ -237,6 +244,9 @@ impl Hook<'_> {
     fn session_start(&self, app: &App) -> Result<Value, AppError> {
         let session = self.str("session_id");
         if matches!(self.str("source"), "clear" | "compact") {
+            if self.late() {
+                return Ok(empty());
+            }
             app.reset_session(session)?;
         }
         if self.late() {
@@ -252,6 +262,9 @@ impl Hook<'_> {
         let Some(budget) = fence.data_budget() else {
             return Ok(empty());
         };
+        if self.late() {
+            return Ok(empty());
+        }
         let ctx = app.session_context(max.min(budget))?;
         let data = fence::clean(ctx.text.trim_end_matches('\n'));
         if data.is_empty() {
@@ -265,6 +278,9 @@ impl Hook<'_> {
     fn prompt(&self, app: &App) -> Result<Value, AppError> {
         let prompt = self.str("prompt");
         if is_mwf_command(prompt) {
+            return Ok(empty());
+        }
+        if self.late() {
             return Ok(empty());
         }
         let session = self.str("session_id");
@@ -296,9 +312,8 @@ impl Hook<'_> {
         if lines.is_empty() {
             return Ok(empty());
         }
-        // Losing the record only means a page may be injected once more; the pages are still
-        // worth showing.
-        let _ = app.mark_recalled(session, &emitted);
+        // A failed save is reported like any app error (ADR 0051), not hidden.
+        app.mark_recalled(session, &emitted)?;
         Ok(Self::context(
             "UserPromptSubmit",
             fence.wrap(&lines.join("\n")),
@@ -309,6 +324,9 @@ impl Hook<'_> {
     /// because of a Stop hook. Errors stay silent.
     fn stop(&self, app: &App) -> Result<Value, AppError> {
         if self.input.get("stop_hook_active") == Some(&Value::Bool(true)) {
+            return Ok(empty());
+        }
+        if self.late() {
             return Ok(empty());
         }
         let turn = match self.host {
@@ -325,8 +343,12 @@ impl Hook<'_> {
         })
     }
 
-    /// PreToolUse (ADR 0024): refuse edits and shell writes under a `.mwf` directory.
+    /// PreToolUse (ADR 0024): refuse edits and shell writes under a `.mwf` directory. Past
+    /// the deadline the tool is allowed, as on any other failure.
     fn pre_tool(&self, app: &App) -> Value {
+        if self.late() {
+            return empty();
+        }
         let tool = self.str("tool_name");
         let input = self.input.get("tool_input").unwrap_or(&Value::Null);
         let field = |k: &str| input.get(k).and_then(Value::as_str).unwrap_or("");
@@ -422,6 +444,83 @@ mod tests {
         }
         for no in ["/mwfx", "run /mwf", "mwf show", "/mw f"] {
             assert!(!is_mwf_command(no), "{no:?}");
+        }
+    }
+
+    /// Runs one hook in `root` with the deadline counted from `start`; returns stdout.
+    fn hook_at(root: &Path, args: &[&str], input: Value, start: Instant) -> String {
+        let mut input = input;
+        input["cwd"] = json!(root.display().to_string());
+        let stdin = input.to_string();
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        let code = run_from(
+            os(args),
+            &mut Io {
+                stdin: &mut stdin.as_bytes(),
+                stdout: &mut out,
+                stderr: &mut err,
+            },
+            start,
+        );
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert!(err.is_empty(), "{}", String::from_utf8_lossy(&err));
+        String::from_utf8(out).unwrap()
+    }
+
+    #[test]
+    fn past_the_deadline_every_event_skips_its_work() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        std::fs::create_dir(root.join(".git")).unwrap();
+        App::init(&root, false).unwrap();
+        App::open(&root)
+            .unwrap()
+            .new_page(mwf_app::NewIn {
+                slug: "cargo-deny".to_owned(),
+                page_type: "knowledge".to_owned(),
+                title: "Cargo deny duplicate versions".to_owned(),
+                summary: "Why duplicate crate versions fail CI".to_owned(),
+                body: "deny.toml sets multiple-versions = deny.\n".to_owned(),
+                ..Default::default()
+            })
+            .unwrap();
+        let cases = [
+            (
+                &["session-start", "--host", "claude"][..],
+                json!({"session_id": "s", "source": "clear"}),
+            ),
+            (
+                &["prompt", "--host", "codex"],
+                json!({"session_id": "s", "prompt": "why do duplicate crate versions fail"}),
+            ),
+            (
+                &["stop", "--host", "claude"],
+                json!({"session_id": "s", "prompt_id": "p"}),
+            ),
+            (
+                &["pre-tool", "--host", "claude"],
+                json!({"tool_name": "Bash", "tool_input": {"command": "rm .mwf/index.md"}}),
+            ),
+        ];
+        let expired = Instant::now().checked_sub(DEADLINE).unwrap();
+        for (args, input) in &cases {
+            assert_eq!(
+                hook_at(&root, args, input.clone(), expired),
+                "{}\n",
+                "{args:?}"
+            );
+        }
+        assert!(
+            !root.join(".mwf/.state").exists(),
+            "no session state written"
+        );
+        // The same input within the deadline does the work: the test is not vacuous.
+        for (args, input) in &cases {
+            assert_ne!(
+                hook_at(&root, args, input.clone(), Instant::now()),
+                "{}\n",
+                "{args:?}"
+            );
         }
     }
 

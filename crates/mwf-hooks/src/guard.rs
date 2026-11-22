@@ -5,7 +5,8 @@
 //! `cd .mwf && …` or `bash -c`. The guard is a guardrail, not a security boundary.
 
 /// The paths of the `*** Add File:`, `*** Update File:`, `*** Delete File:` and `*** Move to:`
-/// lines of an `apply_patch` patch.
+/// lines of an `apply_patch` patch. Headers start at column zero; an indented line is hunk
+/// context, even when its text looks like a header.
 pub fn patch_paths(patch: &str) -> Vec<&str> {
     const HEADERS: [&str; 4] = [
         "*** Add File:",
@@ -16,7 +17,7 @@ pub fn patch_paths(patch: &str) -> Vec<&str> {
     patch
         .lines()
         .filter_map(|line| {
-            let line = line.trim();
+            let line = line.trim_end();
             HEADERS
                 .iter()
                 .find_map(|h| line.strip_prefix(h))
@@ -26,22 +27,25 @@ pub fn patch_paths(patch: &str) -> Vec<&str> {
         .collect()
 }
 
-/// Whether `s` names a `.mwf` directory: `.mwf` (any case, for case-insensitive volumes) not
-/// followed by more of a file name, as in `.mwf`, `.mwf/pages`, `x/.MWF/log.md`.
+/// Whether `s` names a `.mwf` directory: `.mwf` (any case, for case-insensitive volumes) as a
+/// whole path component, as in `.mwf`, `.mwf/pages`, `x/.MWF/log.md`, `of=.mwf/a`, but not
+/// `notes.mwf/a` or `.mwfrc`.
 pub fn mentions_mwf(s: &str) -> bool {
+    let name_char = |c: char| c.is_alphanumeric() || c == '-' || c == '_' || c == '.';
     let lower = s.to_ascii_lowercase();
     lower.match_indices(".mwf").any(|(i, m)| {
-        lower[i + m.len()..]
-            .chars()
-            .next()
-            .is_none_or(|c| !(c.is_alphanumeric() || c == '-' || c == '_' || c == '.'))
+        lower[..i].chars().next_back().is_none_or(|c| !name_char(c))
+            && lower[i + m.len()..]
+                .chars()
+                .next()
+                .is_none_or(|c| !name_char(c))
     })
 }
 
 /// Whether the shell command `cmd` looks like it writes under a `.mwf` directory: a redirect
 /// into one, or `rm`, `mv`, `cp`, `sed -i` and similar commands with a `.mwf` operand. Each
-/// command of a list or pipeline is checked on its own, and commands run as `mwf …` are
-/// allowed, since mwf is how `.mwf/` is written.
+/// command of a list or pipeline is checked on its own. Commands run as `mwf …` are allowed,
+/// since mwf is how `.mwf/` is written, but not a redirect the shell does around them.
 pub fn shell_writes_mwf(cmd: &str) -> bool {
     if !mentions_mwf(cmd) {
         return false;
@@ -74,15 +78,16 @@ fn segment_writes(segment: &str) -> bool {
         .iter()
         .position(|w| !(WRAPPERS.contains(w) || (w.contains('=') && !w.starts_with('-'))))
         .unwrap_or(words.len());
+    // The shell opens redirect targets itself, whatever the command is.
+    if redirects_into_mwf(segment) {
+        return true;
+    }
     let Some(first) = words.get(start) else {
-        return redirects_into_mwf(segment);
+        return false;
     };
     let name = first.rsplit('/').next().unwrap_or(first);
     if name == "mwf" {
         return false;
-    }
-    if redirects_into_mwf(segment) {
-        return true;
     }
     let args = &words[start + 1..];
     let operands = || args.iter().filter(|a| !a.starts_with('-'));
@@ -146,8 +151,11 @@ mod tests {
             patch_paths(patch),
             ["src/a.rs", ".mwf/pages/n.md", "b.rs", "c.rs", "d.rs"]
         );
-        // A `+` line quoting a header is patch content, not a header.
+        // A `+` line quoting a header is patch content, not a header; so is an indented
+        // context line.
         assert!(patch_paths("+*** Add File: .mwf/x.md\n").is_empty());
+        let context = "*** Begin Patch\n*** Update File: notes.txt\n@@\n *** Update File: .mwf/pages/a.md\n-x\n+y\n\t*** Delete File: .mwf/log.md\n*** End Patch\n";
+        assert_eq!(patch_paths(context), ["notes.txt"]);
     }
 
     #[test]
@@ -158,10 +166,22 @@ mod tests {
             "./.mwf/pages/a.md",
             "x/.MWF/log.md",
             "\".mwf/a\"",
+            "of=.mwf/a",
+            "../.mwf",
         ] {
             assert!(mentions_mwf(yes), "{yes}");
         }
-        for no in ["mwf", ".mwfrc", ".mwf-backup/a", "a.mwf.bak", "src/mwf/x"] {
+        for no in [
+            "mwf",
+            ".mwfrc",
+            ".mwf-backup/a",
+            "a.mwf.bak",
+            "src/mwf/x",
+            "notes.mwf/a.md",
+            "my-.mwf/a",
+            "x_.mwf",
+            "..mwf/a",
+        ] {
             assert!(!mentions_mwf(no), "{no}");
         }
     }
@@ -189,6 +209,10 @@ mod tests {
             "find .mwf -name '*.md' -delete",
             "dd if=/dev/zero of=.mwf/pages/a.md",
             "/bin/rm ../other/.mwf/pages/a.md",
+            // The shell, not mwf, writes a redirect target.
+            "mwf show a > .mwf/pages/b.md",
+            "mwf log >> .mwf/log.md",
+            "/usr/local/bin/mwf index 2>.mwf/err",
         ] {
             assert!(shell_writes_mwf(cmd), "{cmd}");
         }
@@ -209,6 +233,11 @@ mod tests {
             "rm -rf target",
             "echo hi > notes.md",
             "find .mwf -name '*.md'",
+            "mwf show a > notes.md",
+            // `.mwf` must be a whole path component.
+            "rm -rf notes.mwf/old",
+            "echo x > build.mwf/out",
+            "sed -i s/a/b/ docs/a.mwf/x.md",
         ] {
             assert!(!shell_writes_mwf(cmd), "{cmd}");
         }

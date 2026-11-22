@@ -445,3 +445,34 @@ fn budget_keeps_the_closing_fence() {
         "the guard needs no config"
     );
 }
+
+#[test]
+fn failed_state_save_skips_the_prompt_hook_by_code() {
+    use std::os::unix::fs::PermissionsExt;
+    let mut s = Session::initialized();
+    s.new_page(
+        "cargo-deny",
+        "knowledge",
+        "Cargo deny duplicate versions",
+        "Why duplicate crate versions fail CI",
+        "deny.toml sets multiple-versions = deny.\n",
+    );
+    // `.state/` can be read (no state yet) but not written: `mark_recalled` fails to save.
+    let state = s.root.join(".mwf/.state");
+    fs::create_dir(&state).unwrap();
+    fs::set_permissions(&state, fs::Permissions::from_mode(0o555)).unwrap();
+    let writable = fs::write(state.join("probe"), "").is_ok(); // root ignores the mode
+    let out = (!writable).then(|| {
+        s.hook(
+            "prompt",
+            CLAUDE,
+            r#"{"session_id":"s1","prompt":"why do duplicate crate versions fail cargo deny"}"#,
+        )
+    });
+    fs::set_permissions(&state, fs::Permissions::from_mode(0o755)).unwrap();
+    let Some(out) = out else { return };
+    assert_eq!(
+        out, "{\"systemMessage\":\"mwf: prompt hook skipped (IO); run `mwf lint`\"}\n",
+        "no pages without the record, and only the code is shown"
+    );
+}
