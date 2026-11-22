@@ -10,7 +10,7 @@
 mwf init [--local]
 ```
 
-在 git 仓库根目录创建 `.mwf/`。默认进 git 并写 `.gitattributes`（`log.md merge=union`）；`--local` 时把 `.mwf/` 写入 `.gitignore`。
+在 git 仓库根目录创建 `.mwf/`。默认进 git 并写 `.gitattributes`（`log.md merge=union`）；`--local` 时把 `.mwf/` 写入 `.gitignore`。机器本地文件由 `.mwf/.gitignore` 忽略；`.mwf` 已存在时报错（[0048](decisions/0048-init-layout-and-ignore-rules.md)）。
 
 ## 读
 
@@ -53,6 +53,7 @@ mwf uninstall --host claude|codex
 | --- | --- |
 | `NOT_INITIALIZED` | 找不到 `.mwf/` |
 | `NOT_GIT_ROOT` | `init` 不在 git 仓库根目录 |
+| `ALREADY_INITIALIZED` | `init` 时 `.mwf` 已存在（不改动任何文件，[0048](decisions/0048-init-layout-and-ignore-rules.md)） |
 | `NOT_FOUND` | 页面不存在 |
 | `ALREADY_EXISTS` | `new` / `rename` 目标 slug 已存在 |
 | `INVALID_SLUG` | slug 不符合 `[a-z0-9-]` |

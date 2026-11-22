@@ -13,6 +13,7 @@
 | 7 | LLM wiki 工作流 | ADR 0040 |
 | 8 | search 叶子化、依赖策略、错误与时钟、实施与分支 | ADR 0041–0044、[crates/](crates/)、[implementation-plan.md](implementation-plan.md) |
 | 9 | 默认分支切换、开工前文档补正 | ADR 0045–0046 |
+| P2 | `init` 布局、忽略规则、已有 `.mwf/`、log 追加、trash 重名、配置未知键 | ADR 0048 |
 
 ## 当前未决问题
 
