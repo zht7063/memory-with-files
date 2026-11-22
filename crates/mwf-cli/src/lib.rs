@@ -86,7 +86,9 @@ fn usage(e: &clap::Error, args: &[OsString], json: bool, io: &mut Io) -> ExitCod
             message: message.to_owned(),
             details: Value::Null,
         };
-        let _ = io.stdout.write_all(envelope_err(&f).as_bytes());
+        if !print(io.stdout, &envelope_err(&f)) {
+            return ExitCode::from(1);
+        }
     } else {
         let _ = io.stderr.write_all(text.as_bytes());
     }

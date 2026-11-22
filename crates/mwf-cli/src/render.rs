@@ -5,7 +5,7 @@ use std::fmt::Write;
 
 use mwf_app::{
     DeleteOut, LinkRef, LintReport, PageSummary, PageView, SearchHit, Severity, Warning, WriteOut,
-    looks_secret, shown_slug,
+    looks_secret, shown_slug, shown_summary, shown_title,
 };
 
 /// `show`: `key: value` lines, a blank line, the body, then the links.
@@ -147,8 +147,8 @@ pub(crate) fn write(verb: &str, w: &WriteOut) -> String {
                 out,
                 "  {}: {} — {}",
                 shown_slug(&r.slug),
-                r.title,
-                r.summary
+                shown_title(&r.title),
+                shown_summary(&r.summary)
             );
         }
     }

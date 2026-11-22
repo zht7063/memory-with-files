@@ -23,11 +23,13 @@ pub fn slug(s: &str) -> &str {
     if looks_secret(s) { WITHHELD_SLUG } else { s }
 }
 
-pub(crate) fn title(s: &str) -> &str {
+/// `title` for output, or `[title withheld: looks like a secret]`.
+pub fn title(s: &str) -> &str {
     if looks_secret(s) { WITHHELD_TITLE } else { s }
 }
 
-pub(crate) fn summary(s: &str) -> &str {
+/// `summary` for output, or `[summary withheld: looks like a secret]`.
+pub fn summary(s: &str) -> &str {
     if looks_secret(s) { WITHHELD_SUMMARY } else { s }
 }
 

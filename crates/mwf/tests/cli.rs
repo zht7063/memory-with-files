@@ -499,6 +499,41 @@ fn rename_from_a_secret_slug_withholds_it() {
     );
 }
 
+/// The related pages a write suggests do not copy a stored secret-looking title or summary.
+#[test]
+fn related_pages_withhold_secret_titles_and_summaries() {
+    let s = Session::initialized();
+    let key = ["ghp", "_", "Zq8xK2mN7pR4vT9wB3cD6fG1hJ5kL0sAeYuI"].concat();
+    let other = ["ghp", "_", "Ab3dE6gH9jK2mN5pQ8sT1vW4yZ7bC0eF3hJx"].concat();
+    fs::write(
+        s.root.join(".mwf/pages/vault-notes.md"),
+        format!(
+            "---\ntitle: Vault {key}\ntype: knowledge\nsummary: Rotation {other}\nstatus: active\ncreated: 2026-11-20T10:00:00Z\nupdated: 2026-11-20T10:00:00Z\n---\nVault token rotation schedule and vault token storage.\n"
+        ),
+    )
+    .unwrap();
+    let out = s.output(
+        &[
+            "new",
+            "rotation",
+            "--type",
+            "knowledge",
+            "--title",
+            "Token rotation",
+            "--summary",
+            "How vault tokens rotate",
+        ],
+        "Vault token rotation schedule and vault token storage.\n",
+    );
+    assert_eq!(out.status.code(), Some(0));
+    let text = assert_withheld(&out, &key);
+    assert!(!text.contains(&other), "{text}");
+    assert!(
+        text.contains("  vault-notes: [title withheld: looks like a secret] — [summary withheld: looks like a secret]\n"),
+        "{text}"
+    );
+}
+
 /// Output that cannot be written is a failure, `--help` and `--version` included.
 #[cfg(target_os = "linux")]
 #[test]
@@ -510,6 +545,8 @@ fn unwritable_stdout_exits_1() {
         &["new", "--help"],
         &["list"],
         &["--json", "show", "x"],
+        // A usage error is exit 2 only when it was delivered.
+        &["--json", "list", "--status", "invalid"],
     ] {
         let full = fs::OpenOptions::new()
             .write(true)

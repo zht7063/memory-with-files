@@ -53,6 +53,8 @@ pub struct LintReport { issues: Vec<LintIssue>, errors, warnings }           // 
 
 pub fn looks_secret(text: &str) -> bool;         // secret 规则命中；适配器用它隐去回显的输入（0050）
 pub fn shown_slug(slug: &str) -> &str;           // 命中时为 "[slug withheld: looks like a secret]"
+pub fn shown_title(title: &str) -> &str;         // 同上，"[title withheld: …]"
+pub fn shown_summary(summary: &str) -> &str;     // 同上，"[summary withheld: …]"
 
 pub const BODY_MAX_BYTES: usize = 102_400;       // 0033、0049
 pub const RELATED_LIMIT: usize = 3;              // 0040
