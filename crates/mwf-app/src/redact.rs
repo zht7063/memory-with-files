@@ -12,12 +12,14 @@ pub(crate) const WITHHELD_SUMMARY: &str = "[summary withheld: looks like a secre
 /// valid slug.
 pub(crate) const LOG_SLUG: &str = "slug-withheld";
 
-pub(crate) fn looks_secret(text: &str) -> bool {
+/// Whether `text` matches a secret rule (ADR 0025). Adapters use it to keep echoed input, such
+/// as argument values and file names, out of their own diagnostics.
+pub fn looks_secret(text: &str) -> bool {
     !scan_all(text).is_empty()
 }
 
-/// `slug` for a diagnostic, or [`WITHHELD_SLUG`].
-pub(crate) fn slug(s: &str) -> &str {
+/// `slug` for a diagnostic or other output, or `[slug withheld: looks like a secret]`.
+pub fn slug(s: &str) -> &str {
     if looks_secret(s) { WITHHELD_SLUG } else { s }
 }
 

@@ -17,9 +17,11 @@ P2 实现 `mwf-cli` 时，下列细节在已有 ADR 中没有规定：纯文本�
 
 ### 用法错误
 
-- clap 解析失败为 `USAGE`，退出 2。纯文本模式把 clap 的原文（含 `Usage:` 行与 `--help` 提示）写到 stderr；`--json` 模式下 `message` 是同一段文本去掉开头的 `error: `。
+- clap 解析失败为 `USAGE`，退出 2。纯文本模式把 clap 的文本（含 `Usage:` 行与 `--help` 提示）写到 stderr；`--json` 模式下 `message` 是同一段文本去掉开头的 `error: `。
+- clap 的文本会回显被拒绝的参数与值，所以输出前先隐去密钥（0025）：命中 secret 规则的参数（以及 `--opt=值` 中 `=` 之后的值）在文本中替换为 `[argument withheld: looks like a secret]`；替换后整段文本仍命中（例如 clap 从 `-n值` 里截出的值）时，整段换成固定的 `error: invalid arguments; the details are withheld because they look like a secret` 与 `--help` 提示。两种输出模式相同。
 - 解析失败时还没有 `Cli` 结构体，所以先扫描参数：`--` 之前出现 `--json` 即按 JSON 输出用法错误。极少数情况下（例如 `--title --json` 把 `--json` 当成标题值）用法错误也会按 JSON 输出；解析成功后一律以 clap 的结果为准。
 - 没有子命令时（`mwf`）打印帮助到 stderr，退出 2（clap 的默认行为，也是用法错误）。`--help`、`--version` 打印到 stdout，退出 0。
+- 任何输出（含 `--help`、`--version`）写入或 flush stdout 失败（如 `/dev/full`、管道已关闭）时退出 1。
 
 ### 纯文本格式
 
@@ -30,6 +32,7 @@ P2 实现 `mwf-cli` 时，下列细节在已有 ADR 中没有规定：纯文本�
 - `list`：同 `search`，没有 score；有 tags 时第三行 `  tags: …`。无页面为 `no pages`。
 - `index`：目录原文。`log`：`log.md` 的行原样。
 - `lint`：每个问题一行 `<severity>[<rule>] <page>: <message>`（全项目规则没有 ` <page>`），最后一行 `errors: N, warnings: M`。
+- 输出不复制密钥（0049）：写命令与 `delete` 的纯文本输出中，命中 secret 规则的 slug（含 `rename` 的源 slug、`also updated` / `unlinked` / 相关页中的 slug）显示为 `[slug withheld: looks like a secret]`，`trashed:` 路径命中时显示为 `[path withheld: looks like a secret]`。`--json` 的 `data` 仍是 DTO 原样。读命令（`show`、`list`、`search`）照常给出存量页面的 slug，以便用户找到并改名或删除它。
 - 写命令：第一行 `created|updated|archived|unarchived|renamed <old> -> <slug>`，没有改动时为 `unchanged <slug>`；第二行 `rev: <rev>`；之后依次是 `warning[<rule>]: …`、`also updated: …`、`related pages not linked yet:` 与每页一行 `  <slug>: <title> — <summary>`（0040）。
 - `delete`：`deleted <slug>`、`trashed: <路径>`，有 `--unlink` 改写时 `unlinked: …`，然后是警告。
 
@@ -42,7 +45,7 @@ P2 实现 `mwf-cli` 时，下列细节在已有 ADR 中没有规定：纯文本�
 ### stdin 上限
 
 - stdin（`new`、`write` 的正文）与 `--old-file` / `--new-file` 都按 1 MB（1048576 字节）流式计数，读到第 1048577 个字节即停止并返回 `TOO_LARGE`（`details.field` 为 `stdin` 或 `--old-file` / `--new-file`，`details.limit` 为 1048576），不读剩余输入（0033）。通过之后正文再受 `mwf-app` 的 100 KB 检查（0049）。
-- 输入不是 UTF-8 为 `INVALID_FIELD`；`--*-file` 打不开为 `IO`。
+- 输入不是 UTF-8 为 `INVALID_FIELD`；`--*-file` 打不开为 `IO`，信息与 `details.path` 给出路径；路径命中 secret 规则时信息中写 `[path withheld: looks like a secret]`，只附错误种类，并省略 `details`。
 
 ### `clap` 版本
 

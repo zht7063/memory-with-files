@@ -5,6 +5,7 @@ use std::fmt::Write;
 
 use mwf_app::{
     DeleteOut, LinkRef, LintReport, PageSummary, PageView, SearchHit, Severity, Warning, WriteOut,
+    looks_secret, shown_slug,
 };
 
 /// `show`: `key: value` lines, a blank line, the body, then the links.
@@ -115,33 +116,54 @@ pub(crate) fn lint(r: &LintReport) -> String {
     out
 }
 
+/// Slugs, as writes report them: a stored page's slug can look like a secret, and a write
+/// does not copy it to the output (ADRs 0049, 0050).
+fn slugs(list: &[String]) -> String {
+    list.iter()
+        .map(|s| shown_slug(s))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 /// Every write except `delete`: what happened and the new rev, then warnings, other rewritten
 /// pages and related pages not linked yet (ADR 0040).
 pub(crate) fn write(verb: &str, w: &WriteOut) -> String {
     let mut out = String::new();
+    let slug = shown_slug(&w.slug);
     if w.changed {
-        let _ = writeln!(out, "{verb} {}", w.slug);
+        let _ = writeln!(out, "{verb} {slug}");
     } else {
-        let _ = writeln!(out, "unchanged {}", w.slug);
+        let _ = writeln!(out, "unchanged {slug}");
     }
     let _ = writeln!(out, "rev: {}", w.rev);
     warnings(&mut out, &w.warnings);
     if !w.also_updated.is_empty() {
-        let _ = writeln!(out, "also updated: {}", w.also_updated.join(", "));
+        let _ = writeln!(out, "also updated: {}", slugs(&w.also_updated));
     }
     if !w.related_unlinked.is_empty() {
         out.push_str("related pages not linked yet:\n");
         for r in &w.related_unlinked {
-            let _ = writeln!(out, "  {}: {} — {}", r.slug, r.title, r.summary);
+            let _ = writeln!(
+                out,
+                "  {}: {} — {}",
+                shown_slug(&r.slug),
+                r.title,
+                r.summary
+            );
         }
     }
     out
 }
 
 pub(crate) fn delete(d: &DeleteOut) -> String {
-    let mut out = format!("deleted {}\ntrashed: {}\n", d.slug, d.trashed);
+    let trashed = if looks_secret(&d.trashed) {
+        "[path withheld: looks like a secret]"
+    } else {
+        &d.trashed
+    };
+    let mut out = format!("deleted {}\ntrashed: {trashed}\n", shown_slug(&d.slug));
     if !d.unlinked.is_empty() {
-        let _ = writeln!(out, "unlinked: {}", d.unlinked.join(", "));
+        let _ = writeln!(out, "unlinked: {}", slugs(&d.unlinked));
     }
     warnings(&mut out, &d.warnings);
     out

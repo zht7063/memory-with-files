@@ -409,3 +409,118 @@ fn lint_errors_exit_1() {
     s.run(&["lint", "--json"], "");
     s.snapshot("lint_errors");
 }
+
+/// A credential-looking string, assembled at run time so the source holds no literal secret
+/// (GitHub push protection). It is also a valid slug.
+fn canary() -> String {
+    ["glpat", "-", "zq8xk2mn7pr4vt9wb3cd6fg1"].concat()
+}
+
+/// Neither stream of `out` contains `secret`; returns stdout and stderr joined.
+fn assert_withheld(out: &Output, secret: &str) -> String {
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!all.contains(secret), "{all}");
+    assert!(all.contains("withheld"), "{all}");
+    all
+}
+
+/// clap diagnostics echo rejected values; a secret-looking one is withheld in both modes.
+#[test]
+fn usage_errors_withhold_secret_arguments() {
+    let s = Session::new();
+    let key = canary();
+    let flag = format!("--{key}");
+    for args in [
+        vec!["list", "--status", key.as_str()],
+        vec!["list", "--json", "--status", key.as_str()],
+        vec!["list", flag.as_str()],
+        vec!["list", key.as_str(), "--json"],
+    ] {
+        let out = s.output(&args, "");
+        assert_eq!(out.status.code(), Some(2), "{args:?}");
+        assert_withheld(&out, &key);
+    }
+    let status = format!("--status={key}");
+    let out = s.output(&["list", &status], "");
+    assert_eq!(out.status.code(), Some(2));
+    assert_withheld(&out, &key);
+    let out = s.output(&["log", &format!("-n{key}")], "");
+    assert_eq!(out.status.code(), Some(2));
+    assert_withheld(&out, &key);
+    let json =
+        String::from_utf8(s.output(&["list", "--json", "--status", &key], "").stdout).unwrap();
+    assert!(
+        json.starts_with(r#"{"ok":false,"error":{"code":"USAGE","#),
+        "{json}"
+    );
+}
+
+/// A missing `--old-file` / `--new-file` with a secret-looking name is reported without it.
+#[test]
+fn patch_file_errors_withhold_secret_paths() {
+    let s = Session::initialized();
+    let path = format!("{}.txt", canary());
+    let out = s.output(&["patch", "x", "--old-file", &path, "--new", "y"], "");
+    assert_eq!(out.status.code(), Some(1));
+    assert!(assert_withheld(&out, &canary()).contains("error[IO]"));
+    let out = s.output(
+        &["patch", "x", "--old", "y", "--new-file", &path, "--json"],
+        "",
+    );
+    assert_eq!(out.status.code(), Some(1));
+    let json = assert_withheld(&out, &canary());
+    assert!(
+        json.starts_with(r#"{"ok":false,"error":{"code":"IO","#),
+        "{json}"
+    );
+    assert!(!json.contains("details"), "{json}");
+}
+
+/// Renaming a page away from a secret-looking slug does not print the old slug.
+#[test]
+fn rename_from_a_secret_slug_withholds_it() {
+    let s = Session::initialized();
+    let bad = canary();
+    fs::write(
+        s.root.join(format!(".mwf/pages/{bad}.md")),
+        "---\ntitle: One\ntype: knowledge\nsummary: one\nstatus: active\ncreated: 2026-11-20T10:00:00Z\nupdated: 2026-11-20T10:00:00Z\n---\nbody\n",
+    )
+    .unwrap();
+    let out = s.output(&["rename", &bad, "clean"], "");
+    assert_eq!(out.status.code(), Some(0));
+    let text = assert_withheld(&out, &bad);
+    assert!(
+        text.starts_with("renamed [slug withheld: looks like a secret] -> clean\n"),
+        "{text}"
+    );
+}
+
+/// Output that cannot be written is a failure, `--help` and `--version` included.
+#[cfg(target_os = "linux")]
+#[test]
+fn unwritable_stdout_exits_1() {
+    let s = Session::initialized();
+    for args in [
+        &["--help"][..],
+        &["--version"],
+        &["new", "--help"],
+        &["list"],
+        &["--json", "show", "x"],
+    ] {
+        let full = fs::OpenOptions::new()
+            .write(true)
+            .open("/dev/full")
+            .unwrap();
+        let status = std::process::Command::new(assert_cmd::cargo::cargo_bin!("mwf"))
+            .args(args)
+            .current_dir(&s.root)
+            .stdout(full)
+            .status()
+            .unwrap();
+        assert_eq!(status.code(), Some(1), "{args:?}");
+    }
+}

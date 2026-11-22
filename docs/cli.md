@@ -6,7 +6,7 @@
 
 - 退出码：0 成功；1 操作失败（任何错误码，或 `lint` 有 error）；2 用法错误（`USAGE`）。`--help`、`--version` 退出 0。
 - `--json`：一行 `{"ok":true,"data":…}` 或 `{"ok":false,"error":{"code":…,"message":…,"details":…}}`（`details` 可省略），总写到 stdout；用法错误也是如此。`lint` 有 error 时仍是 `"ok": true`，退出 1。
-- 纯文本：结果写 stdout；错误写 stderr，格式 `error[CODE]: message`；用法错误为 clap 的原文。各命令的格式由 `crates/mwf/tests/snapshots/` 固定（0050）。
+- 纯文本：结果写 stdout；错误写 stderr，格式 `error[CODE]: message`；用法错误为 clap 的文本（疑似密钥的参数被隐去）。stdout 写不进去时退出 1。各命令的格式由 `crates/mwf/tests/snapshots/` 固定（0050）。
 - stdin 与 `--old-file` / `--new-file` 最多读 1 MB，超出即 `TOO_LARGE`（0033、0050）；不是 UTF-8 为 `INVALID_FIELD`。
 
 ## 项目
