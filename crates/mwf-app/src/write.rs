@@ -12,6 +12,7 @@ use serde_json::json;
 use crate::corpus::{Corpus, links_to};
 use crate::dto::{DeleteOut, NewIn, PatchIn, SetIn, WriteIn, WriteOut};
 use crate::error::{AppError, ErrorCode};
+use crate::redact;
 use crate::{App, parse_stored};
 
 /// Largest page body, and largest `patch` old / new text, in bytes of UTF-8 (100 KB = 102400
@@ -50,11 +51,12 @@ fn check_secrets(slug: &Slug, before: &str, after: &str) -> Result<(), AppError>
     Err(AppError::new(
         ErrorCode::SecretDetected,
         format!(
-            "refusing to write {slug}: the new content looks like a secret: {}; remove it and retry",
+            "refusing to write {}: the new content looks like a secret: {}; remove it and retry",
+            redact::slug(slug.as_str()),
             list.join(", ")
         ),
     )
-    .with(json!({ "slug": slug.as_str(), "findings": findings })))
+    .with(json!({ "slug": redact::slug(slug.as_str()), "findings": findings })))
 }
 
 /// `SECRET_DETECTED` for a slug that looks like a secret: it would become a file name and go
@@ -77,17 +79,6 @@ fn check_slug(slug: &Slug) -> Result<(), AppError> {
         ),
     )
     .with(json!({ "field": "slug", "findings": findings })))
-}
-
-/// The title as written into a `log.md` line: replaced when it holds a likely secret, so that
-/// logging (in particular `delete`, which removes the page) never copies a stored credential into
-/// the committed log (ADR 0049).
-fn log_title(title: &str) -> &str {
-    if scan_all(title).is_empty() {
-        title
-    } else {
-        "[title withheld: looks like a secret]"
-    }
 }
 
 /// Reads everything a write may touch, under the lock and before the first change, so that a
@@ -130,7 +121,11 @@ fn rewrites(
             page.body = edit(&p.body);
             page.fm.updated = ts.clone();
             check_size("body", &page.body).map_err(|e| AppError {
-                message: format!("rewriting the links of {}: {}", p.slug, e.message),
+                message: format!(
+                    "rewriting the links of {}: {}",
+                    redact::slug(p.slug.as_str()),
+                    e.message
+                ),
                 ..e
             })?;
             let after = render_page(&page);
@@ -201,10 +196,14 @@ impl App {
                     ErrorCode::RevMismatch,
                     format!(
                         "page {} changed since you read it (rev is now {current}); run `mwf show {}` and retry",
-                        page.slug, page.slug
+                        redact::slug(page.slug.as_str()),
+                        redact::slug(page.slug.as_str())
                     ),
                 )
-                .with(json!({ "slug": page.slug.as_str(), "current_rev": current.as_str() })));
+                .with(json!({
+                    "slug": redact::slug(page.slug.as_str()),
+                    "current_rev": current.as_str(),
+                })));
             }
             let mut page = page.clone();
             page.body = i.body;
@@ -355,16 +354,20 @@ impl App {
         let title = parse_stored(&slug, &bytes).map_or_else(|_| String::new(), |p| p.fm.title);
         let referrers = corpus.backlinks(&slug);
         if !referrers.is_empty() && !unlink_refs {
-            let names: Vec<&str> = referrers.iter().map(|p| p.slug.as_str()).collect();
+            let names: Vec<&str> = referrers
+                .iter()
+                .map(|p| redact::slug(p.slug.as_str()))
+                .collect();
+            let shown = redact::slug(slug.as_str());
             return Err(AppError::new(
                 ErrorCode::HasBacklinks,
                 format!(
-                    "{} page(s) link to {slug}: {}; archive it instead, or delete with --unlink",
+                    "{} page(s) link to {shown}: {}; archive it instead, or delete with --unlink",
                     names.len(),
                     names.join(", ")
                 ),
             )
-            .with(json!({ "slug": slug.as_str(), "backlinks": names })));
+            .with(json!({ "slug": shown, "backlinks": names })));
         }
         let ts = self.now()?;
         let unlinks = rewrites(&referrers, &corpus, &ts, |body| unlink(body, &slug))?;
@@ -450,7 +453,18 @@ impl App {
         if project.read_index()?.as_deref() != Some(index.as_bytes()) {
             guard.write_index(&index)?;
         }
-        guard.append_log(&render_log_line(ts, op, slug, log_title(title)))?;
+        let op = match op {
+            LogOp::Rename { from } => LogOp::Rename {
+                from: redact::log_slug(from),
+            },
+            op => op.clone(),
+        };
+        guard.append_log(&render_log_line(
+            ts,
+            &op,
+            &redact::log_slug(slug),
+            redact::title(title),
+        ))?;
         Ok(corpus)
     }
 }

@@ -67,7 +67,7 @@ DTO 全部 `#[derive(Serialize)]`，`--json` 与快照测试直接使用；`type
 ## 实现说明
 
 - 每个操作读一次全部页面（`Corpus`）。名字不是 slug、不是 UTF-8 或解析失败的页面文件仍算“存在”（不是悬空链接目标），但不参与链接图、`index.md` 与检索；lint 报告它们。
-- 写入在锁内重新读取全部页面、`index.md` 与 `log.md`（文件类型预检），校验、secret 扫描（正文、frontmatter 与目标 slug）与 100 KB 检查（含 `rename` / `--unlink` 改写的正文）都在任何写入之前完成；失败时什么都不落盘。`log.md` 中疑似密钥的标题被替换。`index.md` 只在内容不同时重写，然后追加一行日志。
+- 写入在锁内重新读取全部页面、`index.md` 与 `log.md`（文件类型预检），校验、secret 扫描（正文、frontmatter 与目标 slug）与 100 KB 检查（含 `rename` / `--unlink` 改写的正文）都在任何写入之前完成；失败时什么都不落盘。`index.md`、`log.md` 与全部诊断信息中疑似密钥的 slug、标题、summary 被隐去（`redact.rs`，0049）。`index.md` 只在内容不同时重写，然后追加一行日志。
 - `write` 的 `rev` 与当前文件内容的 rev 不同为 `REV_MISMATCH`，`details.current_rev` 给出当前 rev。
 - 错误码映射、上限、no-op 写入、`rename` / `delete --unlink` 的改写范围、`related_unlinked` 与 `possible_duplicate` 的门槛、lint 规则名与性能见 [0049](../decisions/0049-app-defaults.md)。
 

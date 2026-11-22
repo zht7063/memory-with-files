@@ -1359,3 +1359,121 @@ fn lint_checks_name_and_secrets_of_non_utf8_files() {
     let json = serde_json::to_string(&env.app().lint().unwrap()).unwrap();
     assert!(!json.contains(&key[4..]));
 }
+
+// --- re-review regressions (PR #56): generated metadata ---
+
+/// Writes a page file by hand, as an editor or a merge would.
+fn hand_page(env: &Env, stem: &str, title: &str, summary: &str, body: &str) {
+    fs::write(
+        env.mwf(&format!("pages/{stem}.md")),
+        format!(
+            "---\ntitle: {title}\ntype: knowledge\nsummary: {summary}\nstatus: active\ncreated: 2026-11-20T10:00:00Z\nupdated: 2026-11-20T10:00:00Z\n---\n{body}"
+        ),
+    )
+    .unwrap();
+}
+
+#[test]
+fn index_never_copies_secret_metadata() {
+    let env = Env::new();
+    let key = secret();
+    let bad_slug = slug_secret();
+    hand_page(&env, "t", &format!("t {key}"), "plain", "");
+    hand_page(&env, "s", "Plain", &format!("s {key}"), "");
+    hand_page(&env, &bad_slug, "Named", "named", "");
+    let check = |text: &str| {
+        assert!(!text.contains(&key[4..]), "{text}");
+        assert!(!text.contains(&bad_slug[6..]), "{text}");
+    };
+    // An unrelated write rebuilds index.md.
+    env.page("other", "task", "Other", "");
+    let index = env.read("index.md");
+    check(&index);
+    assert!(
+        index.contains("- [\\[title withheld: looks like a secret\\]](pages/t.md) — plain"),
+        "{index}"
+    );
+    assert!(
+        index.contains("- [Plain](pages/s.md) — [summary withheld: looks like a secret]"),
+        "{index}"
+    );
+    assert!(index.contains("pages/other.md"));
+    // `index` and `index --rebuild` print and write the same safe text.
+    fs::write(env.mwf("index.md"), "stale").unwrap();
+    assert_eq!(env.app().index(false).unwrap(), index);
+    assert_eq!(env.app().index(true).unwrap(), index);
+    assert_eq!(env.read("index.md"), index);
+    // Lint compares against the safe text (no drift) and flags the secret file name.
+    let report = env.app().lint().unwrap();
+    assert!(
+        !report.issues.iter().any(|i| i.rule == "index_drift"),
+        "{report:?}"
+    );
+    let json = serde_json::to_string(&report).unwrap();
+    check(&json);
+    assert!(
+        report.issues.iter().any(|i| i.rule == "secret"
+            && i.page.as_deref() == Some("[slug withheld: looks like a secret]")
+            && i.message.contains("file name")),
+        "{json}"
+    );
+}
+
+#[test]
+fn delete_and_rename_of_a_secret_slug_log_no_secret() {
+    let env = Env::new();
+    let bad = slug_secret();
+    hand_page(&env, &bad, "One", "one", "");
+    env.app().rename(&bad, "clean").unwrap();
+    assert!(env.mwf("pages/clean.md").is_file());
+    hand_page(&env, &bad, "Two", "two", "");
+    let out = env.app().delete(&bad, false).unwrap();
+    assert!(out.trashed.starts_with(".mwf/trash/"));
+    assert!(!env.mwf(&format!("pages/{bad}.md")).exists());
+    let log = env.read("log.md");
+    assert!(!log.contains(&bad[6..]), "{log}");
+    assert!(log.contains("rename slug-withheld->clean \"One\""), "{log}");
+    assert!(log.contains("delete slug-withheld \"Two\""), "{log}");
+}
+
+#[test]
+fn diagnostics_withhold_secret_slugs() {
+    let env = Env::new();
+    let bad = slug_secret();
+    let no_echo = |e: &AppError| {
+        let json = serde_json::to_string(e).unwrap();
+        assert!(!json.contains(&bad[6..]), "{json}");
+        assert!(json.contains("slug withheld"), "{json}");
+    };
+    let app = env.app();
+    // NOT_FOUND for a slug that does not exist.
+    for err in [
+        app.show(&bad).unwrap_err(),
+        app.archive(&bad, true).unwrap_err(),
+        app.delete(&bad, false).unwrap_err(),
+        app.rename(&bad, "x").unwrap_err(),
+    ] {
+        assert_eq!(err.code, ErrorCode::NotFound);
+        no_echo(&err);
+    }
+    // An existing secret-named page that others link to, or that is invalid.
+    hand_page(&env, &bad, "B", "b", "");
+    // Written by hand: mwf itself refuses to add a link that names the secret.
+    hand_page(&env, "ref", "Ref", "ref", &format!("[b]({bad}.md)\n"));
+    let err = app.delete(&bad, false).unwrap_err();
+    assert_eq!(err.code, ErrorCode::HasBacklinks);
+    no_echo(&err);
+    let err = app
+        .write(WriteIn {
+            slug: bad.clone(),
+            rev: "000000000000".into(),
+            body: String::new(),
+        })
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::RevMismatch);
+    no_echo(&err);
+    fs::write(env.mwf(&format!("pages/{bad}.md")), "junk").unwrap();
+    let err = app.show(&bad).unwrap_err();
+    assert_eq!(err.code, ErrorCode::InvalidPage);
+    no_echo(&err);
+}

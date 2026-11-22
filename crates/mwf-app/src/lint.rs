@@ -12,6 +12,7 @@ use crate::App;
 use crate::corpus::{Corpus, doc, link_targets, query_text};
 use crate::dto::{LintIssue, LintReport, Severity};
 use crate::error::AppError;
+use crate::redact;
 
 /// Two active pages are `possible_duplicate` when one of them scores at least this fraction of
 /// the best BM25 score for the other's full text, which is normally that page's own score: the
@@ -27,9 +28,10 @@ fn severity(s: mwf_domain::Severity) -> Severity {
     }
 }
 
+/// A lint finding; a secret-looking page name is withheld (ADR 0049).
 fn issue(page: Option<&str>, rule: &'static str, severity: Severity, message: String) -> LintIssue {
     LintIssue {
-        page: page.map(str::to_owned),
+        page: page.map(|p| redact::slug(p).to_owned()),
         rule,
         severity,
         message,
@@ -58,6 +60,17 @@ impl App {
         let corpus = Corpus::load(&self.project)?;
         for e in &corpus.entries {
             let page = Some(e.stem.as_str());
+            for f in scan_all(&e.stem) {
+                issues.push(issue(
+                    page,
+                    "secret",
+                    Severity::Error,
+                    format!(
+                        "the file name looks like a secret ({}): {}; rename the page",
+                        f.rule, f.redacted
+                    ),
+                ));
+            }
             match std::str::from_utf8(&e.bytes) {
                 Ok(text) => {
                     for i in validate(&e.stem, text, &now) {
@@ -104,7 +117,10 @@ impl App {
                         Some(page.slug.as_str()),
                         "dangling_link",
                         Severity::Warning,
-                        format!("links to {target}.md, which does not exist"),
+                        format!(
+                            "links to {}.md, which does not exist",
+                            redact::slug(target.as_str())
+                        ),
                     ));
                 }
                 if target != page.slug
@@ -149,7 +165,10 @@ impl App {
                     "possible_duplicate",
                     Severity::Warning,
                     // Only the slug: a stored title could hold a secret (ADR 0049).
-                    format!("very similar to {}; merge them or link them", other.slug),
+                    format!(
+                        "very similar to {}; merge them or link them",
+                        redact::slug(other.slug.as_str())
+                    ),
                 ));
             }
         }

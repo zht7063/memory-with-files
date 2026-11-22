@@ -38,7 +38,11 @@ P2 实现 `mwf-app` 时，下列细节在已有 ADR 中没有规定。
 
 - **先检查、后改动**：取锁后、第一次改动前，读一遍全部页面文件、`index.md` 与 `log.md`，任何一个是符号链接或类型不对（如 `pages/` 下名为 `x.md` 的目录）时命令直接失败，什么都不写。`trash/` 无法预读，所以 `delete` 先把页面移入 trash，成功后才改写入链页面。
 - **slug 也做 secret 扫描**：slug 会成为文件名并写入 `index.md`、`log.md`，`new` 与 `rename` 的目标 slug 命中 secret 规则时 `SECRET_DETECTED`，错误不回显 slug。
-- **日志不复制密钥**：写入 `log.md` 的标题命中 secret 规则时改为 `[title withheld: looks like a secret]`，避免 `delete` 等操作把存量页面中的密钥搬进进 git 的日志。
+- **生成物与诊断不复制密钥**：页面本身不被改写（存量密钥留给用户删除，页面仍可 `rename` / `delete`），但 mwf 不把它搬到别处：
+  - `index.md`（写入、`index`、`index --rebuild` 与 lint 的一致性检查用同一份渲染结果）：slug 命中 secret 规则的页面不列出；标题、summary 命中时分别改为 `[title withheld: looks like a secret]`、`[summary withheld: looks like a secret]`。
+  - `log.md`：命中的标题同上替换；命中的 slug（含 `rename` 的源 slug）写作 `slug-withheld`。
+  - 错误信息与 details、写入警告、lint 的 `page` 字段与信息：命中的 slug 显示为 `[slug withheld: looks like a secret]`；`NOT_FOUND` 对不存在的 slug 同样如此。store 错误的信息或路径命中时，只保留错误码。
+  - lint 对命中的文件名报 `secret`（error）。
 - **改写也受 100 KB 限制**：`rename` 与 `delete --unlink` 改写的每个正文（含页面自身的自链接）在第一次改动前检查上限，超限为 `TOO_LARGE`。
 - secret 扫描比较整个页面文件（含 frontmatter）的前后文本，行号是页面文件的行号。
 - 结果与原页面完全相同的 `set` / `archive` / `unarchive` / `patch` / `write` 不写文件、不改 `updated`、不记日志，`WriteOut.changed = false`。

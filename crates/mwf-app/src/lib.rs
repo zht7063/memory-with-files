@@ -8,6 +8,7 @@ mod dto;
 mod error;
 mod lint;
 mod read;
+mod redact;
 mod write;
 
 use std::path::Path;

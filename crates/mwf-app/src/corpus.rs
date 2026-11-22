@@ -7,6 +7,7 @@ use mwf_store::Project;
 
 use crate::dto::{LinkRef, RelatedPage, Warning};
 use crate::error::AppError;
+use crate::redact;
 
 /// Similar pages a write reports at most (ADR 0040).
 pub const RELATED_LIMIT: usize = 3;
@@ -53,8 +54,21 @@ impl Corpus {
             .map(|i| &self.entries[i])
     }
 
+    /// `index.md` as mwf writes it and lint compares it: pages with a secret-looking slug are
+    /// left out, and secret-looking titles and summaries are withheld, so a rebuild never copies a
+    /// credential from a hand-edited page into the index (ADR 0049).
     pub fn index_text(&self) -> String {
-        render_index(&self.pages().collect::<Vec<_>>())
+        let pages: Vec<Page> = self
+            .pages()
+            .filter(|p| !redact::looks_secret(p.slug.as_str()))
+            .map(|p| {
+                let mut p = p.clone();
+                p.fm.title = redact::title(&p.fm.title).to_owned();
+                p.fm.summary = redact::summary(&p.fm.summary).to_owned();
+                p
+            })
+            .collect();
+        render_index(&pages.iter().collect::<Vec<_>>())
     }
 
     /// Valid pages other than `target` that link to it, by slug.
@@ -78,8 +92,9 @@ impl Corpus {
             .map(|e| Warning {
                 rule: "invalid_page_skipped",
                 message: format!(
-                    "pages/{}.md links to {target}.md but is not a valid page, so its links were not changed; fix it (`mwf lint`) and update the links",
-                    e.stem
+                    "pages/{}.md links to {}.md but is not a valid page, so its links were not changed; fix it (`mwf lint`) and update the links",
+                    redact::slug(&e.stem),
+                    redact::slug(target.as_str())
                 ),
             })
             .collect()
@@ -103,7 +118,10 @@ impl Corpus {
             .filter(|t| self.entry(t.as_str()).is_none())
             .map(|t| Warning {
                 rule: "dangling_link",
-                message: format!("links to {t}.md, which does not exist"),
+                message: format!(
+                    "links to {}.md, which does not exist",
+                    redact::slug(t.as_str())
+                ),
             })
             .collect()
     }

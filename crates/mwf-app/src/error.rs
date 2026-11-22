@@ -120,16 +120,20 @@ impl AppError {
     }
 
     pub(crate) fn not_found(slug: &Slug) -> AppError {
-        AppError::new(ErrorCode::NotFound, format!("page {slug} does not exist"))
-            .with(json!({ "slug": slug.as_str() }))
+        let shown = crate::redact::slug(slug.as_str());
+        AppError::new(ErrorCode::NotFound, format!("page {shown} does not exist"))
+            .with(json!({ "slug": shown }))
     }
 
     pub(crate) fn invalid_page(slug: &Slug, reason: &str) -> AppError {
         AppError::new(
             ErrorCode::InvalidPage,
-            format!("pages/{slug}.md is not a valid page: {reason}; run `mwf lint`"),
+            format!(
+                "pages/{}.md is not a valid page: {reason}; run `mwf lint`",
+                crate::redact::slug(slug.as_str())
+            ),
         )
-        .with(json!({ "slug": slug.as_str() }))
+        .with(json!({ "slug": crate::redact::slug(slug.as_str()) }))
     }
 
     pub(crate) fn field(field: &str, reason: &str) -> AppError {
@@ -190,6 +194,13 @@ impl From<StoreError> for AppError {
             StoreError::Changed { path: p } => (ErrorCode::Changed, json!({ "path": path(p) })),
             StoreError::Io { path: p, .. } => (ErrorCode::Io, json!({ "path": path(p) })),
         };
+        // Store messages and details carry paths, which can hold a secret-looking slug.
+        if crate::redact::looks_secret(&message) {
+            return AppError::new(
+                code,
+                format!("{code}: details withheld because a path looks like a secret"),
+            );
+        }
         AppError {
             code,
             message,
