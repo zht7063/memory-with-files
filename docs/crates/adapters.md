@@ -42,6 +42,15 @@ pub fn uninstall(host: Host, opts: &InstallOpts) -> Result<Report, LifecycleErro
 
 **职责**：纯数据：`mwf` skill（`SKILL.md`、`references/commands.md`）、hook 提示文本、`init` 成功后的下一步提示（P2 已有 `INIT_NEXT_STEPS_GIT` / `INIT_NEXT_STEPS_LOCAL`；`init` 写入 `.mwf/` 的文件由 `mwf-store` 持有，见 [0049](../decisions/0049-app-defaults.md)）。用 `include_str!` 编入二进制。
 
+```rust
+pub const SKILL_NAME: &str = "mwf";                  // skill 目录名，也是 SKILL.md 的 name:
+pub const SKILL_MD: &str;                            // skill/SKILL.md
+pub const SKILL_COMMANDS_MD: &str;                   // skill/references/commands.md
+pub const SKILL_FILES: &[(&str, &str)];              // （相对 skill 目录的路径，内容），供 install 写入
+```
+
+skill 文本是英文（与 CLI 帮助、`init` 提示一致）。单元测试把 `references/commands.md` 与 [cli.md](../cli.md) 对照：两边的命令集合相同，用到的选项与错误码都在 cli.md 中，且不出现 1.x 的词汇（MCP 工具、斜杠命令、`[[slug]]`、inbox 等）；改 CLI 时须同步改 skill。hook 提醒文本随 `mwf-hooks`（P3）加入。
+
 依赖：无。
 
 ## mwf（bin）
