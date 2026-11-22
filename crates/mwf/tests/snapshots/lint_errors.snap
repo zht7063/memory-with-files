@@ -1,0 +1,13 @@
+---
+source: crates/mwf/tests/cli.rs
+expression: self.transcript
+---
+$ mwf lint
+error[invalid_frontmatter] Bad_Name: invalid frontmatter at line 1: the page must start with a `---` line
+error[invalid_slug] Bad_Name: invalid slug: use one or more of a-z, 0-9 and -
+errors: 2, warnings: 0
+[exit 1]
+
+$ mwf lint --json
+{"ok":true,"data":{"issues":[{"page":"Bad_Name","rule":"invalid_frontmatter","severity":"error","message":"invalid frontmatter at line 1: the page must start with a `---` line"},{"page":"Bad_Name","rule":"invalid_slug","severity":"error","message":"invalid slug: use one or more of a-z, 0-9 and -"}],"errors":2,"warnings":0}}
+[exit 1]

@@ -1,0 +1,88 @@
+---
+source: crates/mwf/tests/cli.rs
+expression: self.transcript
+---
+$ mwf --help
+mwf: a project-local wiki engine for coding agents
+
+Usage: mwf [OPTIONS] <COMMAND>
+
+Commands:
+  init       Create .mwf/ in this git repository root
+  show       Print a page: frontmatter, body, rev, links out and links in
+  search     BM25 search over pages; the words of QUERY are joined with spaces
+  list       List pages by slug
+  index      Print the table of contents rendered from the current pages
+  log        Print the last N lines of log.md, oldest first
+  lint       Check every page; exits 1 when there is an error
+  new        Create a page; the body is read from stdin
+  write      Replace a page's body with stdin, if REV is still its rev
+  patch      Replace the one occurrence of OLD in a page's body with NEW
+  set        Change frontmatter fields
+  archive    Set a page's status to archived
+  unarchive  Set a page's status back to active
+  rename     Rename a page and rewrite the links to it
+  delete     Move a page to .mwf/trash/
+  help       Print this message or the help of the given subcommand(s)
+
+Options:
+      --json     Print `{"ok": true, "data": …}` or `{"ok": false, "error": …}` instead of text
+  -h, --help     Print help
+  -V, --version  Print version
+[exit 0]
+
+$ mwf new --help
+Create a page; the body is read from stdin
+
+Usage: mwf new [OPTIONS] --type <TYPE> --title <TITLE> --summary <SUMMARY> <SLUG>
+
+Arguments:
+  <SLUG>  The new page's slug: a-z, 0-9 and -
+
+Options:
+      --json               Print `{"ok": true, "data": …}` or `{"ok": false, "error": …}` instead of
+                           text
+      --type <TYPE>        preference, decision, knowledge, incident or task
+      --title <TITLE>      The page title
+      --summary <SUMMARY>  One line saying what the page is about; shown in index.md and search
+                           results
+      --tag <TAG>          A tag; repeat for more
+  -h, --help               Print help
+[exit 0]
+
+$ mwf patch --help
+Replace the one occurrence of OLD in a page's body with NEW
+
+Usage: mwf patch [OPTIONS] <SLUG>
+
+Arguments:
+  <SLUG>  The page's slug
+
+Options:
+      --json             Print `{"ok": true, "data": …}` or `{"ok": false, "error": …}` instead of
+                         text
+      --old <OLD>        The text to replace; it must occur exactly once in the body
+      --old-file <PATH>  Read OLD from a file
+      --new <NEW>        The replacement text
+      --new-file <PATH>  Read NEW from a file
+  -h, --help             Print help
+[exit 0]
+
+$ mwf search --help
+BM25 search over pages; the words of QUERY are joined with spaces
+
+Usage: mwf search [OPTIONS] <QUERY>...
+
+Arguments:
+  <QUERY>...  Words to search for
+
+Options:
+      --json             Print `{"ok": true, "data": …}` or `{"ok": false, "error": …}` instead of
+                         text
+      --type <TYPE>      Only pages of this type; repeat to allow several
+      --tag <TAG>        Only pages with this tag; repeat to require several
+      --status <STATUS>  Which pages by status [default: active] [possible values: active, archived,
+                         all]
+      --limit <N>        Maximum number of results [default: 10]
+  -h, --help             Print help
+[exit 0]

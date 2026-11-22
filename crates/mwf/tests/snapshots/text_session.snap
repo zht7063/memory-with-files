@@ -1,0 +1,178 @@
+---
+source: crates/mwf/tests/cli.rs
+expression: self.transcript
+---
+$ mwf init
+mwf created .mwf/ and added `.mwf/log.md merge=union` to .gitattributes.
+Commit .mwf/ and .gitattributes so the team shares the wiki.
+
+Next:
+  mwf install --host claude   (or --host codex) so sessions load and save memories
+  mwf new <slug> --type <type> --title "..." --summary "..." < body.md
+  mwf lint
+[exit 0]
+
+$ mwf new auth-flow --type knowledge --title 'Auth flow' --summary 'How login tokens are issued and refreshed' --tag auth --tag api
+< Tokens come from [the session store](session-store.md).
+< Refresh tokens rotate on every login.
+created auth-flow
+rev: [REV]
+warning[dangling_link]: links to session-store.md, which does not exist
+[exit 0]
+
+$ mwf new session-store --type decision --title 'Session store' --summary 'Sessions and refresh tokens live in Redis'
+< We keep login sessions and refresh tokens in Redis.
+created session-store
+rev: [REV]
+related pages not linked yet:
+  auth-flow: Auth flow — How login tokens are issued and refreshed
+[exit 0]
+
+$ mwf show auth-flow
+slug: auth-flow
+rev: [REV]
+title: Auth flow
+type: knowledge
+summary: How login tokens are issued and refreshed
+tags: auth, api
+status: active
+created: [TIME]
+updated: [TIME]
+
+Tokens come from [the session store](session-store.md).
+Refresh tokens rotate on every login.
+
+links out:
+  session-store: Session store — Sessions and refresh tokens live in Redis
+
+links in: none
+[exit 0]
+
+$ mwf list
+auth-flow  knowledge  active  rev [REV]
+  Auth flow — How login tokens are issued and refreshed
+  tags: auth, api
+session-store  decision  active  rev [REV]
+  Session store — Sessions and refresh tokens live in Redis
+[exit 0]
+
+$ mwf search refresh tokens
+session-store  decision  active  score 0.590  rev [REV]
+  Session store — Sessions and refresh tokens live in Redis
+auth-flow  knowledge  active  score 0.474  rev [REV]
+  Auth flow — How login tokens are issued and refreshed
+[exit 0]
+
+$ mwf search redis --type knowledge
+no results
+[exit 0]
+
+$ mwf patch auth-flow --old 'on every login' --new 'on every use'
+updated auth-flow
+rev: [REV]
+[exit 0]
+
+$ mwf patch auth-flow --old 'no such text' --new x
+[stderr] error[PATCH_NO_MATCH]: old text not found in the page body
+[exit 1]
+
+$ mwf set auth-flow --summary 'How tokens are issued' --untag api
+updated auth-flow
+rev: [REV]
+[exit 0]
+
+$ mwf set auth-flow --summary 'How tokens are issued'
+unchanged auth-flow
+rev: [REV]
+[exit 0]
+
+$ mwf write session-store --rev [REV]
+< Sessions live in Redis; see [auth](auth-flow.md).
+updated session-store
+rev: [REV]
+[exit 0]
+
+$ mwf write session-store --rev [REV]
+< stale
+[stderr] error[REV_MISMATCH]: page session-store changed since you read it (rev is now [REV]); run `mwf show session-store` and retry
+[exit 1]
+
+$ mwf archive session-store
+archived session-store
+rev: [REV]
+[exit 0]
+
+$ mwf list --status archived
+session-store  decision  archived  rev [REV]
+  Session store — Sessions and refresh tokens live in Redis
+[exit 0]
+
+$ mwf unarchive session-store
+unarchived session-store
+rev: [REV]
+[exit 0]
+
+$ mwf rename session-store sessions
+renamed session-store -> sessions
+rev: [REV]
+also updated: auth-flow
+[exit 0]
+
+$ mwf show sessions
+slug: sessions
+rev: [REV]
+title: Session store
+type: decision
+summary: Sessions and refresh tokens live in Redis
+tags:
+status: active
+created: [TIME]
+updated: [TIME]
+
+Sessions live in Redis; see [auth](auth-flow.md).
+
+links out:
+  auth-flow: Auth flow — How tokens are issued
+
+links in:
+  auth-flow: Auth flow — How tokens are issued
+[exit 0]
+
+$ mwf delete sessions
+[stderr] error[HAS_BACKLINKS]: 1 page(s) link to sessions: auth-flow; archive it instead, or delete with --unlink
+[exit 1]
+
+$ mwf delete sessions --unlink
+deleted sessions
+trashed: .mwf/trash/sessions.[TIME].md
+unlinked: auth-flow
+[exit 0]
+
+$ mwf list --status all
+auth-flow  knowledge  active  rev [REV]
+  Auth flow — How tokens are issued
+  tags: auth
+[exit 0]
+
+$ mwf search nothing-matches-this
+no results
+[exit 0]
+
+$ mwf log -n 3
+[TIME] unarchive session-store "Session store"
+[TIME] rename session-store->sessions "Session store"
+[TIME] delete sessions "Session store"
+[exit 0]
+
+$ mwf index
+<!-- 由 mwf 生成，勿手改 -->
+# 目录
+
+## knowledge
+- [Auth flow](pages/auth-flow.md) — How tokens are issued
+[exit 0]
+
+$ mwf lint
+warning[orphan] auth-flow: no other page links here; link it from a related page
+errors: 0, warnings: 1
+[exit 0]

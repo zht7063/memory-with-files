@@ -1,0 +1,49 @@
+---
+source: crates/mwf/tests/cli.rs
+expression: self.transcript
+---
+$ mwf --json init --local
+{"ok":true,"data":{"root":"[ROOT]","mode":"local","next_steps":"mwf created .mwf/ and added /.mwf/ to .gitignore; the wiki stays on this machine.\n\nNext:\n  mwf install --host claude   (or --host codex) so sessions load and save memories\n  mwf new <slug> --type <type> --title \"...\" --summary \"...\" < body.md\n  mwf lint\n"}}
+[exit 0]
+
+$ mwf new deploy --type task --title Deploy --summary 'Ship it' --tag ops --json
+< Run the [release](release.md) script.
+{"ok":true,"data":{"slug":"deploy","rev":"[REV]","changed":true,"warnings":[{"rule":"dangling_link","message":"links to release.md, which does not exist"}],"related_unlinked":[],"also_updated":[]}}
+[exit 0]
+
+$ mwf show deploy --json
+{"ok":true,"data":{"slug":"deploy","rev":"[REV]","title":"Deploy","type":"task","summary":"Ship it","tags":["ops"],"status":"active","created":"[TIME]","updated":"[TIME]","body":"Run the [release](release.md) script.\n","links_out":[{"slug":"release","exists":false,"title":null,"summary":null}],"links_in":[]}}
+[exit 0]
+
+$ mwf list --json
+{"ok":true,"data":[{"slug":"deploy","title":"Deploy","type":"task","summary":"Ship it","tags":["ops"],"status":"active","updated":"[TIME]","rev":"[REV]"}]}
+[exit 0]
+
+$ mwf search release --json
+{"ok":true,"data":[{"slug":"deploy","title":"Deploy","type":"task","summary":"Ship it","status":"active","score":0.2876821,"rev":"[REV]"}]}
+[exit 0]
+
+$ mwf write deploy --rev [REV] --json
+< x
+{"ok":false,"error":{"code":"REV_MISMATCH","message":"page deploy changed since you read it (rev is now [REV]); run `mwf show deploy` and retry","details":{"current_rev":"[REV]","slug":"deploy"}}}
+[exit 1]
+
+$ mwf log --json
+{"ok":true,"data":["[TIME] new deploy \"Deploy\""]}
+[exit 0]
+
+$ mwf index --rebuild --json
+{"ok":true,"data":"<!-- 由 mwf 生成，勿手改 -->\n# 目录\n\n## task\n- [Deploy](pages/deploy.md) — Ship it\n"}
+[exit 0]
+
+$ mwf lint --json
+{"ok":true,"data":{"issues":[{"page":"deploy","rule":"dangling_link","severity":"warning","message":"links to release.md, which does not exist"},{"page":"deploy","rule":"orphan","severity":"warning","message":"no other page links here; link it from a related page"}],"errors":0,"warnings":2}}
+[exit 0]
+
+$ mwf delete deploy --json
+{"ok":true,"data":{"slug":"deploy","trashed":".mwf/trash/deploy.[TIME].md","unlinked":[],"warnings":[]}}
+[exit 0]
+
+$ mwf show deploy --json
+{"ok":false,"error":{"code":"NOT_FOUND","message":"page deploy does not exist","details":{"slug":"deploy"}}}
+[exit 1]
