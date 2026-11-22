@@ -36,7 +36,7 @@ pub fn uninstall(host: Host, opts: &InstallOpts) -> Result<Report, LifecycleErro
 
 ## mwf-assets
 
-**职责**：纯数据：`mwf` skill（`SKILL.md`、`references/commands.md`）、hook 提示文本、`init` 生成的模板。用 `include_str!` 编入二进制。
+**职责**：纯数据：`mwf` skill（`SKILL.md`、`references/commands.md`）、hook 提示文本、`init` 成功后的下一步提示（P2 已有 `INIT_NEXT_STEPS_GIT` / `INIT_NEXT_STEPS_LOCAL`；`init` 写入 `.mwf/` 的文件由 `mwf-store` 持有，见 [0049](../decisions/0049-app-defaults.md)）。用 `include_str!` 编入二进制。
 
 依赖：无。
 

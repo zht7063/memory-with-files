@@ -13,6 +13,14 @@ mwf-domain.workspace = true
 mwf-store.workspace = true
 mwf-search.workspace = true
 mwf-assets.workspace = true
+# Exactly 1.0.228, as in mwf-store: serde_derive 1.0.229+ uses syn 3 and deny.toml rejects
+# duplicate major versions.
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+
+[dev-dependencies]
+tempfile = "3.27.0"
 
 [lints]
 workspace = true

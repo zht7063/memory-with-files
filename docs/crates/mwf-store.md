@@ -62,8 +62,8 @@ pub enum StoreError { NotInitialized { start }, NotGitRoot { path, git_root }, A
 - **`append_log(line)`**：`line` 是 `render_log_line` 的结果（单行、不含换行）；原文件缺末尾换行（union 合并可能留下）时先补上；`log.md` 不存在时创建。
 - **`move_to_trash`**：`trash/<slug>.<ts>.md`，返回新路径；重名时改用 `<slug>.<ts>.1.md`、`.2.md`……；页面不存在为 `PageNotFound`。
 - **`rename_page`**：只移动文件、不改内容；目标已存在为 `PageExists`，不覆盖。
-- **配置**：缺文件、缺表、缺键都取默认值（0039）；未知键、类型错误、顶层键不是表（`hooks = []`、`hooks = [4, 5, false, 9]`）、非 UTF-8 为 `Config` 错误，`message` 只含 TOML 解析器给出的原因，不含原文片段。`mwf-app` 把它映射为哪个错误码在 P2 的 app 中决定。
-- **错误**：`StoreError` 用 `thiserror`；`Io` 带出错的路径。各变体对应的 CLI 错误码：`NotInitialized` → `NOT_INITIALIZED`、`NotGitRoot` → `NOT_GIT_ROOT`、`AlreadyInitialized` → `ALREADY_INITIALIZED`、`LockTimeout` → `LOCK_TIMEOUT`、`PageNotFound` → `NOT_FOUND`、`PageExists` → `ALREADY_EXISTS`。
+- **配置**：缺文件、缺表、缺键都取默认值（0039）；未知键、类型错误、顶层键不是表（`hooks = []`、`hooks = [4, 5, false, 9]`）、非 UTF-8 为 `Config` 错误，`message` 只含 TOML 解析器给出的原因，不含原文片段。`mwf-app` 把它映射为 `INVALID_CONFIG`（[0049](../decisions/0049-app-defaults.md)）。
+- **错误**：`StoreError` 用 `thiserror`；`Io` 带出错的路径。各变体对应的 CLI 错误码：`NotInitialized` → `NOT_INITIALIZED`、`NotGitRoot` → `NOT_GIT_ROOT`、`AlreadyInitialized` → `ALREADY_INITIALIZED`、`LockTimeout` → `LOCK_TIMEOUT`、`PageNotFound` → `NOT_FOUND`、`PageExists` → `ALREADY_EXISTS`、`Config` → `INVALID_CONFIG`、`WrongFileType` → `WRONG_FILE_TYPE`、`Changed` → `CHANGED`、`Io` → `IO`（0049）。
 - **会话状态**（`.mwf/.state/`，0034）留到 P3 与 hooks 一起实现；`.mwf/.gitignore` 已忽略 `.state/`。
 
 ## 依赖
