@@ -249,17 +249,18 @@ impl App {
     /// `recall_top_k`, leaving out pages already returned in this session. A prompt with fewer
     /// than [`RECALL_MIN_PROMPT_TERMS`] distinct terms returns nothing.
     ///
-    /// The returned pages are recorded in the session's state; a `session` id with no safe
-    /// characters (missing in the host input) skips the dedupe. Pages with a secret-looking
-    /// slug are never returned, and secret-looking titles and summaries are withheld.
+    /// Only reads the session's state: the hook may drop pages for its output budget, so it
+    /// records the pages it actually injected with [`App::mark_recalled`]. A `session` id with
+    /// no safe characters (missing in the host input) skips the dedupe. Pages with a
+    /// secret-looking slug are never returned, and secret-looking titles and summaries are
+    /// withheld.
     pub fn recall(&self, session: &str, prompt: &str) -> Result<Vec<PageSummary>, AppError> {
         let cfg = self.hooks_config()?;
         let terms: HashSet<String> = tokenize(prompt).into_iter().collect();
         if terms.len() < RECALL_MIN_PROMPT_TERMS || cfg.recall_top_k == 0 {
             return Ok(Vec::new());
         }
-        let store = self.open_session(session);
-        let mut state = match &store {
+        let state = match self.open_session(session) {
             Some(s) => s.load()?,
             None => Default::default(),
         };
@@ -283,13 +284,28 @@ impl App {
                 s
             })
             .collect();
-        if let Some(store) = &store
-            && !out.is_empty()
-        {
-            state.recalled.extend(out.iter().map(|p| p.slug.clone()));
+        Ok(out)
+    }
+
+    /// Records that `slugs` were injected into `session`, so later [`App::recall`] calls of the
+    /// session leave them out (ADR 0051). Call it with the pages the hook actually emitted,
+    /// after its output budget. Already recorded slugs are not repeated; nothing is written
+    /// when nothing is new or the id has no safe characters.
+    pub fn mark_recalled(&self, session: &str, slugs: &[String]) -> Result<(), AppError> {
+        let Some(store) = self.open_session(session) else {
+            return Ok(());
+        };
+        let mut state = store.load()?;
+        let before = state.recalled.len();
+        for slug in slugs {
+            if !state.recalled.contains(slug) {
+                state.recalled.push(slug.clone());
+            }
+        }
+        if state.recalled.len() > before {
             store.save(&state)?;
         }
-        Ok(out)
+        Ok(())
     }
 
     /// Whether the Stop hook should remind the agent now (ADRs 0030, 0051): never when

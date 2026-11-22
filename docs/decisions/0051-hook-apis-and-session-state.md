@@ -50,7 +50,7 @@ P3 实现 hooks 前，下列细节在已有 ADR 中没有规定或彼此不一�
 
 - prompt 分词去停用词后不同的词少于 2 个（`RECALL_MIN_PROMPT_TERMS`）时返回空（0039 第 3 条；与 `recall_min_terms` 无关，`recall_min_terms = 1` 也不放行单词 prompt）。
 - 只在 active 页上做 BM25（`Index::search`），保留 `matched_terms >= recall_min_terms` 的页，去掉本会话已注入过的，取前 `recall_top_k`。`recall_top_k = 0` 时直接返回空。
-- 返回的页记入会话状态（只在非空时写文件）。session id 没有安全字符（缺失、为空）时不去重、不写状态。
+- `recall` 只读会话状态、不写。`mwf-hooks` 按输出预算放入整页后，用 `App::mark_recalled(session, slugs)` 只记下**实际注入**的页；因预算被丢弃的页没有注入，之后的 prompt 仍可返回它。`mark_recalled` 跳过已记录的 slug，没有新 slug 时不写文件。session id 没有安全字符（缺失、为空）时不去重、不写状态。
 - 注入内容是 slug、标题、summary（0030），**不带 rev**：rev 用于 `write`，agent 应在改页前 `mwf show` 取最新的 rev；DTO 里仍有 `rev` 字段（与 `list` 相同），由 hooks 决定不渲染。
 - `mwf-hooks` 跳过用户自己输入的 `/mwf` 命令行（`^\s*/mwf([\s:-]|$)`）：skill 自己会调用 `mwf`，再注入是重复。
 
@@ -78,7 +78,7 @@ P3 实现 hooks 前，下列细节在已有 ADR 中没有规定或彼此不一�
 | 内部截止时间 | 从进程开始 3 s：每一步之前检查，超时即放弃剩余的可选工作，输出已有结果（没有则 `{}`）。store / app 调用是同步的，无法中途打断，所以截止时间远低于宿主超时 |
 | hook 不取写锁 | 读不加锁（0033）；会话状态每会话一个文件、不加锁（0034） |
 | stdin 上限 | 1 MiB（与 CLI 的 `STDIN_MAX_BYTES` 相同），流式计数，超出视为坏输入 |
-| 输出上限 | 每次 `additionalContext` 最多 9800 字符（低于 Claude 的 10000），**包住数据的外壳在截断之前预算**：`mwf-hooks` 先生成随机 fence 与说明行，算出外壳（开头说明、开 fence、闭 fence 及换行）的长度，数据预算 = min(`session_start_max_chars`, 9800 − 外壳长度)，用它调用 `session_context`，再把结果放进外壳。包好之后不再截断，闭 fence 永远不会被切掉（0030）。recall 同样：外壳之外按整页（每页一行）放入前 `recall_top_k` 页，放不下的页整页丢弃。外壳本身超过 9800 时（不会发生，测试固定）不注入 |
+| 输出上限 | 每次 `additionalContext` 最多 9800 字符（低于 Claude 的 10000），**包住数据的外壳在截断之前预算**：`mwf-hooks` 先生成随机 fence 与说明行，算出外壳（开头说明、开 fence、闭 fence 及换行）的长度，数据预算 = min(`session_start_max_chars`, 9800 − 外壳长度)，用它调用 `session_context`，再把结果放进外壳。包好之后不再截断，闭 fence 永远不会被切掉（0030）。recall 同样：外壳之外按整页（每页一行）放入前 `recall_top_k` 页，放不下的页整页丢弃，且不记入会话状态（只对放入的页调用 `mark_recalled`）。外壳本身超过 9800 时（不会发生，测试固定）不注入 |
 | 宿主超时（P4 写入安装配置） | 10 s，四个事件相同，远大于 3 s 的内部截止时间 |
 
 ### 失败与坏输入
@@ -101,5 +101,5 @@ P3 实现 hooks 前，下列细节在已有 ADR 中没有规定或彼此不一�
 
 ## 后果
 
-- [crates/mwf-store.md](../crates/mwf-store.md) 记录 `Project::session`、`SessionStore`、`SessionState`、`prune_sessions`；[crates/mwf-app.md](../crates/mwf-app.md) 记录 `hooks_config`、`session_context`、`recall`、`stop_reminder`、`reset_session`、`is_inside_mwf`（比草案多一个 `cwd` 参数）；[crates/adapters.md](../crates/adapters.md) 记录 `mwf_hooks::run` 的签名、事件名与预算；[cli.md](../cli.md) 记录事件名与输出约定。
+- [crates/mwf-store.md](../crates/mwf-store.md) 记录 `Project::session`、`SessionStore`、`SessionState`、`prune_sessions`；[crates/mwf-app.md](../crates/mwf-app.md) 记录 `hooks_config`、`session_context`、`recall`、`mark_recalled`、`stop_reminder`、`reset_session`、`is_inside_mwf`（比草案多一个 `cwd` 参数）；[crates/adapters.md](../crates/adapters.md) 记录 `mwf_hooks::run` 的签名、事件名与预算；[cli.md](../cli.md) 记录事件名与输出约定。
 - 0030 的“注入 `index.md`”改为由页面渲染的目录行；其余行为不变。

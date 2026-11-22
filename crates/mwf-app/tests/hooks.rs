@@ -456,27 +456,82 @@ fn recall_follows_min_terms_and_top_k_config() {
     assert!(env.state_files().is_empty());
 }
 
+/// What a hook does with no budget limit: recall, then record every page it injected.
+fn emit(app: &App, session: &str, prompt: &str) -> Vec<String> {
+    let out: Vec<String> = app
+        .recall(session, prompt)
+        .unwrap()
+        .into_iter()
+        .map(|p| p.slug)
+        .collect();
+    app.mark_recalled(session, &out).unwrap();
+    out
+}
+
 #[test]
 fn recall_returns_each_page_once_per_session() {
     let env = recall_corpus();
     env.config("[hooks]\nrecall_top_k = 1\n");
     let app = env.app();
     let prompt = "canary rollout staging";
-    assert_eq!(slugs(&app.recall("s1", prompt).unwrap()), ["canary"]);
+    assert_eq!(emit(&app, "s1", prompt), ["canary"]);
     // The next-best page fills the slot once the best was shown.
-    assert_eq!(slugs(&app.recall("s1", prompt).unwrap()), ["rollback"]);
-    assert!(app.recall("s1", prompt).unwrap().is_empty());
+    assert_eq!(emit(&app, "s1", prompt), ["rollback"]);
+    assert!(emit(&app, "s1", prompt).is_empty());
     // Another session, and a later process of the same session.
-    assert_eq!(slugs(&app.recall("s2", prompt).unwrap()), ["canary"]);
-    assert!(env.app().recall("s1", prompt).unwrap().is_empty());
+    assert_eq!(emit(&app, "s2", prompt), ["canary"]);
+    assert!(emit(&env.app(), "s1", prompt).is_empty());
     assert_eq!(env.state_files(), ["s1.json", "s2.json"]);
     // No session id: no dedupe, no state.
-    assert_eq!(slugs(&app.recall("", prompt).unwrap()), ["canary"]);
-    assert_eq!(slugs(&app.recall("../", prompt).unwrap()), ["canary"]);
+    assert_eq!(emit(&app, "", prompt), ["canary"]);
+    assert_eq!(emit(&app, "../", prompt), ["canary"]);
     assert_eq!(env.state_files(), ["s1.json", "s2.json"]);
     // Clearing the session shows the pages again.
     app.reset_session("s1").unwrap();
-    assert_eq!(slugs(&app.recall("s1", prompt).unwrap()), ["canary"]);
+    assert_eq!(emit(&app, "s1", prompt), ["canary"]);
+}
+
+#[test]
+fn recall_alone_records_nothing() {
+    let env = recall_corpus();
+    let app = env.app();
+    let prompt = "canary rollout staging";
+    assert_eq!(
+        slugs(&app.recall("s", prompt).unwrap()),
+        ["canary", "rollback"]
+    );
+    assert_eq!(
+        slugs(&app.recall("s", prompt).unwrap()),
+        ["canary", "rollback"]
+    );
+    assert!(env.state_files().is_empty());
+    // Marking nothing, or only known slugs, writes nothing new.
+    app.mark_recalled("s", &[]).unwrap();
+    assert!(env.state_files().is_empty());
+    app.mark_recalled("s", &["canary".into(), "canary".into()])
+        .unwrap();
+    app.mark_recalled("s", &["canary".into()]).unwrap();
+    let text = fs::read_to_string(env.mwf(".state/s.json")).unwrap();
+    assert!(text.contains("\"recalled\":[\"canary\"]"), "{text}");
+}
+
+/// Review of PR #59: a page the hook dropped for its output budget was never injected, so a
+/// later prompt must still return it.
+#[test]
+fn page_dropped_for_budget_is_recalled_on_the_next_prompt() {
+    let env = recall_corpus();
+    let app = env.app();
+    let prompt = "canary rollout staging";
+    let first = app.recall("s", prompt).unwrap();
+    assert_eq!(slugs(&first), ["canary", "rollback"]);
+    // The budget only had room for the first page.
+    app.mark_recalled("s", &[first[0].slug.clone()]).unwrap();
+    let second = app
+        .recall("s", "rollback of the canary on staging")
+        .unwrap();
+    assert_eq!(slugs(&second), ["rollback"]);
+    app.mark_recalled("s", &[second[0].slug.clone()]).unwrap();
+    assert!(app.recall("s", prompt).unwrap().is_empty());
 }
 
 #[test]
@@ -495,7 +550,7 @@ fn recall_with_nothing_found_writes_no_state() {
 fn recall_corrupt_state_is_empty() {
     let env = recall_corpus();
     let app = env.app();
-    app.recall("s", "canary rollout staging").unwrap();
+    emit(&app, "s", "canary rollout staging");
     fs::write(env.mwf(".state/s.json"), "{garbage").unwrap();
     assert_eq!(
         slugs(&app.recall("s", "canary rollout staging").unwrap()),
@@ -544,19 +599,19 @@ fn recall_withholds_secret_metadata_and_slugs() {
 fn sessions_a_week_old_are_pruned_on_use() {
     let env = recall_corpus();
     // State files get the real mtime; a clock 8 days ahead makes them old.
-    env.app().recall("old", "canary rollout staging").unwrap();
+    emit(&env.app(), "old", "canary rollout staging");
     assert_eq!(env.state_files(), ["old.json"]);
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs();
-    env.app_at(now + 6 * DAY)
-        .recall("new", "canary rollout staging")
-        .unwrap();
+    emit(&env.app_at(now + 6 * DAY), "new", "canary rollout staging");
     assert_eq!(env.state_files(), ["new.json", "old.json"]);
-    env.app_at(now + 8 * DAY)
-        .recall("newer", "canary rollout staging")
-        .unwrap();
+    emit(
+        &env.app_at(now + 8 * DAY),
+        "newer",
+        "canary rollout staging",
+    );
     assert_eq!(env.state_files(), ["newer.json"]);
 }
 
@@ -577,7 +632,7 @@ fn stop_reminds_once_per_turn() {
     assert!(app.stop_reminder("", "turn-9").unwrap());
     // Recall and the reminder share the session file.
     env.page("a", "knowledge", "Canary deploy", "staging canary", "b\n");
-    app.recall("s", "canary staging").unwrap();
+    emit(&app, "s", "canary staging");
     assert!(!app.stop_reminder("s", "turn-2").unwrap());
 
     env.config("[hooks]\nstop_reminder = false\n");

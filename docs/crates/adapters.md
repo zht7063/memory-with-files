@@ -29,7 +29,7 @@ mod claude; mod codex; mod fence; mod guard;
 - 项目根：宿主 JSON 的 `cwd`（缺失或不是绝对路径时用进程目录）向上查找；没有 `.mwf/` 时输出 `{}`。
 - 预算：内部截止 3 s；stdin 上限 1 MiB；每次 `additionalContext` 最多 9800 字符，fence 与说明行的长度先从预算中扣除，数据按剩余预算截断后再包裹，包好后不再截断（闭 fence 不会被切掉）；P4 安装时写入宿主超时 10 s。hook 不取写锁。
 - Stop：`stop_hook_active` 为 true 时 `{}`；否则 `App::stop_reminder(session_id, turn)`（Claude `prompt_id`、Codex `turn_id`）。Claude 输出 `hookSpecificOutput.additionalContext`，Codex 输出 `decision: "block"` + `reason`。
-- SessionStart：`source` 为 `clear` / `compact` 时先 `reset_session`。UserPromptSubmit：跳过 `/mwf…` 命令行；注入 slug、标题、summary，不带 rev。
+- SessionStart：`source` 为 `clear` / `compact` 时先 `reset_session`。UserPromptSubmit：跳过 `/mwf…` 命令行；注入 slug、标题、summary，不带 rev；按预算放入整页后只对放入的页调用 `App::mark_recalled`。
 - 失败：未知事件 / 宿主、坏 JSON、超限：`{}`，stderr 一行；SessionStart / prompt 的 app 错误（含 `INVALID_CONFIG`）：一行 `systemMessage`，只含错误码；Stop / PreToolUse 出错：`{}`（守卫放行）。
 
 依赖：`mwf-app`、`mwf-assets`（提醒文本）、`serde`、`serde_json`、`rand`（fence）。禁止：依赖 cli / lifecycle / domain / store / search。
