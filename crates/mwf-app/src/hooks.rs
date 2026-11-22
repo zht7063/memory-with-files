@@ -56,20 +56,22 @@ fn width(line: &str) -> usize {
     line.chars().count() + 1
 }
 
-/// Joins `lines` and `tail` within `max` characters. When everything does not fit, keeps the
-/// longest prefix of `lines` that fits together with the hint of the first line left out and
-/// with `tail`; whole lines only.
+/// Joins `lines` and `tail` within `max` characters. When everything does not fit, `tail` (the
+/// lint line) is reserved first whenever it fits on its own; the rest of the budget takes the
+/// longest prefix of `lines` that fits together with the hint of the first line left out, or
+/// the prefix alone when the hint does not fit. Whole lines only; a hard cut happens only when
+/// `tail` alone is longer than `max`.
 fn fit(lines: &[(Part, String)], tail: &[String], max: usize) -> SessionContext {
-    let tail_width: usize = tail.iter().map(|l| width(l)).sum();
-    let total: usize = lines.iter().map(|(_, l)| width(l)).sum::<usize>() + tail_width;
-    let mut out = String::new();
     let join = |out: &mut String, ls: &mut dyn Iterator<Item = &String>| {
         for l in ls {
             out.push_str(l);
             out.push('\n');
         }
     };
-    if total <= max {
+    let widths = |ls: &mut dyn Iterator<Item = &String>| ls.map(|l| width(l)).sum::<usize>();
+    let lines_width = widths(&mut lines.iter().map(|(_, l)| l));
+    let mut out = String::new();
+    if lines_width + widths(&mut tail.iter()) <= max {
         join(&mut out, &mut lines.iter().map(|(_, l)| l));
         join(&mut out, &mut tail.iter());
         return SessionContext {
@@ -77,23 +79,51 @@ fn fit(lines: &[(Part, String)], tail: &[String], max: usize) -> SessionContext 
             truncated: false,
         };
     }
-    let mut keep = None;
+    // The blank separator line in front of the lint line is dropped when nothing precedes it.
+    let bare_tail: Vec<String> = tail.iter().filter(|l| !l.is_empty()).cloned().collect();
+    let full_tail = widths(&mut tail.iter());
+    let bare_width = widths(&mut bare_tail.iter());
+    let (reserved, tail_width): (&[String], usize) = if full_tail <= max {
+        (tail, full_tail)
+    } else if bare_width <= max {
+        // Room for the lint line but not its separator: nothing else fits either.
+        (&bare_tail, max)
+    } else {
+        (&[], 0)
+    };
+    let avail = max - tail_width;
+    // Largest `cut` whose prefix fits with its hint; else largest prefix that fits alone.
+    let mut with_hint = None;
+    let mut alone = 0;
     let mut prefix = 0;
     for (i, (part, line)) in lines.iter().enumerate() {
-        if prefix + width(&part.hint()) + tail_width <= max {
-            keep = Some(i);
+        if prefix + width(&part.hint()) <= avail {
+            with_hint = Some(i);
+        }
+        if prefix <= avail {
+            alone = i;
         }
         prefix += width(line);
     }
-    let cut = keep.unwrap_or(0);
+    let (cut, hint) = match with_hint {
+        Some(i) => (i, Some(lines[i].0.hint())),
+        None => (alone, None),
+    };
     join(&mut out, &mut lines[..cut].iter().map(|(_, l)| l));
-    let hint = lines.get(cut).map_or(Part::Log, |(p, _)| *p).hint();
-    out.push_str(&hint);
-    out.push('\n');
-    join(&mut out, &mut tail.iter());
-    // Only when even the hint and tail do not fit in `max`.
-    if out.chars().count() > max {
-        out = out.chars().take(max).collect();
+    if let Some(hint) = hint {
+        out.push_str(&hint);
+        out.push('\n');
+    }
+    if out.is_empty() && !reserved.is_empty() {
+        join(&mut out, &mut bare_tail.iter());
+    } else {
+        join(&mut out, &mut reserved.iter());
+    }
+    if reserved.is_empty() && !tail.is_empty() {
+        // The lint line alone is longer than `max`: cut it rather than drop it silently.
+        let mut lint = String::new();
+        join(&mut lint, &mut bare_tail.iter());
+        out = lint.chars().take(max).collect();
     }
     SessionContext {
         text: out,
@@ -312,10 +342,54 @@ impl App {
     pub fn is_inside_mwf(&self, cwd: &Path, path: &Path) -> bool {
         let joined = cwd.join(path);
         let start = std::path::absolute(&joined).unwrap_or(joined);
-        resolve(&start, 0)
-            .components()
-            .any(|c| c.as_os_str() == ".mwf")
+        let resolved = resolve(&start, 0);
+        let own = fs::metadata(self.project.mwf_dir())
+            .ok()
+            .map(|m| file_id(&m));
+        let mut prefix = PathBuf::new();
+        let mut exists = true;
+        for c in resolved.components() {
+            prefix.push(c);
+            let Component::Normal(name) = c else {
+                continue;
+            };
+            if name == ".mwf" {
+                return true;
+            }
+            // Case-insensitive volumes (APFS, HFS+ by default) let `.MWF` name `.mwf`: compare
+            // the directory's identity with this project's `.mwf`, and with the `.mwf` next to
+            // it for other projects. Below a missing directory only the name counts.
+            if !exists {
+                continue;
+            }
+            let Some(id) = fs::metadata(&prefix).ok().and_then(|m| file_id(&m)) else {
+                exists = false;
+                continue;
+            };
+            if own == Some(Some(id)) {
+                return true;
+            }
+            if name.eq_ignore_ascii_case(".mwf")
+                && let Some(parent) = prefix.parent()
+                && fs::metadata(parent.join(".mwf")).is_ok_and(|m| file_id(&m) == Some(id))
+            {
+                return true;
+            }
+        }
+        false
     }
+}
+
+/// (device, inode); mwf targets only Unix (ADR 0012).
+#[cfg(unix)]
+fn file_id(meta: &fs::Metadata) -> Option<(u64, u64)> {
+    use std::os::unix::fs::MetadataExt;
+    Some((meta.dev(), meta.ino()))
+}
+
+#[cfg(not(unix))]
+fn file_id(_meta: &fs::Metadata) -> Option<(u64, u64)> {
+    None
 }
 
 /// `path` with `.`, `..` and every existing symlink resolved, without requiring the path to

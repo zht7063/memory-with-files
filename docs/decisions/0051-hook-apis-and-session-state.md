@@ -36,7 +36,7 @@ P3 实现 hooks 前，下列细节在已有 ADR 中没有规定或彼此不一�
 预算与截断：
 
 - `max_chars` 按字符（Unicode 标量，含换行）计，取自 `session_start_max_chars`（默认 8000）。
-- 放不下时从 1–3 的末尾按**整行**丢弃，在断开处放一行提示，lint 行总是保留：断在 preference 中为 ``[mwf: truncated; run `mwf list --type preference` and `mwf show <slug>` for the other preferences, `mwf index` for the directory]``，断在某类型的目录行中为 ``[mwf: truncated; run `mwf index` for the whole directory or `mwf list --type <type>` for this type]``，断在日志中为 ``[mwf: truncated; run `mwf log` for recent changes]``。`truncated = true`。预算连提示都放不下时硬截到 `max_chars`。
+- 放不下时先为 lint 行预留空间（它单独放得下就一定完整保留），再在剩余预算内从 1–3 的末尾按**整行**丢弃，在断开处放一行提示：断在 preference 中为 ``[mwf: truncated; run `mwf list --type preference` and `mwf show <slug>` for the other preferences, `mwf index` for the directory]``，断在某类型的目录行中为 ``[mwf: truncated; run `mwf index` for the whole directory or `mwf list --type <type>` for this type]``，断在日志中为 ``[mwf: truncated; run `mwf log` for recent changes]``。`truncated = true`。剩余预算放不下提示时只保留放得下的整行、不加提示；只有 lint 行本身比 `max_chars` 还长时才把它截到 `max_chars`。
 - 空项目（无页面、无日志、无问题）返回空文本，hook 输出 `{}`。
 
 `source`：
@@ -66,7 +66,7 @@ P3 实现 hooks 前，下列细节在已有 ADR 中没有规定或彼此不一�
 
 ### PreToolUse
 
-- `App::is_inside_mwf(cwd, path) -> bool`：`path` 相对时以 hook 输入的 `cwd` 为基准；处理 `.`、`..`，并逐段跟随**已存在的**符号链接（含悬空链接、以及尚不存在的目录之下的链接，最多 40 层，与 Linux `MAXSYMLINKS` 相同）；链接成环时停止跟随。之后只要任何一段名为 `.mwf` 就算在内。
+- `App::is_inside_mwf(cwd, path) -> bool`：`path` 相对时以 hook 输入的 `cwd` 为基准；处理 `.`、`..`，并逐段跟随**已存在的**符号链接（含悬空链接、以及尚不存在的目录之下的链接，最多 40 层，与 Linux `MAXSYMLINKS` 相同）；链接成环时停止跟随。之后只要任何一段名为 `.mwf` 就算在内。大小写不敏感的卷（macOS 的 APFS / HFS+ 默认如此）上 `.MWF` 指向同一个目录，所以还比较**身份**：路径中已存在的每一段，与本项目 `.mwf` 的（设备号, inode）相同，或名字按 ASCII 忽略大小写等于 `.mwf` 且与同一父目录下 `.mwf` 的身份相同，都算在内。大小写敏感的卷上，真实存在的 `.MWF` 是另一个普通目录，不算。
 - 不是“最近存在祖先 canonicalize”：那样会漏掉指向 `.mwf/pages/missing.md` 的悬空链接与 `link/new-dir/x.md`。
 - 判断**任何** `.mwf`，不只本项目的：嵌套项目、另一个 checkout 的 `.mwf/` 同样只能经由 `mwf` 写（0016）；误拦的代价（agent 改用 `mwf` 命令）低于漏拦。
 - 守卫在 `.mwf/` 存在的项目里才运行（0030）；shell 命令的尽力检测与 apply_patch 解析在 `mwf-hooks`（0024）。
@@ -78,7 +78,7 @@ P3 实现 hooks 前，下列细节在已有 ADR 中没有规定或彼此不一�
 | 内部截止时间 | 从进程开始 3 s：每一步之前检查，超时即放弃剩余的可选工作，输出已有结果（没有则 `{}`）。store / app 调用是同步的，无法中途打断，所以截止时间远低于宿主超时 |
 | hook 不取写锁 | 读不加锁（0033）；会话状态每会话一个文件、不加锁（0034） |
 | stdin 上限 | 1 MiB（与 CLI 的 `STDIN_MAX_BYTES` 相同），流式计数，超出视为坏输入 |
-| 输出上限 | 每次 `additionalContext` 最多 9800 字符（低于 Claude 的 10000）：SessionStart 的数据部分先按 `session_start_max_chars` 截断，fence 与说明行之后整体再截到 9800；recall 每页一行，前 `recall_top_k` 页 |
+| 输出上限 | 每次 `additionalContext` 最多 9800 字符（低于 Claude 的 10000），**包住数据的外壳在截断之前预算**：`mwf-hooks` 先生成随机 fence 与说明行，算出外壳（开头说明、开 fence、闭 fence 及换行）的长度，数据预算 = min(`session_start_max_chars`, 9800 − 外壳长度)，用它调用 `session_context`，再把结果放进外壳。包好之后不再截断，闭 fence 永远不会被切掉（0030）。recall 同样：外壳之外按整页（每页一行）放入前 `recall_top_k` 页，放不下的页整页丢弃。外壳本身超过 9800 时（不会发生，测试固定）不注入 |
 | 宿主超时（P4 写入安装配置） | 10 s，四个事件相同，远大于 3 s 的内部截止时间 |
 
 ### 失败与坏输入

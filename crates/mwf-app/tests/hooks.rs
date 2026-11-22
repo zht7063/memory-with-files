@@ -636,3 +636,81 @@ fn inside_mwf_follows_symlinks_including_dangling_ones() {
     // Through a symlinked cwd.
     assert!(app.is_inside_mwf(&root.join("mem"), Path::new("pages/a.md")));
 }
+
+#[test]
+fn context_keeps_the_lint_line_when_it_alone_fits() {
+    let env = Env::new();
+    for i in 0..20 {
+        env.page(
+            &format!("k{i:02}"),
+            "knowledge",
+            &format!("Knowledge {i}"),
+            "summary",
+            "b\n",
+        );
+    }
+    let lint = "lint: 0 errors, 20 warnings; run `mwf lint` for details";
+    let full = env.app().session_context(100_000).unwrap().text;
+    assert!(full.ends_with(&format!("\n\n{lint}\n")), "{full}");
+    let lint_width = lint.chars().count() + 1;
+    // From exactly the lint line up to just below a hint plus the lint line: the hint does not
+    // fit, so only (part of) the content and the whole lint line remain.
+    for max in lint_width..lint_width + 50 {
+        let c = env.app().session_context(max).unwrap();
+        assert!(c.truncated);
+        assert!(c.text.chars().count() <= max, "max {max}: {}", c.text);
+        assert!(
+            c.text.ends_with(&format!("{lint}\n")),
+            "max {max}: {:?}",
+            c.text
+        );
+        assert!(!c.text.contains("[mwf: trunc"), "max {max}: {:?}", c.text);
+    }
+    assert_eq!(
+        env.app().session_context(lint_width).unwrap().text,
+        format!("{lint}\n")
+    );
+    // With room for a hint, the hint and the lint line are both whole.
+    for max in [lint_width + 120, lint_width + 200, 600] {
+        let c = env.app().session_context(max).unwrap();
+        assert!(c.text.chars().count() <= max, "max {max}");
+        assert!(
+            c.text.contains("[mwf: truncated; run `mwf index`"),
+            "max {max}: {}",
+            c.text
+        );
+        assert!(
+            c.text.ends_with(&format!("\n{lint}\n")),
+            "max {max}: {}",
+            c.text
+        );
+    }
+    // Shorter than the lint line: it is cut, never exceeded.
+    let c = env.app().session_context(lint_width - 10).unwrap();
+    assert_eq!(c.text, lint[..lint_width - 10]);
+}
+
+#[test]
+fn inside_mwf_matches_case_aliases_by_identity_only() {
+    let env = Env::new();
+    let app = env.app();
+    let root = &env.root;
+    // Whether this volume folds case (APFS / HFS+ by default) or not (ext4).
+    let folds = fs::metadata(root.join(".MWF")).is_ok();
+    assert_eq!(app.is_inside_mwf(root, Path::new(".MWF/pages/a.md")), folds);
+    assert_eq!(app.is_inside_mwf(root, Path::new(".Mwf/index.md")), folds);
+    let other = root.join("vendor/lib");
+    fs::create_dir_all(other.join(".mwf")).unwrap();
+    assert_eq!(
+        app.is_inside_mwf(root, Path::new("vendor/lib/.MWF/x.md")),
+        folds
+    );
+    if !folds {
+        // On a case-sensitive volume `.MWF` is a different, ordinary directory.
+        fs::create_dir_all(root.join(".MWF/pages")).unwrap();
+        assert!(!app.is_inside_mwf(root, Path::new(".MWF/pages/a.md")));
+        fs::create_dir_all(other.join(".MWF")).unwrap();
+        assert!(!app.is_inside_mwf(root, Path::new("vendor/lib/.MWF/x.md")));
+    }
+    assert!(!app.is_inside_mwf(root, Path::new("src/.mwfx/a.md")));
+}
