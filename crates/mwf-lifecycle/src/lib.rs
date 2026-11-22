@@ -398,11 +398,12 @@ fn program(env: &Env) -> Result<(String, Option<String>), Error> {
     })
 }
 
-/// One file to change: `new == None` removes it.
+/// One file to change: `new == None` removes it. `old` is the file as planning read it, so
+/// applying refuses a file or directory replaced since, even with the same contents.
 struct Change {
     base: PathBuf,
     rel: PathBuf,
-    old: Option<Vec<u8>>,
+    old: fsx::Snapshot,
     new: Option<Vec<u8>>,
     backup: bool,
 }
@@ -448,8 +449,9 @@ fn plan_hooks(
 ) -> Result<(FileReport, Events), Error> {
     let (base, rel) = (&layout.hooks_base, &layout.hooks_rel);
     let path = base.join(rel);
-    let old = fsx::read(base, rel)?;
-    let text = match &old {
+    let snap = fsx::read(base, rel)?;
+    let old = &snap.bytes;
+    let text = match old {
         Some(bytes) => Some(
             std::str::from_utf8(bytes).map_err(|_| host_config_invalid(&path, "is not UTF-8"))?,
         ),
@@ -473,7 +475,7 @@ fn plan_hooks(
         .iter()
         .any(|(_, s)| !matches!(s, Status::Unchanged | Status::Absent));
     let emptied = matches!(&doc, Json::Object(e, _) if e.is_empty());
-    let (status, new, backup) = match (cmd.action, &old, changed) {
+    let (status, new, backup) = match (cmd.action, old, changed) {
         (_, _, false) if old.is_none() => ("absent", None, false),
         (_, _, false) => ("unchanged", None, false),
         (Action::Install, None, true) => ("created", Some(doc.pretty(&style)), false),
@@ -484,7 +486,7 @@ fn plan_hooks(
     let change = (status != "unchanged" && status != "absent").then(|| Change {
         base: base.clone(),
         rel: rel.clone(),
-        old: old.clone(),
+        old: snap.clone(),
         new: new.map(String::into_bytes),
         backup,
     });
@@ -504,9 +506,9 @@ fn plan_skill(layout: &Layout, action: Action) -> Result<Vec<FileReport>, Error>
     let mut out = Vec::new();
     for (rel, content) in mwf_assets::SKILL_FILES {
         let file_rel = layout.skill_rel.join(rel);
-        let old = fsx::read(&layout.skill_base, &file_rel)?;
-        let same = old.as_deref() == Some(content.as_bytes());
-        let (status, new, backup) = match (action, &old) {
+        let snap = fsx::read(&layout.skill_base, &file_rel)?;
+        let same = snap.bytes.as_deref() == Some(content.as_bytes());
+        let (status, new, backup) = match (action, &snap.bytes) {
             (Action::Install, None) => ("created", Some(content.as_bytes().to_vec()), false),
             (Action::Install, Some(_)) if same => ("unchanged", None, false),
             (Action::Install, Some(_)) => ("updated", Some(content.as_bytes().to_vec()), true),
@@ -517,7 +519,7 @@ fn plan_skill(layout: &Layout, action: Action) -> Result<Vec<FileReport>, Error>
         let change = (status != "unchanged" && status != "absent").then(|| Change {
             base: layout.skill_base.clone(),
             rel: file_rel,
-            old: old.clone(),
+            old: snap.clone(),
             new,
             backup,
         });
@@ -533,10 +535,10 @@ fn plan_skill(layout: &Layout, action: Action) -> Result<Vec<FileReport>, Error>
 
 fn apply(file: &mut FileReport) -> Result<(), Error> {
     if let Some(c) = file.change.take() {
-        file.backup = match (&c.new, &c.old) {
-            (Some(new), old) => fsx::write(&c.base, &c.rel, old.as_deref(), new, c.backup)?,
-            (None, Some(old)) => fsx::remove(&c.base, &c.rel, old, c.backup)?,
-            (None, None) => None,
+        file.backup = match &c.new {
+            Some(new) => fsx::write(&c.base, &c.rel, &c.old, new, c.backup)?,
+            None if c.old.bytes.is_some() => fsx::remove(&c.base, &c.rel, &c.old, c.backup)?,
+            None => None,
         };
     }
     Ok(())
