@@ -4,8 +4,9 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-use mwf_domain::{Page, Status, validate};
+use mwf_domain::{Page, Slug, Status, scan_all, validate};
 use mwf_search::Index;
+use mwf_store::StoreError;
 
 use crate::App;
 use crate::corpus::{Corpus, doc, link_targets, query_text};
@@ -18,6 +19,13 @@ use crate::error::AppError;
 pub const DUPLICATE_SIMILARITY: f32 = 0.8;
 /// Candidates per page checked for `possible_duplicate`.
 const DUPLICATE_CANDIDATES: usize = 6;
+
+fn severity(s: mwf_domain::Severity) -> Severity {
+    match s {
+        mwf_domain::Severity::Error => Severity::Error,
+        mwf_domain::Severity::Warning => Severity::Warning,
+    }
+}
 
 fn issue(page: Option<&str>, rule: &'static str, severity: Severity, message: String) -> LintIssue {
     LintIssue {
@@ -34,30 +42,55 @@ impl App {
     pub fn lint(&self) -> Result<LintReport, AppError> {
         let now = self.now()?;
         let mut issues = Vec::new();
-        if let Err(e) = self.project.config() {
-            issues.push(issue(
+        // Only a config that does not parse is a finding; a wrong file type, a replaced `.mwf`
+        // or an IO error fails the command like any other read. The message is the fixed one of
+        // `AppError` and never quotes the rejected value (ADR 0049).
+        match self.project.config() {
+            Ok(_) => {}
+            Err(e @ StoreError::Config { .. }) => issues.push(issue(
                 None,
                 "invalid_config",
                 Severity::Error,
-                e.to_string(),
-            ));
+                AppError::from(e).message,
+            )),
+            Err(e) => return Err(e.into()),
         }
         let corpus = Corpus::load(&self.project)?;
         for e in &corpus.entries {
+            let page = Some(e.stem.as_str());
             match std::str::from_utf8(&e.bytes) {
-                Err(_) => issues.push(issue(
-                    Some(&e.stem),
-                    "invalid_frontmatter",
-                    Severity::Error,
-                    "the page file is not UTF-8".to_owned(),
-                )),
                 Ok(text) => {
                     for i in validate(&e.stem, text, &now) {
-                        let severity = match i.severity {
-                            mwf_domain::Severity::Error => Severity::Error,
-                            mwf_domain::Severity::Warning => Severity::Warning,
-                        };
-                        issues.push(issue(Some(&e.stem), i.rule, severity, i.message));
+                        issues.push(issue(page, i.rule, severity(i.severity), i.message));
+                    }
+                }
+                // Not text, so no frontmatter rules; the name and the readable parts (invalid
+                // bytes become U+FFFD) are still checked (ADR 0049).
+                Err(_) => {
+                    if let Err(err) = Slug::parse(&e.stem) {
+                        issues.push(issue(
+                            page,
+                            "invalid_slug",
+                            Severity::Error,
+                            err.to_string(),
+                        ));
+                    }
+                    issues.push(issue(
+                        page,
+                        "invalid_frontmatter",
+                        Severity::Error,
+                        "the page file is not UTF-8".to_owned(),
+                    ));
+                    for f in scan_all(&String::from_utf8_lossy(&e.bytes)) {
+                        issues.push(issue(
+                            page,
+                            "secret",
+                            Severity::Error,
+                            format!(
+                                "likely secret ({}) at line {}: {}",
+                                f.rule, f.line, f.redacted
+                            ),
+                        ));
                     }
                 }
             }
@@ -115,10 +148,8 @@ impl App {
                     Some(this.slug.as_str()),
                     "possible_duplicate",
                     Severity::Warning,
-                    format!(
-                        "very similar to {} (\"{}\"); merge them or link them",
-                        other.slug, other.fm.title
-                    ),
+                    // Only the slug: a stored title could hold a secret (ADR 0049).
+                    format!("very similar to {}; merge them or link them", other.slug),
                 ));
             }
         }

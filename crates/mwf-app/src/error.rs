@@ -147,7 +147,15 @@ fn path(p: &Path) -> String {
 
 impl From<StoreError> for AppError {
     fn from(e: StoreError) -> AppError {
-        let message = e.to_string();
+        // The TOML parser's reason can quote the rejected value, which may be a pasted
+        // credential, so config errors get a fixed message (ADRs 0025, 0049).
+        let message = match &e {
+            StoreError::Config { path: p, .. } => format!(
+                "{} is not a valid mwf config (TOML syntax, an unknown key, or a value of the wrong type); compare it with the defaults that `mwf init` writes",
+                path(p)
+            ),
+            _ => e.to_string(),
+        };
         let (code, details) = match &e {
             StoreError::NotInitialized { start } => {
                 (ErrorCode::NotInitialized, json!({ "start": path(start) }))
@@ -287,10 +295,15 @@ mod tests {
             ),
         ];
         for (e, code) in cases {
+            let is_config = matches!(e, StoreError::Config { .. });
             let message = e.to_string();
             let app = AppError::from(e);
             assert_eq!(app.code, code);
-            assert_eq!(app.message, message);
+            if is_config {
+                assert!(!app.message.contains("unknown field"), "{}", app.message);
+            } else {
+                assert_eq!(app.message, message);
+            }
         }
         let e = AppError::from(StoreError::NotGitRoot {
             path: p(),

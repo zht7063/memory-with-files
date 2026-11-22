@@ -4,9 +4,9 @@
 
 use mwf_domain::{
     Frontmatter, LogOp, Page, PageType, Rev, Slug, Status, Timestamp, apply_patch, render_log_line,
-    render_page, rewrite_links, scan_added, unlink,
+    render_page, rewrite_links, scan_added, scan_all, unlink,
 };
-use mwf_store::{LOCK_WAIT, WriteGuard};
+use mwf_store::{LOCK_WAIT, Project, WriteGuard};
 use serde_json::json;
 
 use crate::corpus::{Corpus, links_to};
@@ -57,6 +57,49 @@ fn check_secrets(slug: &Slug, before: &str, after: &str) -> Result<(), AppError>
     .with(json!({ "slug": slug.as_str(), "findings": findings })))
 }
 
+/// `SECRET_DETECTED` for a slug that looks like a secret: it would become a file name and go
+/// into `index.md` and `log.md` (ADRs 0025, 0049). The error carries only redacted samples.
+fn check_slug(slug: &Slug) -> Result<(), AppError> {
+    let found = scan_all(slug.as_str());
+    if found.is_empty() {
+        return Ok(());
+    }
+    let findings: Vec<_> = found
+        .iter()
+        .map(|f| json!({ "rule": f.rule, "redacted": f.redacted }))
+        .collect();
+    let rules: Vec<&str> = found.iter().map(|f| f.rule).collect();
+    Err(AppError::new(
+        ErrorCode::SecretDetected,
+        format!(
+            "the slug looks like a secret ({}); choose another slug",
+            rules.join(", ")
+        ),
+    )
+    .with(json!({ "field": "slug", "findings": findings })))
+}
+
+/// The title as written into a `log.md` line: replaced when it holds a likely secret, so that
+/// logging (in particular `delete`, which removes the page) never copies a stored credential into
+/// the committed log (ADR 0049).
+fn log_title(title: &str) -> &str {
+    if scan_all(title).is_empty() {
+        title
+    } else {
+        "[title withheld: looks like a secret]"
+    }
+}
+
+/// Reads everything a write may touch, under the lock and before the first change, so that a
+/// symlink or wrong file type in `pages/`, `index.md` or `log.md` fails the command before it
+/// has written anything (ADRs 0048, 0049). Returns the pages for the rest of the command.
+fn preflight(project: &Project) -> Result<Corpus, AppError> {
+    let corpus = Corpus::load(project)?;
+    project.read_index()?;
+    project.read_log(0)?;
+    Ok(corpus)
+}
+
 fn dedup(tags: Vec<String>) -> Vec<String> {
     let mut out: Vec<String> = Vec::with_capacity(tags.len());
     for tag in tags {
@@ -86,6 +129,10 @@ fn rewrites(
             let mut page = (*p).clone();
             page.body = edit(&p.body);
             page.fm.updated = ts.clone();
+            check_size("body", &page.body).map_err(|e| AppError {
+                message: format!("rewriting the links of {}: {}", p.slug, e.message),
+                ..e
+            })?;
             let after = render_page(&page);
             let before = corpus
                 .entry(p.slug.as_str())
@@ -104,6 +151,7 @@ impl App {
     /// Creates a page: status `active`, `created` = `updated` = now.
     pub fn new_page(&self, i: NewIn) -> Result<WriteOut, AppError> {
         let slug = Slug::parse(&i.slug)?;
+        check_slug(&slug)?;
         let page_type: PageType = i.page_type.parse()?;
         check_size("body", &i.body)?;
         let ts = self.now()?;
@@ -122,6 +170,7 @@ impl App {
         };
         page.fm.check()?;
         let mut guard = self.project.lock(LOCK_WAIT)?;
+        preflight(guard.project())?;
         if guard.project().read_page(&slug)?.is_some() {
             return Err(AppError::new(
                 ErrorCode::AlreadyExists,
@@ -231,6 +280,7 @@ impl App {
     pub fn rename(&self, from: &str, to: &str) -> Result<WriteOut, AppError> {
         let from = Slug::parse(from)?;
         let to = Slug::parse(to)?;
+        check_slug(&to)?;
         if from == to {
             return Err(AppError::field(
                 "to",
@@ -239,6 +289,7 @@ impl App {
         }
         let mut guard = self.project.lock(LOCK_WAIT)?;
         let project = guard.project();
+        let corpus = preflight(project)?;
         let bytes = project
             .read_page(&from)?
             .ok_or_else(|| AppError::not_found(&from))?;
@@ -251,7 +302,6 @@ impl App {
             .with(json!({ "slug": to.as_str() })));
         }
         let ts = self.now()?;
-        let corpus = Corpus::load(project)?;
         let referrers = corpus.backlinks(&from);
         let relinks = rewrites(&referrers, &corpus, &ts, |body| {
             rewrite_links(body, &from, &to)
@@ -261,6 +311,7 @@ impl App {
         let own = if links_to(&page, &from) {
             moved.body = rewrite_links(&page.body, &from, &to);
             moved.fm.updated = ts.clone();
+            check_size("body", &moved.body)?;
             let text = render_page(&moved);
             check_secrets(&to, &String::from_utf8_lossy(&bytes), &text)?;
             Some(text)
@@ -296,12 +347,12 @@ impl App {
         let slug = Slug::parse(slug)?;
         let mut guard = self.project.lock(LOCK_WAIT)?;
         let project = guard.project();
+        let corpus = preflight(project)?;
         let bytes = project
             .read_page(&slug)?
             .ok_or_else(|| AppError::not_found(&slug))?;
         // A page that does not parse can still be deleted; its log line has no title.
         let title = parse_stored(&slug, &bytes).map_or_else(|_| String::new(), |p| p.fm.title);
-        let corpus = Corpus::load(project)?;
         let referrers = corpus.backlinks(&slug);
         if !referrers.is_empty() && !unlink_refs {
             let names: Vec<&str> = referrers.iter().map(|p| p.slug.as_str()).collect();
@@ -318,10 +369,12 @@ impl App {
         let ts = self.now()?;
         let unlinks = rewrites(&referrers, &corpus, &ts, |body| unlink(body, &slug))?;
         let warnings = corpus.skipped_invalid(&slug);
+        // Trash first: `trash/` is the one path the preflight cannot check, so a bad `trash/`
+        // fails before any referrer is rewritten.
+        let trashed = guard.move_to_trash(&slug, &ts)?;
         for r in &unlinks {
             guard.write_page(&r.slug, r.after.as_bytes())?;
         }
-        let trashed = guard.move_to_trash(&slug, &ts)?;
         self.rebuild_and_log(&mut guard, &ts, &LogOp::Delete, &slug, &title)?;
         let trashed = trashed
             .strip_prefix(project.root())
@@ -348,6 +401,7 @@ impl App {
         let slug = Slug::parse(slug)?;
         let mut guard = self.project.lock(LOCK_WAIT)?;
         let project = guard.project();
+        let corpus = preflight(project)?;
         let bytes = project
             .read_page(&slug)?
             .ok_or_else(|| AppError::not_found(&slug))?;
@@ -355,7 +409,6 @@ impl App {
         let mut page = edit(&old, &bytes)?;
         page.fm.check()?;
         if page == old {
-            let corpus = Corpus::load(project)?;
             return Ok(outcome(&corpus, &page, &bytes, false, Vec::new()));
         }
         let ts = self.now()?;
@@ -397,7 +450,7 @@ impl App {
         if project.read_index()?.as_deref() != Some(index.as_bytes()) {
             guard.write_index(&index)?;
         }
-        guard.append_log(&render_log_line(ts, op, slug, title))?;
+        guard.append_log(&render_log_line(ts, op, slug, log_title(title)))?;
         Ok(corpus)
     }
 }

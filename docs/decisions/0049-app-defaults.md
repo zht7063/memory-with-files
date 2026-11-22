@@ -15,7 +15,7 @@ P2 实现 `mwf-app` 时，下列细节在已有 ADR 中没有规定。
 | code | 含义 |
 | --- | --- |
 | `INVALID_PAGE` | 要读或改的页面文件本身不合法（不是 UTF-8、frontmatter 解析失败）；提示运行 `mwf lint`。与 `INVALID_FIELD`（本次输入不合法）区分 |
-| `INVALID_CONFIG` | `.mwf/config.toml` 不合法（`StoreError::Config`）。目前只有 `lint` 读配置并把它记为 error；P3 的 hooks 读配置时用这个码 |
+| `INVALID_CONFIG` | `.mwf/config.toml` 不合法（`StoreError::Config`）。信息是固定文本，不转述 TOML 解析器的原因（它可能引用被拒绝的值）。目前只有 `lint` 读配置并把它记为 error；`config.toml` 是目录、符号链接或读取失败时 lint 返回对应错误码（`WRONG_FILE_TYPE` 等），不记为 `invalid_config`。P3 的 hooks 读配置时用这个码 |
 | `TOO_LARGE` | 正文或 `patch` 的 old / new 超过 100 KB |
 | `CHANGED` | `.mwf` 或 `.mwf/.lock` 在使用中被替换（0048） |
 | `WRONG_FILE_TYPE` | `.mwf/` 下的路径是符号链接或类型不对（0048） |
@@ -36,6 +36,10 @@ P2 实现 `mwf-app` 时，下列细节在已有 ADR 中没有规定。
 
 ### 写入
 
+- **先检查、后改动**：取锁后、第一次改动前，读一遍全部页面文件、`index.md` 与 `log.md`，任何一个是符号链接或类型不对（如 `pages/` 下名为 `x.md` 的目录）时命令直接失败，什么都不写。`trash/` 无法预读，所以 `delete` 先把页面移入 trash，成功后才改写入链页面。
+- **slug 也做 secret 扫描**：slug 会成为文件名并写入 `index.md`、`log.md`，`new` 与 `rename` 的目标 slug 命中 secret 规则时 `SECRET_DETECTED`，错误不回显 slug。
+- **日志不复制密钥**：写入 `log.md` 的标题命中 secret 规则时改为 `[title withheld: looks like a secret]`，避免 `delete` 等操作把存量页面中的密钥搬进进 git 的日志。
+- **改写也受 100 KB 限制**：`rename` 与 `delete --unlink` 改写的每个正文（含页面自身的自链接）在第一次改动前检查上限，超限为 `TOO_LARGE`。
 - secret 扫描比较整个页面文件（含 frontmatter）的前后文本，行号是页面文件的行号。
 - 结果与原页面完全相同的 `set` / `archive` / `unarchive` / `patch` / `write` 不写文件、不改 `updated`、不记日志，`WriteOut.changed = false`。
 - `new` 的 tags 去重并保持顺序；`set` 的 `--tag` 追加在已有 tags 之后，同一个 tag 既加又删、或一个字段都不给，为 `INVALID_FIELD`。
@@ -49,10 +53,10 @@ P2 实现 `mwf-app` 时，下列细节在已有 ADR 中没有规定。
 
 ### lint
 
-- 规则名：`invalid_slug`、`invalid_frontmatter`、`secret`、`stale_task`（来自 `mwf_domain::validate`），`dangling_link`、`orphan`、`index_drift`、`possible_duplicate`，以及 error `invalid_config`。不是 UTF-8 的页面文件记为 `invalid_frontmatter`。
+- 规则名：`invalid_slug`、`invalid_frontmatter`、`secret`、`stale_task`（来自 `mwf_domain::validate`），`dangling_link`、`orphan`、`index_drift`、`possible_duplicate`，以及 error `invalid_config`。不是 UTF-8 的页面文件记为 `invalid_frontmatter`，同时照常检查文件名（`invalid_slug`），并对按 lossy 解码后的文本做 secret 扫描。
 - `orphan` 只报 `active` 页；自链接不算入链。
 - `index_drift`：`index.md` 缺失或与渲染结果的字节不同。
-- `possible_duplicate`：对每个 `active` 页，用它的全文做 `similar_to`（取前 6 个候选）；若另一页的分数 ≥ 最高分（通常是页面自身）的 0.8（`DUPLICATE_SIMILARITY`），这两页记为可能重复，两页各报一条 warning。BM25 分数随语料漂移，相对自身分数的比例比固定分数稳定。0.8 的依据：内容几乎相同的两页约为 0.9，同主题、不同内容的页约为 0.1。
+- `possible_duplicate`：对每个 `active` 页，用它的全文做 `similar_to`（取前 6 个候选）；若另一页的分数 ≥ 最高分（通常是页面自身）的 0.8（`DUPLICATE_SIMILARITY`），这两页记为可能重复，两页各报一条 warning；信息只给对方的 slug，不给标题（存量标题可能含密钥）。BM25 分数随语料漂移，相对自身分数的比例比固定分数稳定。0.8 的依据：内容几乎相同的两页约为 0.9，同主题、不同内容的页约为 0.1。
 - 时间取自注入的 `Clock`；lint 从不写文件。
 - 性能：5000 页（每页约 0.5 KB）在 4 vCPU 的 orb 上，release 构建的 `lint` 约 2.2 s，主要花在 `possible_duplicate` 上；单次写入约 90 ms。lint 是手动命令，可以接受；P3 的 SessionStart 不应调用完整的 lint。
 

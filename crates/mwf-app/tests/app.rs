@@ -1161,7 +1161,11 @@ fn possible_duplicate_flags_near_copies_only() {
     assert_eq!(dups[0].0, "deploy");
     assert!(dups[0].1.contains("deploy-copy"));
     assert_eq!(dups[1].0, "deploy-copy");
-    assert!(dups[1].1.contains("deploy "), "{}", dups[1].1);
+    assert!(dups[1].1.contains("to deploy;"), "{}", dups[1].1);
+    // Stored titles never appear: they could hold a secret.
+    for (_, message) in &dups {
+        assert!(!message.contains("Deploy pipeline"), "{message}");
+    }
 }
 
 #[test]
@@ -1197,4 +1201,161 @@ fn error_codes_serialize_as_documented() {
             "details": { "slug": "nope" },
         })
     );
+}
+
+// --- review regressions (PR #56) ---
+
+/// A slug-shaped secret (`[a-z0-9-]` only), assembled at run time.
+fn slug_secret() -> String {
+    ["glpat", "-", "zq8xk2mn7pr4vt9wb3cd6fg1"].concat()
+}
+
+#[test]
+fn new_fails_before_writing_when_a_page_entry_is_the_wrong_type() {
+    let env = Env::new();
+    fs::create_dir(env.mwf("pages/dir.md")).unwrap();
+    let before = env.snapshot();
+    let app = env.app();
+    assert_eq!(
+        code(app.new_page(new_in("a", "task", "A", ""))),
+        ErrorCode::WrongFileType
+    );
+    assert!(!env.mwf("pages/a.md").exists());
+    assert_eq!(env.snapshot(), before);
+    fs::remove_dir(env.mwf("pages/dir.md")).unwrap();
+
+    // `index.md` and `log.md` are checked before the page is written too.
+    for name in ["index.md", "log.md"] {
+        let saved = env.read(name);
+        fs::remove_file(env.mwf(name)).unwrap();
+        fs::create_dir(env.mwf(name)).unwrap();
+        assert_eq!(
+            code(app.new_page(new_in("a", "task", "A", ""))),
+            ErrorCode::WrongFileType,
+            "{name}"
+        );
+        assert!(!env.mwf("pages/a.md").exists(), "{name}");
+        fs::remove_dir(env.mwf(name)).unwrap();
+        fs::write(env.mwf(name), saved).unwrap();
+    }
+}
+
+#[test]
+fn delete_unlink_with_a_bad_trash_changes_no_referrer() {
+    let env = Env::new();
+    env.page("gone", "knowledge", "Gone", "");
+    env.page("x", "task", "X", "[g](gone.md)\n");
+    fs::write(env.mwf("trash"), "not a directory").unwrap();
+    let before = env.snapshot();
+    assert_eq!(
+        code(env.app().delete("gone", true)),
+        ErrorCode::WrongFileType
+    );
+    assert_eq!(env.snapshot(), before);
+}
+
+#[test]
+fn config_errors_never_quote_the_value() {
+    let env = Env::new();
+    let key = secret();
+    fs::write(
+        env.mwf("config.toml"),
+        format!("[hooks]\nrecall_top_k = \"{key}\"\n"),
+    )
+    .unwrap();
+    let report = env.app().lint().unwrap();
+    let json = serde_json::to_string(&report).unwrap();
+    assert!(json.contains("invalid_config"), "{json}");
+    assert!(!json.contains(&key[4..]), "{json}");
+}
+
+#[test]
+fn lint_propagates_config_file_type_errors() {
+    let env = Env::new();
+    fs::remove_file(env.mwf("config.toml")).unwrap();
+    fs::create_dir(env.mwf("config.toml")).unwrap();
+    assert_eq!(code(env.app().lint()), ErrorCode::WrongFileType);
+}
+
+#[test]
+fn secret_slugs_are_rejected_without_echo() {
+    let env = Env::new();
+    env.page("a", "task", "A", "");
+    let bad = slug_secret();
+    let before = env.snapshot();
+    let err = env
+        .app()
+        .new_page(new_in(&bad, "task", "T", ""))
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::SecretDetected);
+    assert!(!serde_json::to_string(&err).unwrap().contains(&bad[6..]));
+    let err = env.app().rename("a", &bad).unwrap_err();
+    assert_eq!(err.code, ErrorCode::SecretDetected);
+    assert!(!serde_json::to_string(&err).unwrap().contains(&bad[6..]));
+    assert_eq!(env.snapshot(), before);
+}
+
+#[test]
+fn log_lines_withhold_a_stored_secret_title() {
+    let env = Env::new();
+    let key = secret();
+    env.page("p", "task", "Plain", "");
+    let file = env
+        .page_file("p")
+        .replace("title: Plain", &format!("title: t {key}"));
+    fs::write(env.mwf("pages/p.md"), file).unwrap();
+    env.app().archive("p", true).unwrap();
+    env.app().delete("p", false).unwrap();
+    let log = env.read("log.md");
+    assert!(!log.contains(&key[4..]), "{log}");
+    assert!(
+        log.contains("delete p \"[title withheld: looks like a secret]\""),
+        "{log}"
+    );
+}
+
+#[test]
+fn rename_checks_the_size_of_every_rewritten_body() {
+    let env = Env::new();
+    let link = "[x](a.md)\n";
+    let full = format!("{link}{}", "b".repeat(BODY_MAX_BYTES - link.len()));
+    assert_eq!(full.len(), BODY_MAX_BYTES);
+    env.page("a", "task", "A", "");
+    env.page("r", "task", "R", &full);
+    let before = env.snapshot();
+    // `a.md` → `ab.md` grows the referrer to 102401 bytes.
+    assert_eq!(code(env.app().rename("a", "ab")), ErrorCode::TooLarge);
+    assert_eq!(env.snapshot(), before);
+
+    // The same for the page's link to itself.
+    let env = Env::new();
+    env.page("a", "task", "A", &full);
+    let before = env.snapshot();
+    assert_eq!(code(env.app().rename("a", "ab")), ErrorCode::TooLarge);
+    assert_eq!(env.snapshot(), before);
+}
+
+#[test]
+fn lint_checks_name_and_secrets_of_non_utf8_files() {
+    let env = Env::new();
+    let key = secret();
+    let mut bytes = vec![0xff, b'\n'];
+    bytes.extend_from_slice(key.as_bytes());
+    bytes.push(b'\n');
+    fs::write(env.mwf("pages/Bad_Bytes.md"), bytes).unwrap();
+    let rules: Vec<_> = lint_rules(&env, T0)
+        .into_iter()
+        .filter(|r| r.0.as_deref() == Some("Bad_Bytes"))
+        .map(|r| (r.1, r.2))
+        .collect();
+    assert_eq!(
+        rules,
+        [
+            ("invalid_frontmatter", Severity::Error),
+            ("invalid_slug", Severity::Error),
+            ("secret", Severity::Error),
+        ]
+    );
+    let json = serde_json::to_string(&env.app().lint().unwrap()).unwrap();
+    assert!(!json.contains(&key[4..]));
 }
