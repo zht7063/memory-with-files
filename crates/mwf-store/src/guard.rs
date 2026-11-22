@@ -53,7 +53,7 @@ impl<'p> WriteGuard<'p> {
     /// Creates or replaces `pages/<slug>.md` atomically; creates `pages/` when missing.
     pub fn write_page(&mut self, slug: &Slug, bytes: &[u8]) -> Result<(), StoreError> {
         self.ensure_dir(PAGES_DIR)?;
-        write_file(&self.project.page_path(slug), bytes)
+        write_file(&self.project.page_path(slug)?, bytes)
     }
 
     /// Moves `pages/<slug>.md` to `trash/<slug>.<ts>.md` (ADR 0026) and returns the new path.
@@ -70,7 +70,7 @@ impl<'p> WriteGuard<'p> {
         }
         fs::rename(&from, &to).map_err(io_at(&from))?;
         sync_dir(&trash)?;
-        sync_dir(&self.project.path(PAGES_DIR))?;
+        sync_dir(&self.project.path(PAGES_DIR)?)?;
         Ok(to)
     }
 
@@ -78,17 +78,17 @@ impl<'p> WriteGuard<'p> {
     /// `PageExists` rather than replace an existing `to`.
     pub fn rename_page(&mut self, from: &Slug, to: &Slug) -> Result<(), StoreError> {
         let from_path = self.existing_page(from)?;
-        let to_path = self.project.page_path(to);
+        let to_path = self.project.page_path(to)?;
         if fs::symlink_metadata(&to_path).is_ok() {
             return Err(StoreError::PageExists { slug: to.clone() });
         }
         fs::rename(&from_path, &to_path).map_err(io_at(&from_path))?;
-        sync_dir(&self.project.path(PAGES_DIR))
+        sync_dir(&self.project.path(PAGES_DIR)?)
     }
 
     /// Replaces `index.md` atomically.
     pub fn write_index(&mut self, text: &str) -> Result<(), StoreError> {
-        write_file(&self.project.path(INDEX_FILE), text.as_bytes())
+        write_file(&self.project.path(INDEX_FILE)?, text.as_bytes())
     }
 
     /// Appends `line` (one rendered log line, without its newline; ADR 0029) to `log.md`. Like
@@ -96,14 +96,14 @@ impl<'p> WriteGuard<'p> {
     /// line; a missing final newline (as a union merge can leave) is added first, and a missing
     /// `log.md` is created.
     pub fn append_log(&mut self, line: &str) -> Result<(), StoreError> {
-        let path = self.project.path(LOG_FILE);
+        let path = self.project.path(LOG_FILE)?;
         let text = read_file(&path)?.unwrap_or_default();
         write_atomic(&path, &with_line(text, line))
     }
 
     /// `pages/<slug>.md` when it is a regular file in a real `pages/` directory.
     fn existing_page(&self, slug: &Slug) -> Result<PathBuf, StoreError> {
-        let path = self.project.page_path(slug);
+        let path = self.project.page_path(slug)?;
         if self.project.store_dir(PAGES_DIR)?.is_some() && exists_as(&path, Kind::File)? {
             Ok(path)
         } else {
@@ -116,9 +116,9 @@ impl<'p> WriteGuard<'p> {
         if let Some(path) = self.project.store_dir(name)? {
             return Ok(path);
         }
-        let path = self.project.path(name);
+        let path = self.project.path(name)?;
         match fs::create_dir(&path) {
-            Ok(()) => sync_dir(&self.project.mwf_dir())?,
+            Ok(()) => sync_dir(&self.project.checked_mwf()?)?,
             // Created by something else since the check; it must still be a real directory.
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
                 exists_as(&path, Kind::Dir)?;

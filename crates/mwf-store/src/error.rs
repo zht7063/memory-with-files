@@ -40,6 +40,10 @@ pub enum StoreError {
         path: PathBuf,
         expected: &'static str,
     },
+    /// `.mwf`, or `.mwf/.lock` while waiting for it, was replaced or removed after the project
+    /// was opened; mwf stops rather than follow the new entry (ADR 0048).
+    #[error("{} changed since mwf opened the project; run the command again", path.display())]
+    Changed { path: PathBuf },
     /// Any other file system failure, with the path it happened on.
     #[error("{}: {source}", path.display())]
     Io { path: PathBuf, source: io::Error },

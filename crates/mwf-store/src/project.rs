@@ -1,7 +1,7 @@
 //! Project lookup and `init` (ADRs 0019, 0029, 0048), unlocked reads (ADR 0033), the write lock
 //! (ADRs 0013, 0033).
 
-use std::fs::{self, OpenOptions, TryLockError};
+use std::fs::{self, File, Metadata, OpenOptions, TryLockError};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -49,10 +49,29 @@ pub enum GitMode {
     Local,
 }
 
-/// A project: the directory that holds `.mwf/`.
+/// A project: the directory that holds `.mwf/`, and the identity of that `.mwf/` directory
+/// when the project was opened. Every operation checks that `.mwf` is still that directory and
+/// not a symlink, so a `.mwf` swapped after [`Project::find`] or [`Project::lock`] fails with
+/// `Changed` instead of sending reads or writes elsewhere (ADR 0048).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Project {
     root: PathBuf,
+    mwf_id: DirId,
+}
+
+/// (device, inode) of a directory; mwf targets only Unix (ADR 0012).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DirId(u64, u64);
+
+#[cfg(unix)]
+fn dir_id(meta: &Metadata) -> DirId {
+    use std::os::unix::fs::MetadataExt;
+    DirId(meta.dev(), meta.ino())
+}
+
+#[cfg(not(unix))]
+fn dir_id(_meta: &Metadata) -> DirId {
+    DirId(0, 0)
 }
 
 impl Project {
@@ -67,6 +86,7 @@ impl Project {
                 Ok(meta) if meta.is_dir() => {
                     return Ok(Project {
                         root: dir.to_path_buf(),
+                        mwf_id: dir_id(&meta),
                     });
                 }
                 Ok(meta) if meta.file_type().is_symlink() => {
@@ -91,13 +111,19 @@ impl Project {
     /// directory, or a `.git` file starting with `gitdir:` (worktree or submodule). No `git`
     /// binary is needed.
     ///
+    /// Inits of one root are serialized by an exclusive lock on the root directory itself
+    /// (waiting up to [`LOCK_WAIT`]), and only the init that finds no `.mwf` under that lock
+    /// writes anything, so racing inits in different modes leave one mode's Git rule.
+    ///
     /// Builds the project in a staging directory `.mwf.<pid>.<n>.tmp`, which [`Project::find`]
     /// does not see: `.gitignore`, `config.toml` with the defaults, `index.md`
     /// with no pages, an empty `log.md` and `pages/`. Then it makes the Git rule the last rule of
     /// the root `.gitattributes` ([`GitMode::Track`], `.mwf/log.md merge=union`, ADR 0029) or
     /// `.gitignore` ([`GitMode::Local`], `/.mwf/`), and finally renames the staging directory to
-    /// `.mwf`. So `find` sees either no project or a complete one with its Git rule in place,
-    /// and a failure leaves no `.mwf` behind, so `init` can be retried. When `.mwf` already
+    /// `.mwf`. So `find` sees either no project or a complete one with its Git rule in place.
+    /// A failure before that rename leaves no `.mwf` behind, so `init` can be retried; if
+    /// fsyncing the root fails after the rename, the error is returned but the project is
+    /// already published, and a retry returns `AlreadyInitialized`. When `.mwf` already
     /// exists in any form, returns `AlreadyInitialized` and changes nothing (ADR 0048).
     pub fn init(root: &Path, mode: GitMode) -> Result<Project, StoreError> {
         let root = fs::canonicalize(root).map_err(io_at(root))?;
@@ -112,6 +138,12 @@ impl Project {
                 git_root,
             });
         }
+        // Serialize inits of this root by locking the root directory itself, which creates no
+        // file in the repository; the lock ends when `root_lock` drops. Only the init that sees
+        // no `.mwf` under the lock writes Git policy, so racing Track and Local inits cannot
+        // both leave their rules behind.
+        let root_lock = File::open(&root).map_err(io_at(&root))?;
+        lock_within(&root_lock, &root, LOCK_WAIT)?;
         let mwf = root.join(MWF_DIR);
         match fs::symlink_metadata(&mwf) {
             Ok(_) => return Err(StoreError::AlreadyInitialized { path: mwf }),
@@ -131,7 +163,12 @@ impl Project {
             // After a successful rename the staging path no longer exists and this does nothing.
             let _ = fs::remove_dir_all(&staging);
         }
-        result.map(|()| Project { root })
+        result?;
+        let meta = fs::symlink_metadata(&mwf).map_err(io_at(&mwf))?;
+        Ok(Project {
+            root,
+            mwf_id: dir_id(&meta),
+        })
     }
 
     /// The directory that holds `.mwf/`.
@@ -144,23 +181,38 @@ impl Project {
         self.root.join(MWF_DIR)
     }
 
-    pub(crate) fn path(&self, name: &str) -> PathBuf {
-        self.mwf_dir().join(name)
+    /// `.mwf/` after checking it is still the directory this project was opened with.
+    pub(crate) fn checked_mwf(&self) -> Result<PathBuf, StoreError> {
+        let mwf = self.mwf_dir();
+        match fs::symlink_metadata(&mwf) {
+            Ok(meta) if meta.is_dir() && dir_id(&meta) == self.mwf_id => Ok(mwf),
+            Ok(_) => Err(StoreError::Changed { path: mwf }),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Err(StoreError::Changed { path: mwf }),
+            Err(e) => Err(io_at(&mwf)(e)),
+        }
     }
 
-    pub(crate) fn page_path(&self, slug: &Slug) -> PathBuf {
-        self.path(PAGES_DIR).join(format!("{slug}.md"))
+    /// `.mwf/<name>`, checking `.mwf` first; the caller checks `<name>` itself.
+    pub(crate) fn path(&self, name: &str) -> Result<PathBuf, StoreError> {
+        Ok(self.checked_mwf()?.join(name))
+    }
+
+    /// `.mwf/pages/<slug>.md`, checking `.mwf` and that `pages` is not a symlink or file.
+    pub(crate) fn page_path(&self, slug: &Slug) -> Result<PathBuf, StoreError> {
+        let pages = self.path(PAGES_DIR)?;
+        exists_as(&pages, Kind::Dir)?;
+        Ok(pages.join(format!("{slug}.md")))
     }
 
     /// `.mwf/<name>/` when it exists as a real directory; `WrongFileType` for a symlink or file.
     pub(crate) fn store_dir(&self, name: &str) -> Result<Option<PathBuf>, StoreError> {
-        let path = self.path(name);
+        let path = self.path(name)?;
         Ok(exists_as(&path, Kind::Dir)?.then_some(path))
     }
 
     /// Reads `config.toml`; a missing file means all defaults (ADR 0039).
     pub fn config(&self) -> Result<Config, StoreError> {
-        let path = self.path(CONFIG_FILE);
+        let path = self.path(CONFIG_FILE)?;
         match read_file(&path)? {
             None => Ok(Config::default()),
             Some(bytes) => match String::from_utf8(bytes) {
@@ -179,7 +231,7 @@ impl Project {
         if self.store_dir(PAGES_DIR)?.is_none() {
             return Ok(None);
         }
-        read_file(&self.page_path(slug))
+        read_file(&self.page_path(slug)?)
     }
 
     /// Every `pages/*.md` entry as (file name without `.md`, bytes), sorted by name. Names are
@@ -210,12 +262,12 @@ impl Project {
 
     /// `index.md`, or `None` when it does not exist.
     pub fn read_index(&self) -> Result<Option<Vec<u8>>, StoreError> {
-        read_file(&self.path(INDEX_FILE))
+        read_file(&self.path(INDEX_FILE)?)
     }
 
     /// The last `n` non-empty lines of `log.md`, oldest first; a missing file has none.
     pub fn read_log(&self, n: usize) -> Result<Vec<String>, StoreError> {
-        let bytes = read_file(&self.path(LOG_FILE))?.unwrap_or_default();
+        let bytes = read_file(&self.path(LOG_FILE)?)?.unwrap_or_default();
         let text = String::from_utf8_lossy(&bytes);
         let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
         let skip = lines.len().saturating_sub(n);
@@ -226,7 +278,7 @@ impl Project {
     /// waiting up to `timeout` ([`LOCK_WAIT`] for write commands) before `LockTimeout`. The
     /// lock is released when the guard drops or the process exits.
     pub fn lock(&self, timeout: Duration) -> Result<WriteGuard<'_>, StoreError> {
-        let path = self.path(LOCK_FILE);
+        let path = self.path(LOCK_FILE)?;
         exists_as(&path, Kind::File)?;
         let file = OpenOptions::new()
             .read(true)
@@ -235,19 +287,33 @@ impl Project {
             .truncate(false)
             .open(&path)
             .map_err(io_at(&path))?;
-        let start = Instant::now();
-        loop {
-            match file.try_lock() {
-                Ok(()) => return Ok(WriteGuard::new(self, file)),
-                Err(TryLockError::WouldBlock) => {
-                    let waited = start.elapsed();
-                    if waited >= timeout {
-                        return Err(StoreError::LockTimeout { waited: timeout });
-                    }
-                    std::thread::sleep(LOCK_POLL.min(timeout - waited));
+        lock_within(&file, &path, timeout)?;
+        // While waiting, `.mwf` or `.lock` may have been replaced; a lock on a file that is no
+        // longer `.mwf/.lock` would exclude nobody.
+        self.checked_mwf()?;
+        let current = fs::symlink_metadata(&path).map_err(io_at(&path))?;
+        let held = file.metadata().map_err(io_at(&path))?;
+        if !current.is_file() || dir_id(&current) != dir_id(&held) {
+            return Err(StoreError::Changed { path });
+        }
+        Ok(WriteGuard::new(self, file))
+    }
+}
+
+/// Takes an exclusive `File::lock` on `file`, polling every [`LOCK_POLL`] for up to `timeout`.
+fn lock_within(file: &File, path: &Path, timeout: Duration) -> Result<(), StoreError> {
+    let start = Instant::now();
+    loop {
+        match file.try_lock() {
+            Ok(()) => return Ok(()),
+            Err(TryLockError::WouldBlock) => {
+                let waited = start.elapsed();
+                if waited >= timeout {
+                    return Err(StoreError::LockTimeout { waited: timeout });
                 }
-                Err(TryLockError::Error(e)) => return Err(io_at(&path)(e)),
+                std::thread::sleep(LOCK_POLL.min(timeout - waited));
             }
+            Err(TryLockError::Error(e)) => return Err(io_at(path)(e)),
         }
     }
 }

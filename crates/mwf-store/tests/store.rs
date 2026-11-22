@@ -425,12 +425,12 @@ fn lock_default_wait_is_two_seconds() {
 }
 
 #[test]
-fn lock_on_a_removed_project_is_an_io_error() {
+fn lock_on_a_removed_project_is_changed() {
     let (_dir, project) = init(GitMode::Track);
     fs::remove_dir_all(project.mwf_dir()).unwrap();
     assert!(matches!(
         project.lock(LOCK_WAIT).unwrap_err(),
-        StoreError::Io { .. }
+        StoreError::Changed { .. }
     ));
 }
 
@@ -935,4 +935,149 @@ fn symlinks_inside_the_store_are_refused() {
 
     assert_eq!(names(&out), ["secret.md"]);
     assert_eq!(read(out.join("secret.md")), "outside");
+}
+
+/// Re-review finding 1: racing Track and Local inits leave only the winner's Git policy.
+#[test]
+fn racing_track_and_local_inits_leave_only_the_winners_git_policy() {
+    if !git_available() {
+        eprintln!("git not installed; skipping");
+        return;
+    }
+    let mut winners = Vec::new();
+    for round in 0..20 {
+        let (_dir, root) = real_git_repo();
+        // Alternate which init starts first so both modes win some rounds.
+        let (track, local) = std::thread::scope(|s| {
+            let (t, l) = if round % 2 == 0 {
+                let t = s.spawn(|| Project::init(&root, GitMode::Track));
+                (t, s.spawn(|| Project::init(&root, GitMode::Local)))
+            } else {
+                let l = s.spawn(|| Project::init(&root, GitMode::Local));
+                (s.spawn(|| Project::init(&root, GitMode::Track)), l)
+            };
+            (t.join().unwrap(), l.join().unwrap())
+        });
+        let winner = match (&track, &local) {
+            (Ok(_), Err(StoreError::AlreadyInitialized { .. })) => GitMode::Track,
+            (Err(StoreError::AlreadyInitialized { .. }), Ok(_)) => GitMode::Local,
+            other => panic!("{other:?}"),
+        };
+        winners.push(winner);
+        let ignored = git_out(&root, &["check-ignore", "-q", ".mwf/config.toml"])
+            .status
+            .success();
+        let attr = git_out(&root, &["check-attr", "merge", "--", ".mwf/log.md"]);
+        let union = String::from_utf8_lossy(&attr.stdout) == ".mwf/log.md: merge: union\n";
+        assert_eq!(ignored, winner == GitMode::Local, "{winner:?}");
+        assert_eq!(union, winner == GitMode::Track, "{winner:?}");
+        let expected_root_file = match winner {
+            GitMode::Track => ".gitattributes",
+            GitMode::Local => ".gitignore",
+        };
+        assert_eq!(names(&root), [".git", expected_root_file, ".mwf"]);
+    }
+    eprintln!("winners: {winners:?}");
+}
+
+/// Re-review finding 2: `.mwf` swapped for a symlink or another directory after `find` or
+/// `lock` makes every retained `Project` / `WriteGuard` operation fail without touching it.
+#[cfg(unix)]
+#[test]
+fn a_swapped_mwf_is_never_followed_by_a_retained_project_or_guard() {
+    use std::os::unix::fs::symlink;
+    let outside = tempfile::tempdir().unwrap();
+    let out = fs::canonicalize(outside.path()).unwrap();
+    // A complete fake store outside the repository.
+    fs::create_dir(out.join("pages")).unwrap();
+    for f in ["config.toml", "index.md", "log.md", "pages/a.md"] {
+        fs::write(out.join(f), "outside").unwrap();
+    }
+    let snapshot = |dir: &Path| -> Vec<(String, String)> {
+        ["config.toml", "index.md", "log.md", "pages/a.md"]
+            .iter()
+            .map(|f| (f.to_string(), read(dir.join(f))))
+            .collect()
+    };
+    let before = snapshot(&out);
+    let changed = |r: Result<(), StoreError>| matches!(r, Err(StoreError::Changed { .. }));
+
+    for swap_to_symlink in [true, false] {
+        let (_dir, project) = init(GitMode::Track);
+        let mut guard = project.lock(LOCK_WAIT).unwrap();
+        guard.write_page(&slug("a"), b"inside").unwrap();
+        let mwf = project.mwf_dir();
+        fs::rename(&mwf, project.root().join("moved")).unwrap();
+        if swap_to_symlink {
+            symlink(&out, &mwf).unwrap();
+        } else {
+            fs::create_dir(&mwf).unwrap();
+            fs::create_dir(mwf.join("pages")).unwrap();
+        }
+
+        assert!(changed(guard.write_page(&slug("a"), b"x")));
+        assert!(changed(guard.write_page(&slug("b"), b"x")));
+        assert!(changed(guard.append_log("x")));
+        assert!(changed(guard.write_index("x")));
+        assert!(changed(guard.rename_page(&slug("a"), &slug("c"))));
+        assert!(changed(
+            guard
+                .move_to_trash(&slug("a"), &ts("2026-11-20T10:00:00Z"))
+                .map(drop)
+        ));
+        drop(guard);
+        assert!(changed(project.read_page(&slug("a")).map(drop)));
+        assert!(changed(project.read_all_pages().map(drop)));
+        assert!(changed(project.read_log(5).map(drop)));
+        assert!(changed(project.read_index().map(drop)));
+        assert!(changed(project.config().map(drop)));
+        assert!(changed(project.lock(LOCK_WAIT).map(drop)));
+
+        assert_eq!(snapshot(&out), before);
+        assert_eq!(names(&out), ["config.toml", "index.md", "log.md", "pages"]);
+        if !swap_to_symlink {
+            assert!(names(mwf.join("pages")).is_empty());
+        }
+        assert_eq!(
+            read(project.root().join("moved/pages/a.md")),
+            "inside",
+            "the original store is left as it was"
+        );
+    }
+}
+
+/// Re-review finding 2: `pages/` or `trash/` swapped for a symlink while a guard is held.
+#[cfg(unix)]
+#[test]
+fn a_store_subdirectory_swapped_under_a_held_guard_is_refused() {
+    use std::os::unix::fs::symlink;
+    let outside = tempfile::tempdir().unwrap();
+    let out = fs::canonicalize(outside.path()).unwrap();
+    fs::write(out.join("a.md"), "outside").unwrap();
+    let wrong = |r: Result<(), StoreError>| matches!(r, Err(StoreError::WrongFileType { .. }));
+
+    let (_dir, project) = init(GitMode::Track);
+    let mut guard = project.lock(LOCK_WAIT).unwrap();
+    guard.write_page(&slug("a"), b"inside").unwrap();
+    guard
+        .move_to_trash(&slug("a"), &ts("2026-11-20T10:00:00Z"))
+        .unwrap();
+    guard.write_page(&slug("a"), b"inside").unwrap();
+    let mwf = project.mwf_dir();
+    fs::rename(mwf.join("trash"), mwf.join("trash-old")).unwrap();
+    symlink(&out, mwf.join("trash")).unwrap();
+    assert!(wrong(
+        guard
+            .move_to_trash(&slug("a"), &ts("2026-11-20T10:00:01Z"))
+            .map(drop)
+    ));
+    fs::rename(mwf.join("pages"), mwf.join("pages-old")).unwrap();
+    symlink(&out, mwf.join("pages")).unwrap();
+    assert!(wrong(guard.write_page(&slug("a"), b"x")));
+    assert!(wrong(guard.write_page(&slug("new"), b"x")));
+    assert!(wrong(guard.rename_page(&slug("a"), &slug("b"))));
+    drop(guard);
+    assert!(wrong(project.read_page(&slug("a")).map(drop)));
+    assert_eq!(names(&out), ["a.md"]);
+    assert_eq!(read(out.join("a.md")), "outside");
 }
