@@ -1,0 +1,1 @@
+mwf: context from this project's wiki (.mwf/) at session start: preference pages, the page directory and recent changes. Read a page with `mwf show <slug>`; change the wiki only through mwf commands.

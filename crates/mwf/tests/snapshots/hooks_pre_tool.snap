@@ -1,0 +1,59 @@
+---
+source: crates/mwf/tests/hooks.rs
+expression: self.transcript
+---
+$ mwf hook pre-tool --host claude
+< {"cwd":"[ROOT]","tool_name":"Write","tool_input":{"file_path":".mwf/pages/a.md","content":"x"}}
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"mwf: files under .mwf/ are written only through mwf commands, which validate pages, scan for secrets and keep index.md and log.md up to date. Use `mwf new`, `mwf write`, `mwf patch`, `mwf set`, `mwf rename`, `mwf archive` or `mwf delete` instead."}}
+
+$ mwf hook pre-tool --host claude
+< {"cwd":"[ROOT]","tool_name":"Edit","tool_input":{"file_path":"[ROOT]/.mwf/index.md"}}
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"mwf: files under .mwf/ are written only through mwf commands, which validate pages, scan for secrets and keep index.md and log.md up to date. Use `mwf new`, `mwf write`, `mwf patch`, `mwf set`, `mwf rename`, `mwf archive` or `mwf delete` instead."}}
+
+$ mwf hook pre-tool --host claude
+< {"cwd":"[ROOT]","tool_name":"Write","tool_input":{"file_path":"notes/new.md"}}
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"mwf: files under .mwf/ are written only through mwf commands, which validate pages, scan for secrets and keep index.md and log.md up to date. Use `mwf new`, `mwf write`, `mwf patch`, `mwf set`, `mwf rename`, `mwf archive` or `mwf delete` instead."}}
+
+$ mwf hook pre-tool --host claude
+< {"cwd":"[ROOT]","tool_name":"MultiEdit","tool_input":{"file_path":"src/.mwf/../main.rs"}}
+{}
+
+$ mwf hook pre-tool --host claude
+< {"cwd":"[ROOT]","tool_name":"Write","tool_input":{"file_path":"src/main.rs"}}
+{}
+
+$ mwf hook pre-tool --host claude
+< {"cwd":"[ROOT]","tool_name":"Read","tool_input":{"file_path":".mwf/index.md"}}
+{}
+
+$ mwf hook pre-tool --host claude
+< {"cwd":"[ROOT]","tool_name":"Bash","tool_input":{"command":"echo x >> .mwf/log.md"}}
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"mwf: this command looks like it writes under .mwf/, which only mwf commands may change. Use `mwf new`, `mwf write`, `mwf patch`, `mwf set`, `mwf rename`, `mwf archive` or `mwf delete` instead. If the command only reads .mwf/, run the matching read command (`mwf show`, `mwf search`, `mwf list`, `mwf log`) instead."}}
+
+$ mwf hook pre-tool --host claude
+< {"cwd":"[ROOT]","tool_name":"Bash","tool_input":{"command":"sed -i s/a/b/ .mwf/pages/a.md"}}
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"mwf: this command looks like it writes under .mwf/, which only mwf commands may change. Use `mwf new`, `mwf write`, `mwf patch`, `mwf set`, `mwf rename`, `mwf archive` or `mwf delete` instead. If the command only reads .mwf/, run the matching read command (`mwf show`, `mwf search`, `mwf list`, `mwf log`) instead."}}
+
+$ mwf hook pre-tool --host claude
+< {"cwd":"[ROOT]","tool_name":"Bash","tool_input":{"command":"cat .mwf/index.md"}}
+{}
+
+$ mwf hook pre-tool --host claude
+< {"cwd":"[ROOT]","tool_name":"Bash","tool_input":{"command":"mwf delete a"}}
+{}
+
+$ mwf hook pre-tool --host codex
+< {"cwd":"[ROOT]","tool_name":"apply_patch","tool_input":{"command":"*** Begin Patch\n*** Update File: src/main.rs\n@@\n-a\n+b\n*** Add File: .mwf/pages/b.md\n+hi\n*** End Patch\n"}}
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"mwf: files under .mwf/ are written only through mwf commands, which validate pages, scan for secrets and keep index.md and log.md up to date. Use `mwf new`, `mwf write`, `mwf patch`, `mwf set`, `mwf rename`, `mwf archive` or `mwf delete` instead."}}
+
+$ mwf hook pre-tool --host codex
+< {"cwd":"[ROOT]","tool_name":"apply_patch","tool_input":{"command":"*** Begin Patch\n*** Add File: src/b.rs\n+fn b() {}\n*** End Patch\n"}}
+{}
+
+$ mwf hook pre-tool --host codex
+< {"cwd":"[ROOT]","tool_name":"Bash","tool_input":{"command":"rm -rf .mwf"}}
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"mwf: this command looks like it writes under .mwf/, which only mwf commands may change. Use `mwf new`, `mwf write`, `mwf patch`, `mwf set`, `mwf rename`, `mwf archive` or `mwf delete` instead. If the command only reads .mwf/, run the matching read command (`mwf show`, `mwf search`, `mwf list`, `mwf log`) instead."}}
+
+$ mwf hook pre-tool --host codex
+< {"cwd":"[ROOT]","tool_name":"Bash","tool_input":{"command":"mwf show a"}}
+{}
