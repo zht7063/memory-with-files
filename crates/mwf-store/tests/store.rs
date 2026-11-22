@@ -176,19 +176,21 @@ fn init_appends_to_existing_root_files_and_keeps_their_content() {
 }
 
 #[test]
-fn init_does_not_repeat_a_line_already_present() {
+fn init_skips_the_rule_only_when_it_is_already_the_last_rule() {
     let (_dir, root) = git_repo();
-    fs::write(root.join(".gitattributes"), "/.mwf/log.md   merge=union\n").unwrap();
+    let kept = "*.png binary\n.mwf/log.md merge=union\n\n# end\n";
+    fs::write(root.join(".gitattributes"), kept).unwrap();
     Project::init(&root, GitMode::Track).unwrap();
-    assert_eq!(
-        read(root.join(".gitattributes")),
-        "/.mwf/log.md   merge=union\n"
-    );
+    assert_eq!(read(root.join(".gitattributes")), kept);
 
+    // An equivalent but different spelling is appended again rather than trusted.
     let (_dir, root) = git_repo();
     fs::write(root.join(".gitignore"), "node_modules\n.mwf\n").unwrap();
     Project::init(&root, GitMode::Local).unwrap();
-    assert_eq!(read(root.join(".gitignore")), "node_modules\n.mwf\n");
+    assert_eq!(
+        read(root.join(".gitignore")),
+        "node_modules\n.mwf\n/.mwf/\n"
+    );
 }
 
 #[test]
@@ -303,7 +305,7 @@ fn git_ignores_machine_local_files_and_unions_log_md() {
         let root = fs::canonicalize(dir.path()).unwrap();
         assert!(git(&root, &["init", "-q"]).unwrap().status.success());
         let project = Project::init(&root, mode).unwrap();
-        let guard = project.lock(LOCK_WAIT).unwrap();
+        let mut guard = project.lock(LOCK_WAIT).unwrap();
         guard.write_page(&slug("a"), b"page").unwrap();
         guard
             .move_to_trash(&slug("a"), &ts("2026-11-20T10:00:00Z"))
@@ -488,7 +490,7 @@ fn lock_is_exclusive_across_processes_and_released_on_exit() {
 fn write_and_read_pages() {
     let (_dir, project) = init(GitMode::Track);
     assert_eq!(project.read_page(&slug("a")).unwrap(), None);
-    let guard = project.lock(LOCK_WAIT).unwrap();
+    let mut guard = project.lock(LOCK_WAIT).unwrap();
     guard.write_page(&slug("b-2"), b"bee").unwrap();
     guard.write_page(&slug("a"), b"one").unwrap();
     guard.write_page(&slug("a"), b"two").unwrap();
@@ -526,7 +528,7 @@ fn read_all_pages_lists_md_files_only_and_keeps_invalid_names_for_lint() {
     fs::write(pages.join("Bad_Name.md"), "2").unwrap();
     fs::write(pages.join("notes.txt"), "3").unwrap();
     fs::write(pages.join(".ok.md.42.0.tmp"), "4").unwrap();
-    fs::create_dir(pages.join("dir.md")).unwrap();
+    fs::create_dir(pages.join("dir")).unwrap();
     let stems: Vec<String> = project
         .read_all_pages()
         .unwrap()
@@ -543,7 +545,7 @@ fn index_is_replaced_whole() {
         project.read_index().unwrap().unwrap(),
         render_index(&[]).as_bytes()
     );
-    let guard = project.lock(LOCK_WAIT).unwrap();
+    let mut guard = project.lock(LOCK_WAIT).unwrap();
     guard.write_index("# long index\n- a\n- b\n").unwrap();
     guard.write_index("# short\n").unwrap();
     drop(guard);
@@ -555,7 +557,7 @@ fn index_is_replaced_whole() {
 #[test]
 fn move_to_trash_uses_slug_and_timestamp() {
     let (_dir, project) = init(GitMode::Track);
-    let guard = project.lock(LOCK_WAIT).unwrap();
+    let mut guard = project.lock(LOCK_WAIT).unwrap();
     guard.write_page(&slug("old-idea"), b"content").unwrap();
     let path = guard
         .move_to_trash(&slug("old-idea"), &ts("2026-11-20T10:00:00Z"))
@@ -573,7 +575,7 @@ fn move_to_trash_uses_slug_and_timestamp() {
 #[test]
 fn move_to_trash_never_overwrites_an_earlier_delete() {
     let (_dir, project) = init(GitMode::Track);
-    let guard = project.lock(LOCK_WAIT).unwrap();
+    let mut guard = project.lock(LOCK_WAIT).unwrap();
     let t = ts("2026-11-20T10:00:00Z");
     for body in ["first", "second", "third"] {
         guard.write_page(&slug("a"), body.as_bytes()).unwrap();
@@ -595,7 +597,7 @@ fn move_to_trash_never_overwrites_an_earlier_delete() {
 #[test]
 fn move_to_trash_of_a_missing_page_is_not_found() {
     let (_dir, project) = init(GitMode::Track);
-    let guard = project.lock(LOCK_WAIT).unwrap();
+    let mut guard = project.lock(LOCK_WAIT).unwrap();
     match guard
         .move_to_trash(&slug("nope"), &ts("2026-11-20T10:00:00Z"))
         .unwrap_err()
@@ -608,7 +610,7 @@ fn move_to_trash_of_a_missing_page_is_not_found() {
 #[test]
 fn rename_page_moves_bytes_and_refuses_to_overwrite() {
     let (_dir, project) = init(GitMode::Track);
-    let guard = project.lock(LOCK_WAIT).unwrap();
+    let mut guard = project.lock(LOCK_WAIT).unwrap();
     guard.write_page(&slug("a"), b"A").unwrap();
     guard.write_page(&slug("b"), b"B").unwrap();
     guard.rename_page(&slug("a"), &slug("c")).unwrap();
@@ -633,7 +635,7 @@ fn rename_page_moves_bytes_and_refuses_to_overwrite() {
 fn append_log_and_read_the_last_lines() {
     let (_dir, project) = init(GitMode::Track);
     assert_eq!(project.read_log(10).unwrap(), Vec::<String>::new());
-    let guard = project.lock(LOCK_WAIT).unwrap();
+    let mut guard = project.lock(LOCK_WAIT).unwrap();
     for i in 1..=5 {
         guard
             .append_log(&format!("2026-11-20T10:00:0{i}Z new p{i} \"P{i}\""))
@@ -684,7 +686,7 @@ fn append_log_repairs_a_missing_final_newline_and_a_missing_file() {
 #[test]
 fn writes_leave_no_temp_files() {
     let (_dir, project) = init(GitMode::Track);
-    let guard = project.lock(LOCK_WAIT).unwrap();
+    let mut guard = project.lock(LOCK_WAIT).unwrap();
     guard.write_page(&slug("a"), b"x").unwrap();
     guard.write_index("i").unwrap();
     guard.append_log("l").unwrap();
@@ -702,4 +704,235 @@ fn writes_leave_no_temp_files() {
         ]
     );
     assert_eq!(names(mwf.join("pages")), ["a.md"]);
+}
+
+// --- review regressions (PR #55) ---
+
+fn git_available() -> bool {
+    Command::new("git").arg("--version").output().is_ok()
+}
+
+fn git_out(root: &Path, args: &[&str]) -> std::process::Output {
+    Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .output()
+        .unwrap()
+}
+
+fn real_git_repo() -> (TempDir, PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(dir.path()).unwrap();
+    assert!(git_out(&root, &["init", "-q"]).status.success());
+    (dir, root)
+}
+
+/// Finding 1: the rule init relies on must be effective in real Git, whatever came before it.
+#[test]
+fn git_rule_is_effective_after_misleading_or_overriding_lines() {
+    if !git_available() {
+        eprintln!("git not installed; skipping");
+        return;
+    }
+    for before in [
+        "  .mwf  \n",
+        ".mwf/\n!.mwf/\n",
+        "/.mwf/\n!/.mwf/\n",
+        "!/.mwf/",
+    ] {
+        let (_dir, root) = real_git_repo();
+        fs::write(root.join(".gitignore"), before).unwrap();
+        Project::init(&root, GitMode::Local).unwrap();
+        let status = git_out(&root, &["status", "--porcelain", "--untracked-files=all"]);
+        let status = String::from_utf8_lossy(&status.stdout);
+        assert!(!status.contains(".mwf/"), "{before:?}: {status}");
+        assert!(
+            git_out(&root, &["check-ignore", "-q", ".mwf/config.toml"])
+                .status
+                .success(),
+            "{before:?}"
+        );
+    }
+    for before in [
+        "*.md -merge\n",
+        ".mwf/log.md merge=union\n*.md -merge\n",
+        ".mwf/log.md merge=binary",
+    ] {
+        let (_dir, root) = real_git_repo();
+        fs::write(root.join(".gitattributes"), before).unwrap();
+        Project::init(&root, GitMode::Track).unwrap();
+        let out = git_out(&root, &["check-attr", "merge", "--", ".mwf/log.md"]);
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            ".mwf/log.md: merge: union\n",
+            "{before:?}"
+        );
+    }
+}
+
+/// Finding 2: a failed init leaves no project behind and can be retried.
+#[test]
+fn failed_init_publishes_nothing_and_can_be_retried() {
+    let (_dir, root) = git_repo();
+    // A directory where the root .gitignore belongs makes the Git rule step fail.
+    fs::create_dir(root.join(".gitignore")).unwrap();
+    assert!(Project::init(&root, GitMode::Local).is_err());
+    assert_eq!(names(&root), [".git", ".gitignore"]);
+    assert!(matches!(
+        Project::find(&root).unwrap_err(),
+        StoreError::NotInitialized { .. }
+    ));
+
+    fs::remove_dir(root.join(".gitignore")).unwrap();
+    let project = Project::init(&root, GitMode::Local).unwrap();
+    assert_eq!(read(root.join(".gitignore")), "/.mwf/\n");
+    assert_eq!(project.config().unwrap(), Config::default());
+}
+
+/// Finding 2: racing inits publish one project, and `find` never sees a partial one.
+#[test]
+fn concurrent_init_and_find_see_only_complete_projects() {
+    for _ in 0..20 {
+        let (_dir, root) = git_repo();
+        let stop = std::sync::atomic::AtomicBool::new(false);
+        let results = std::thread::scope(|s| {
+            let watcher = s.spawn(|| {
+                while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                    if let Ok(p) = Project::find(&root) {
+                        let mwf = p.mwf_dir();
+                        for f in [".gitignore", "config.toml", "index.md", "log.md", "pages"] {
+                            assert!(mwf.join(f).exists(), "find saw .mwf without {f}");
+                        }
+                        assert_eq!(
+                            read(root.join(".gitattributes")),
+                            ".mwf/log.md merge=union\n"
+                        );
+                    }
+                }
+            });
+            let inits: Vec<_> = (0..4)
+                .map(|_| s.spawn(|| Project::init(&root, GitMode::Track)))
+                .collect();
+            let results: Vec<_> = inits.into_iter().map(|h| h.join().unwrap()).collect();
+            stop.store(true, std::sync::atomic::Ordering::Relaxed);
+            watcher.join().unwrap();
+            results
+        });
+        let ok = results.iter().filter(|r| r.is_ok()).count();
+        assert_eq!(ok, 1, "{results:?}");
+        for r in &results {
+            if let Err(e) = r {
+                assert!(matches!(e, StoreError::AlreadyInitialized { .. }), "{e:?}");
+            }
+        }
+        // No staging directories are left behind.
+        assert_eq!(names(&root), [".git", ".gitattributes", ".mwf"]);
+    }
+}
+
+/// Finding 2: init never replaces a project another process is already writing to.
+#[test]
+fn init_never_replaces_an_existing_project() {
+    let (_dir, project) = init(GitMode::Track);
+    let mut guard = project.lock(LOCK_WAIT).unwrap();
+    guard.write_page(&slug("a"), b"kept").unwrap();
+    guard.append_log("kept line").unwrap();
+    assert!(matches!(
+        Project::init(project.root(), GitMode::Track).unwrap_err(),
+        StoreError::AlreadyInitialized { .. }
+    ));
+    guard.append_log("after").unwrap();
+    drop(guard);
+    assert_eq!(project.read_page(&slug("a")).unwrap().unwrap(), b"kept");
+    assert_eq!(project.read_log(5).unwrap(), ["kept line", "after"]);
+}
+
+/// Finding 3: writes through one guard are serialized (`&mut self`; the compile-fail doctest on
+/// `WriteGuard` checks a shared reference cannot write), so none is lost.
+#[test]
+fn many_appends_through_one_guard_all_land() {
+    let (_dir, project) = init(GitMode::Track);
+    let mut guard = project.lock(LOCK_WAIT).unwrap();
+    for i in 0..10 {
+        guard.append_log(&format!("line {i}")).unwrap();
+    }
+    drop(guard);
+    assert_eq!(project.read_log(100).unwrap().len(), 10);
+}
+
+/// Finding 4: symlinked store directories and page files are refused, and nothing outside the
+/// project is read or changed.
+#[cfg(unix)]
+#[test]
+fn symlinks_inside_the_store_are_refused() {
+    use std::os::unix::fs::symlink;
+    let wrong = |r: Result<(), StoreError>| matches!(r, Err(StoreError::WrongFileType { .. }));
+    let outside = tempfile::tempdir().unwrap();
+    let out = fs::canonicalize(outside.path()).unwrap();
+    fs::write(out.join("secret.md"), "outside").unwrap();
+
+    // .mwf itself.
+    let (_dir, root) = git_repo();
+    symlink(&out, root.join(".mwf")).unwrap();
+    assert!(wrong(Project::find(&root).map(drop)));
+    assert!(matches!(
+        Project::init(&root, GitMode::Track).unwrap_err(),
+        StoreError::AlreadyInitialized { .. }
+    ));
+
+    // pages/.
+    let (_dir, project) = init(GitMode::Track);
+    let pages = project.mwf_dir().join("pages");
+    fs::remove_dir(&pages).unwrap();
+    symlink(&out, &pages).unwrap();
+    assert!(wrong(project.read_all_pages().map(drop)));
+    assert!(wrong(project.read_page(&slug("secret")).map(drop)));
+    let mut guard = project.lock(LOCK_WAIT).unwrap();
+    assert!(wrong(guard.write_page(&slug("x"), b"x")));
+    assert!(wrong(
+        guard
+            .move_to_trash(&slug("secret"), &ts("2026-11-20T10:00:00Z"))
+            .map(drop)
+    ));
+    assert!(wrong(guard.rename_page(&slug("secret"), &slug("y"))));
+    drop(guard);
+
+    // trash/.
+    let (_dir, project) = init(GitMode::Track);
+    symlink(&out, project.mwf_dir().join("trash")).unwrap();
+    let mut guard = project.lock(LOCK_WAIT).unwrap();
+    guard.write_page(&slug("a"), b"a").unwrap();
+    assert!(wrong(
+        guard
+            .move_to_trash(&slug("a"), &ts("2026-11-20T10:00:00Z"))
+            .map(drop)
+    ));
+    assert_eq!(project.read_page(&slug("a")).unwrap().unwrap(), b"a");
+    drop(guard);
+
+    // A page file, log.md, index.md, config.toml and .lock.
+    let (_dir, project) = init(GitMode::Track);
+    let mwf = project.mwf_dir();
+    symlink(out.join("secret.md"), mwf.join("pages/s.md")).unwrap();
+    assert!(wrong(project.read_page(&slug("s")).map(drop)));
+    assert!(wrong(project.read_all_pages().map(drop)));
+    for f in ["log.md", "index.md", "config.toml"] {
+        fs::remove_file(mwf.join(f)).unwrap();
+        symlink(out.join("secret.md"), mwf.join(f)).unwrap();
+    }
+    assert!(wrong(project.read_log(5).map(drop)));
+    assert!(wrong(project.read_index().map(drop)));
+    assert!(wrong(project.config().map(drop)));
+    let mut guard = project.lock(LOCK_WAIT).unwrap();
+    assert!(wrong(guard.write_page(&slug("s"), b"x")));
+    assert!(wrong(guard.append_log("x")));
+    assert!(wrong(guard.write_index("x")));
+    drop(guard);
+    fs::remove_file(mwf.join(".lock")).unwrap();
+    symlink(out.join("secret.md"), mwf.join(".lock")).unwrap();
+    assert!(wrong(project.lock(LOCK_WAIT).map(drop)));
+
+    assert_eq!(names(&out), ["secret.md"]);
+    assert_eq!(read(out.join("secret.md")), "outside");
 }

@@ -10,7 +10,9 @@ use mwf_domain::{Slug, render_index};
 
 use crate::config::{Config, DEFAULT_CONFIG_TOML};
 use crate::error::{StoreError, io_at};
-use crate::fsx::{ensure_line, read_optional, write_atomic};
+use crate::fsx::{
+    Kind, create_unique, ensure_last_rule, exists_as, read_file, sync_dir, write_atomic,
+};
 use crate::guard::WriteGuard;
 
 pub(crate) const MWF_DIR: &str = ".mwf";
@@ -55,27 +57,48 @@ pub struct Project {
 
 impl Project {
     /// Finds the nearest of `cwd` and its ancestors that holds a `.mwf/` directory (ADR 0019).
-    /// The returned root is canonical (symlinks resolved).
+    /// The returned root is canonical (symlinks resolved). A `.mwf` that is a regular file is
+    /// passed over; one that is a symlink is `WrongFileType` (ADR 0048).
     pub fn find(cwd: &Path) -> Result<Project, StoreError> {
         let start = fs::canonicalize(cwd).map_err(io_at(cwd))?;
-        start
-            .ancestors()
-            .find(|dir| dir.join(MWF_DIR).is_dir())
-            .map(|root| Project {
-                root: root.to_path_buf(),
-            })
-            .ok_or(StoreError::NotInitialized { start })
+        for dir in start.ancestors() {
+            let mwf = dir.join(MWF_DIR);
+            match fs::symlink_metadata(&mwf) {
+                Ok(meta) if meta.is_dir() => {
+                    return Ok(Project {
+                        root: dir.to_path_buf(),
+                    });
+                }
+                Ok(meta) if meta.file_type().is_symlink() => {
+                    return Err(StoreError::WrongFileType {
+                        path: mwf,
+                        expected: "directory",
+                    });
+                }
+                Ok(_) => {}
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+                    ) => {}
+                Err(e) => return Err(io_at(&mwf)(e)),
+            }
+        }
+        Err(StoreError::NotInitialized { start })
     }
 
     /// Creates `.mwf/` in `root`, which must be a git repository root: it holds a `.git`
     /// directory, or a `.git` file starting with `gitdir:` (worktree or submodule). No `git`
     /// binary is needed.
     ///
-    /// Writes `.mwf/.gitignore`, `config.toml` with the defaults, `index.md` with no pages, an
-    /// empty `log.md` and `pages/`; then in [`GitMode::Track`] adds `.mwf/log.md merge=union` to
-    /// the root `.gitattributes` (ADR 0029), in [`GitMode::Local`] adds `/.mwf/` to the root
-    /// `.gitignore`. A line already present is not added again. When `.mwf` already exists,
-    /// returns `AlreadyInitialized` and changes nothing (ADR 0048).
+    /// Builds the project in a staging directory `.mwf.<pid>.<n>.tmp`, which [`Project::find`]
+    /// does not see: `.gitignore`, `config.toml` with the defaults, `index.md`
+    /// with no pages, an empty `log.md` and `pages/`. Then it makes the Git rule the last rule of
+    /// the root `.gitattributes` ([`GitMode::Track`], `.mwf/log.md merge=union`, ADR 0029) or
+    /// `.gitignore` ([`GitMode::Local`], `/.mwf/`), and finally renames the staging directory to
+    /// `.mwf`. So `find` sees either no project or a complete one with its Git rule in place,
+    /// and a failure leaves no `.mwf` behind, so `init` can be retried. When `.mwf` already
+    /// exists in any form, returns `AlreadyInitialized` and changes nothing (ADR 0048).
     pub fn init(root: &Path, mode: GitMode) -> Result<Project, StoreError> {
         let root = fs::canonicalize(root).map_err(io_at(root))?;
         if !is_git_root(&root)? {
@@ -89,35 +112,26 @@ impl Project {
                 git_root,
             });
         }
-        let project = Project { root };
-        let mwf = project.mwf_dir();
-        // create_dir, not create_dir_all: it fails when `.mwf` exists, even from a racing init.
-        match fs::create_dir(&mwf) {
-            Ok(()) => {}
-            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
-                return Err(StoreError::AlreadyInitialized { path: mwf });
-            }
+        let mwf = root.join(MWF_DIR);
+        match fs::symlink_metadata(&mwf) {
+            Ok(_) => return Err(StoreError::AlreadyInitialized { path: mwf }),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
             Err(e) => return Err(io_at(&mwf)(e)),
         }
-        write_atomic(&mwf.join(".gitignore"), MWF_GITIGNORE.as_bytes())?;
-        write_atomic(&mwf.join(CONFIG_FILE), DEFAULT_CONFIG_TOML.as_bytes())?;
-        write_atomic(&mwf.join(INDEX_FILE), render_index(&[]).as_bytes())?;
-        write_atomic(&mwf.join(LOG_FILE), b"")?;
-        let pages = mwf.join(PAGES_DIR);
-        fs::create_dir(&pages).map_err(io_at(&pages))?;
-        match mode {
-            GitMode::Track => ensure_line(
-                &project.root.join(".gitattributes"),
-                GITATTRIBUTES_LINE,
-                &[GITATTRIBUTES_LINE, "/.mwf/log.md merge=union"],
-            )?,
-            GitMode::Local => ensure_line(
-                &project.root.join(".gitignore"),
-                GITIGNORE_LINE,
-                &[GITIGNORE_LINE, ".mwf/", ".mwf", "/.mwf"],
-            )?,
+        let (staging, ()) = create_unique(&root, "mwf", |p| fs::create_dir(p))?;
+        let result = stage(&staging)
+            .and_then(|()| match mode {
+                GitMode::Track => {
+                    ensure_last_rule(&root.join(".gitattributes"), GITATTRIBUTES_LINE)
+                }
+                GitMode::Local => ensure_last_rule(&root.join(".gitignore"), GITIGNORE_LINE),
+            })
+            .and_then(|()| publish(&staging, &mwf, &root));
+        if result.is_err() {
+            // After a successful rename the staging path no longer exists and this does nothing.
+            let _ = fs::remove_dir_all(&staging);
         }
-        Ok(project)
+        result.map(|()| Project { root })
     }
 
     /// The directory that holds `.mwf/`.
@@ -138,10 +152,16 @@ impl Project {
         self.path(PAGES_DIR).join(format!("{slug}.md"))
     }
 
+    /// `.mwf/<name>/` when it exists as a real directory; `WrongFileType` for a symlink or file.
+    pub(crate) fn store_dir(&self, name: &str) -> Result<Option<PathBuf>, StoreError> {
+        let path = self.path(name);
+        Ok(exists_as(&path, Kind::Dir)?.then_some(path))
+    }
+
     /// Reads `config.toml`; a missing file means all defaults (ADR 0039).
     pub fn config(&self) -> Result<Config, StoreError> {
         let path = self.path(CONFIG_FILE);
-        match read_optional(&path)? {
+        match read_file(&path)? {
             None => Ok(Config::default()),
             Some(bytes) => match String::from_utf8(bytes) {
                 Ok(text) => Config::parse(&text, &path),
@@ -153,35 +173,34 @@ impl Project {
         }
     }
 
-    /// The page file's bytes, or `None` when it does not exist.
+    /// The page file's bytes, or `None` when it does not exist. A page path that is a symlink
+    /// or not a regular file is `WrongFileType`.
     pub fn read_page(&self, slug: &Slug) -> Result<Option<Vec<u8>>, StoreError> {
-        read_optional(&self.page_path(slug))
+        if self.store_dir(PAGES_DIR)?.is_none() {
+            return Ok(None);
+        }
+        read_file(&self.page_path(slug))
     }
 
-    /// Every `pages/*.md` file as (file name without `.md`, bytes), sorted by name. Names are not
-    /// checked as slugs, so lint can report invalid ones; other files, directories and temp
-    /// files are skipped. A missing `pages/` (git keeps no empty directories) means no pages.
-    /// Takes no lock: atomic writes make every file read whole (ADR 0033).
+    /// Every `pages/*.md` entry as (file name without `.md`, bytes), sorted by name. Names are
+    /// not checked as slugs, so lint can report invalid ones; entries not ending in `.md`
+    /// (including temp files) are skipped, and an `.md` entry that is a symlink, directory or
+    /// special file is `WrongFileType`, as in [`Project::read_page`]. A missing `pages/` (git
+    /// keeps no empty directories) means no pages. Takes no lock: atomic writes make every file
+    /// read whole (ADR 0033).
     pub fn read_all_pages(&self) -> Result<Vec<(String, Vec<u8>)>, StoreError> {
-        let dir = self.path(PAGES_DIR);
-        let entries = match fs::read_dir(&dir) {
-            Ok(entries) => entries,
-            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(e) => return Err(io_at(&dir)(e)),
+        let Some(dir) = self.store_dir(PAGES_DIR)? else {
+            return Ok(Vec::new());
         };
         let mut pages = Vec::new();
-        for entry in entries {
+        for entry in fs::read_dir(&dir).map_err(io_at(&dir))? {
             let entry = entry.map_err(io_at(&dir))?;
-            let path = entry.path();
             let name = entry.file_name().to_string_lossy().into_owned();
             let Some(stem) = name.strip_suffix(".md") else {
                 continue;
             };
-            if !entry.file_type().map_err(io_at(&path))?.is_file() {
-                continue;
-            }
             // A page deleted between listing and reading is simply not there.
-            if let Some(bytes) = read_optional(&path)? {
+            if let Some(bytes) = read_file(&entry.path())? {
                 pages.push((stem.to_owned(), bytes));
             }
         }
@@ -191,12 +210,12 @@ impl Project {
 
     /// `index.md`, or `None` when it does not exist.
     pub fn read_index(&self) -> Result<Option<Vec<u8>>, StoreError> {
-        read_optional(&self.path(INDEX_FILE))
+        read_file(&self.path(INDEX_FILE))
     }
 
     /// The last `n` non-empty lines of `log.md`, oldest first; a missing file has none.
     pub fn read_log(&self, n: usize) -> Result<Vec<String>, StoreError> {
-        let bytes = read_optional(&self.path(LOG_FILE))?.unwrap_or_default();
+        let bytes = read_file(&self.path(LOG_FILE))?.unwrap_or_default();
         let text = String::from_utf8_lossy(&bytes);
         let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
         let skip = lines.len().saturating_sub(n);
@@ -208,6 +227,7 @@ impl Project {
     /// lock is released when the guard drops or the process exits.
     pub fn lock(&self, timeout: Duration) -> Result<WriteGuard<'_>, StoreError> {
         let path = self.path(LOCK_FILE);
+        exists_as(&path, Kind::File)?;
         let file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -230,6 +250,33 @@ impl Project {
             }
         }
     }
+}
+
+/// Fills a fresh staging directory with the files of a new `.mwf/`, all synced to disk.
+fn stage(staging: &Path) -> Result<(), StoreError> {
+    write_atomic(&staging.join(".gitignore"), MWF_GITIGNORE.as_bytes())?;
+    write_atomic(&staging.join(CONFIG_FILE), DEFAULT_CONFIG_TOML.as_bytes())?;
+    write_atomic(&staging.join(INDEX_FILE), render_index(&[]).as_bytes())?;
+    write_atomic(&staging.join(LOG_FILE), b"")?;
+    let pages = staging.join(PAGES_DIR);
+    fs::create_dir(&pages).map_err(io_at(&pages))?;
+    sync_dir(staging)
+}
+
+/// Renames the staging directory to `.mwf`. rename(2) never replaces a file, a symlink or a
+/// non-empty directory, so a project published meanwhile by another `init` or written to by
+/// another process stays as it is; only an empty `.mwf/` created in the same instant can be
+/// replaced, and it holds nothing.
+fn publish(staging: &Path, mwf: &Path, root: &Path) -> Result<(), StoreError> {
+    if let Err(e) = fs::rename(staging, mwf) {
+        if fs::symlink_metadata(mwf).is_ok() {
+            return Err(StoreError::AlreadyInitialized {
+                path: mwf.to_path_buf(),
+            });
+        }
+        return Err(io_at(mwf)(e));
+    }
+    sync_dir(root)
 }
 
 /// Whether `dir/.git` is a directory, or a file starting with `gitdir:` (linked worktree,

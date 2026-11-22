@@ -25,13 +25,13 @@ impl Project {
 }
 pub const LOCK_WAIT: Duration = Duration::from_secs(2);              // 0033
 
-impl WriteGuard<'_> {                          // 只有持锁才能写
+impl WriteGuard<'_> {                          // 只有持锁才能写；写方法取 &mut self
     pub fn project(&self) -> &Project;
-    pub fn write_page(&self, slug: &Slug, bytes: &[u8]) -> Result<(), StoreError>;    // 临时文件+fsync+rename
-    pub fn move_to_trash(&self, slug: &Slug, ts: &Timestamp) -> Result<PathBuf, StoreError>;
-    pub fn rename_page(&self, from: &Slug, to: &Slug) -> Result<(), StoreError>;
-    pub fn write_index(&self, text: &str) -> Result<(), StoreError>;
-    pub fn append_log(&self, line: &str) -> Result<(), StoreError>;
+    pub fn write_page(&mut self, slug: &Slug, bytes: &[u8]) -> Result<(), StoreError>;    // 临时文件+fsync+rename
+    pub fn move_to_trash(&mut self, slug: &Slug, ts: &Timestamp) -> Result<PathBuf, StoreError>;
+    pub fn rename_page(&mut self, from: &Slug, to: &Slug) -> Result<(), StoreError>;
+    pub fn write_index(&mut self, text: &str) -> Result<(), StoreError>;
+    pub fn append_log(&mut self, line: &str) -> Result<(), StoreError>;
 }
 
 pub struct Config { pub hooks: HooksConfig }
@@ -43,23 +43,24 @@ pub enum GitMode { Track, Local }
 
 pub enum StoreError { NotInitialized { start }, NotGitRoot { path, git_root }, AlreadyInitialized { path },
                       LockTimeout { waited }, Config { path, message }, PageNotFound { slug },
-                      PageExists { slug }, Io { path, source } }
+                      PageExists { slug }, WrongFileType { path, expected }, Io { path, source } }
 ```
 
 ## 实现说明
 
 - **布局**：`.mwf/` 下为 `.gitignore`、`config.toml`、`index.md`、`log.md`、`pages/<slug>.md`、`trash/`、`.lock`（0017、0048）。`pages/` 缺失视为没有页面，写入时自动创建（git 不保存空目录）。
-- **`find`**：先 canonicalize `cwd`（解析 `..` 与符号链接），再取最近的含 `.mwf/` **目录**的祖先；名为 `.mwf` 的文件不算。找不到为 `NotInitialized`。
-- **`init`**：见 [0048](../decisions/0048-init-layout-and-ignore-rules.md)。参数由草案的 `git_root` 改名为 `root`：调用方传当前目录，由 store 判断它是不是 git 根（`.git` 目录或 `gitdir:` 文件，不调用 `git`）；不是时 `NotGitRoot`，在仓库内部时带上仓库根。`.mwf` 已存在时 `AlreadyInitialized`，不改动任何文件。
-- **原子写**：同目录临时文件 `.<文件名>.<pid>.<序号>.tmp` → 写入 → fsync → rename → fsync 目录；沿用被替换文件的权限；失败时删除临时文件。`log.md`、根 `.gitignore` / `.gitattributes` 的追加也是读出、追加、原子替换。
-- **锁**：`.mwf/.lock` 上的 `File::try_lock`，每 10 ms 重试，超过 `timeout` 返回 `LockTimeout`（写命令用 `LOCK_WAIT` = 2 秒）。锁文件不删除；锁随 `WriteGuard` drop 或进程退出释放。读方法不需要锁，持锁期间也可通过 `WriteGuard::project` 读取。
-- **`read_all_pages`**：与草案不同，返回文件名（去掉 `.md`）而不是 `Slug`，按名字排序，不校验 slug，使 lint 能报告 `invalid_slug`（`validate` 接收 `file_stem`）。只列 `pages/` 下的 `*.md` 普通文件，跳过目录、其他文件与临时文件。
+- **`find`**：先 canonicalize `cwd`（解析 `..` 与符号链接），再取最近的含 `.mwf/` **目录**的祖先；名为 `.mwf` 的普通文件跳过，`.mwf` 符号链接为 `WrongFileType`。找不到为 `NotInitialized`。
+- **`init`**：见 [0048](../decisions/0048-init-layout-and-ignore-rules.md)。参数由草案的 `git_root` 改名为 `root`：调用方传当前目录，由 store 判断它是不是 git 根（`.git` 目录或 `gitdir:` 文件，不调用 `git`）；不是时 `NotGitRoot`，在仓库内部时带上仓库根。`.mwf` 已存在时 `AlreadyInitialized`，不改动任何文件。先在暂存目录 `.mwf.<pid>.<序号>.tmp` 中建好全部文件、再写根目录的 Git 规则（只在它不是最后一条规则时追加），最后 rename 发布：`find` 只会看到完整的项目，失败时不留下 `.mwf`、可以重试，并发的 `init` 只有一个成功。
+- **原子写**：同目录临时文件 `.<文件名>.<pid>.<序号>.tmp`（`create_new`，名字被占用时换序号重试，不删别人的文件）→ 写入 → fsync → rename → fsync 目录；沿用被替换文件的权限；rename 前失败时删除本次创建的临时文件、目标不变；rename 后目录 fsync 失败时返回错误，新内容已可见但持久性不确定。新建的 `pages/`、`trash/` 会 fsync `.mwf/`。`log.md`、根 `.gitignore` / `.gitattributes` 的追加也是读出、追加、原子替换。
+- **文件类型**：`.mwf`、`pages/`、`trash/` 须是真实目录，页面、`config.toml`、`index.md`、`log.md`、`.lock` 须是普通文件，检查不跟随符号链接；否则 `WrongFileType`，读写都不进行（0048）。
+- **锁**：`.mwf/.lock` 上的 `File::try_lock`，每 10 ms 重试，超过 `timeout` 返回 `LockTimeout`（写命令用 `LOCK_WAIT` = 2 秒）。锁文件不删除；锁随 `WriteGuard` drop 或进程退出释放。读方法不需要锁，持锁期间也可通过 `WriteGuard::project` 读取。写方法取 `&mut self`，同一 guard 上的写由借用检查串行化（`WriteGuard` 文档中有 compile_fail 示例）。
+- **`read_all_pages`**：与草案不同，返回文件名（去掉 `.md`）而不是 `Slug`，按名字排序，不校验 slug，使 lint 能报告 `invalid_slug`（`validate` 接收 `file_stem`）。只读 `pages/` 下以 `.md` 结尾的条目，跳过其他名字（含临时文件）；以 `.md` 结尾却不是普通文件（目录、符号链接）为 `WrongFileType`。
 - **`read_index`**：草案中没有；`mwf index`（不带 `--rebuild`）、SessionStart 与 lint 的 `index.md` 一致性检查需要读它。
 - **`read_log(n)`**：最后 `n` 个非空行，旧的在前；文件不存在为空。非 UTF-8 字节按 lossy 解码。
 - **`append_log(line)`**：`line` 是 `render_log_line` 的结果（单行、不含换行）；原文件缺末尾换行（union 合并可能留下）时先补上；`log.md` 不存在时创建。
 - **`move_to_trash`**：`trash/<slug>.<ts>.md`，返回新路径；重名时改用 `<slug>.<ts>.1.md`、`.2.md`……；页面不存在为 `PageNotFound`。
 - **`rename_page`**：只移动文件、不改内容；目标已存在为 `PageExists`，不覆盖。
-- **配置**：缺文件、缺表、缺键都取默认值（0039）；未知键、类型错误、非 UTF-8 为 `Config` 错误，`message` 只含 TOML 解析器给出的原因，不含原文片段。`mwf-app` 把它映射为哪个错误码在 P2 的 app 中决定。
+- **配置**：缺文件、缺表、缺键都取默认值（0039）；未知键、类型错误、顶层键不是表（`hooks = []`、`hooks = [4, 5, false, 9]`）、非 UTF-8 为 `Config` 错误，`message` 只含 TOML 解析器给出的原因，不含原文片段。`mwf-app` 把它映射为哪个错误码在 P2 的 app 中决定。
 - **错误**：`StoreError` 用 `thiserror`；`Io` 带出错的路径。各变体对应的 CLI 错误码：`NotInitialized` → `NOT_INITIALIZED`、`NotGitRoot` → `NOT_GIT_ROOT`、`AlreadyInitialized` → `ALREADY_INITIALIZED`、`LockTimeout` → `LOCK_TIMEOUT`、`PageNotFound` → `NOT_FOUND`、`PageExists` → `ALREADY_EXISTS`。
 - **会话状态**（`.mwf/.state/`，0034）留到 P3 与 hooks 一起实现；`.mwf/.gitignore` 已忽略 `.state/`。
 
@@ -67,7 +68,7 @@ pub enum StoreError { NotInitialized { start }, NotGitRoot { path, git_root }, A
 
 `mwf-domain`（`Slug`、`Timestamp`、`render_index`）、`toml`（只开 `parse`、`serde`、`std`）、`serde`（derive）、`serde_json`（会话状态，P3 引入，[0046](../decisions/0046-pre-p0-doc-fixes.md)）、`thiserror`。开发依赖：`tempfile`。
 
-`serde` 固定在 1.0.228：1.0.229 的 `serde_derive` 依赖 `syn` 3，而 `divan`、`thiserror-impl` 依赖 `syn` 2，`deny.toml` 禁止重复主版本。
+`serde` 在 `Cargo.toml` 中精确固定为 `=1.0.228`：1.0.229 的 `serde_derive` 依赖 `syn` 3，而 `divan`、`thiserror-impl` 依赖 `syn` 2，`deny.toml` 禁止重复主版本。
 
 ## 禁止
 

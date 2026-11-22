@@ -33,6 +33,13 @@ pub enum StoreError {
     /// `ALREADY_EXISTS`: the target page file of a rename exists.
     #[error("page {slug} already exists")]
     PageExists { slug: Slug },
+    /// A path mwf reads or writes is a symlink, a special file, or a file where a directory
+    /// belongs (or the reverse). mwf never follows symlinks there (ADR 0048).
+    #[error("{} is not a {expected}; mwf does not follow symlinks or use special files here", path.display())]
+    WrongFileType {
+        path: PathBuf,
+        expected: &'static str,
+    },
     /// Any other file system failure, with the path it happened on.
     #[error("{}: {source}", path.display())]
     Io { path: PathBuf, source: io::Error },

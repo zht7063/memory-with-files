@@ -57,10 +57,22 @@ session_start_max_chars = 8000
 impl Config {
     /// Parses `config.toml` text; `path` only labels the error.
     pub fn parse(text: &str, path: &Path) -> Result<Config, StoreError> {
-        toml::from_str(text).map_err(|e| StoreError::Config {
+        let err = |message: String| StoreError::Config {
             path: path.to_path_buf(),
-            message: e.message().to_owned(),
-        })
+            message,
+        };
+        let table: toml::Table = toml::from_str(text).map_err(|e| err(e.message().to_owned()))?;
+        // serde also builds a struct from an array, positionally (`hooks = [4, 5, false, 9]`)
+        // or as all defaults (`hooks = []`); every top-level key is a section and must be a
+        // table (ADR 0048).
+        if let Some((key, _)) = table.iter().find(|(_, value)| !value.is_table()) {
+            return Err(err(format!(
+                "top-level `{key}` must be a section, written as [{key}]"
+            )));
+        }
+        toml::Value::Table(table)
+            .try_into()
+            .map_err(|e: toml::de::Error| err(e.message().to_owned()))
     }
 }
 
@@ -125,6 +137,20 @@ mod tests {
         assert!(parse("[hooks]\nstop_reminder = 1\n").is_err());
         assert!(parse("hooks = 3\n").is_err());
         assert!(parse("[hooks\n").is_err());
+    }
+
+    #[test]
+    fn sections_must_be_tables() {
+        for text in [
+            "hooks = []\n",
+            "hooks = [4, 5, false, 9]\n",
+            "[[hooks]]\nrecall_top_k = 5\n",
+        ] {
+            let err = parse(text).unwrap_err();
+            assert!(err.to_string().contains("hooks"), "{text}: {err}");
+        }
+        let inline = parse("hooks = { recall_top_k = 5 }\n").unwrap();
+        assert_eq!(inline.hooks.recall_top_k, 5);
     }
 
     #[test]
