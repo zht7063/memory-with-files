@@ -1,0 +1,1 @@
+mwf: this command looks like it writes under .mwf/, which only mwf commands may change. Use `mwf new`, `mwf write`, `mwf patch`, `mwf set`, `mwf rename`, `mwf archive` or `mwf delete` instead. If the command only reads .mwf/, run the matching read command (`mwf show`, `mwf search`, `mwf list`, `mwf log`) instead.

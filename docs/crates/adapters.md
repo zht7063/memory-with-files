@@ -23,7 +23,8 @@ mod render;  // 纯文本
 ```rust
 pub struct Io<'a> { pub stdin: &'a mut dyn Read, pub stdout: &'a mut dyn Write, pub stderr: &'a mut dyn Write }
 pub fn run(args: Vec<OsString>, io: &mut Io) -> ExitCode;   // args 是 `hook` 之后的参数；恒为 0
-mod claude; mod codex; mod fence; mod guard;
+mod fence;  // 随机 nonce、清理控制与 bidi 字符、外壳先行的预算
+mod guard;  // apply_patch 路径解析、shell 命令尽力检测
 ```
 
 - 项目根：宿主 JSON 的 `cwd`（缺失或不是绝对路径时用进程目录）向上查找；没有 `.mwf/` 时输出 `{}`。
@@ -56,10 +57,10 @@ pub const SKILL_COMMANDS_MD: &str;                   // skill/references/command
 pub const SKILL_FILES: &[(&str, &str)];              // （相对 skill 目录的路径，内容），供 install 写入
 ```
 
-skill 文本是英文（与 CLI 帮助、`init` 提示一致）。单元测试把 `references/commands.md` 与 [cli.md](../cli.md) 对照：两边的命令集合相同，用到的选项与错误码都在 cli.md 中，且不出现 1.x 的词汇（MCP 工具、斜杠命令、`[[slug]]`、inbox 等）；改 CLI 时须同步改 skill。hook 提醒文本随 `mwf-hooks`（P3）加入。
+skill 文本是英文（与 CLI 帮助、`init` 提示一致）。单元测试把 `references/commands.md` 与 [cli.md](../cli.md) 对照：两边的命令集合相同，用到的选项与错误码都在 cli.md 中，且不出现 1.x 的词汇（MCP 工具、斜杠命令、`[[slug]]`、inbox 等）；改 CLI 时须同步改 skill。hook 文本（P3）：`HOOK_SESSION_START_INTRO`、`HOOK_PROMPT_INTRO`（fence 前的说明行）、`HOOK_STOP_REMINDER`（Stop 提醒，按 0040 的摄入流程）、`HOOK_DENY_EDIT`、`HOOK_DENY_SHELL`（PreToolUse 拒绝理由），在 `templates/hook-*.txt`，各一行；单元测试检查其中提到的命令与选项都在 cli.md 中。
 
 依赖：无。
 
 ## mwf（bin）
 
-**职责**：读取第一个参数分发：`hook` → mwf-hooks；`install`/`uninstall` → mwf-lifecycle；其余 → mwf-cli。自身无逻辑。P2 全部交给 mwf-cli，`hook` 与 `install` / `uninstall` 的分发随 P3 / P4 加入。端到端测试（`assert_cmd` + `insta` + `tempfile`）放在这个 crate 的 `tests/`，只经由编译出的二进制测试，不以 dev 依赖引入 workspace crate（`check-crate-graph.sh` 计入 dev 边）。
+**职责**：读取第一个参数分发：`hook` → mwf-hooks；`install`/`uninstall` → mwf-lifecycle；其余 → mwf-cli。自身无逻辑。`hook` 的分发已在 P3 加入，`install` / `uninstall` 随 P4 加入。端到端测试（`assert_cmd` + `insta` + `tempfile`）放在这个 crate 的 `tests/`，只经由编译出的二进制测试，不以 dev 依赖引入 workspace crate（`check-crate-graph.sh` 计入 dev 边）。

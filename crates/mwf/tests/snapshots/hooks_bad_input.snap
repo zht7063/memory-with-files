@@ -1,0 +1,28 @@
+---
+source: crates/mwf/tests/hooks.rs
+expression: self.transcript
+---
+$ mwf hook finish --host claude
+< {"cwd":"[ROOT]","session_id":"s"}
+{}
+[stderr] mwf hook: unknown event "finish"; use session-start, prompt, stop or pre-tool
+
+$ mwf hook stop --host pi
+< {"cwd":"[ROOT]","session_id":"s"}
+{}
+[stderr] mwf hook: unknown host "pi"; use claude or codex
+
+$ mwf hook stop --host codex
+< not json
+{}
+[stderr] mwf hook: stdin is not JSON: expected ident at line 1 column 2
+
+$ mwf hook stop --host codex
+< [1, 2]
+{}
+[stderr] mwf hook: stdin is not a JSON object
+
+$ mwf hook prompt --host claude
+< (1048604 bytes)
+{}
+[stderr] mwf hook: stdin is larger than 1 MiB

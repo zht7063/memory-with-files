@@ -4,13 +4,30 @@
 //!
 //! The files `init` writes into `.mwf/` (`config.toml`, `.gitignore`) live in `mwf-store`, which
 //! parses them and cannot depend on this crate; here is only the text `mwf-app` returns from
-//! `init` (ADR 0049). The hook text arrives with `mwf-hooks` in P3.
+//! `init` (ADR 0049). The hook text is what `mwf-hooks` says around the data it injects and
+//! when it refuses an edit (ADRs 0024, 0051).
 
 /// What to do after `mwf init` in git mode (`.mwf/` is committed).
 pub const INIT_NEXT_STEPS_GIT: &str = include_str!("../templates/init-next-steps-git.txt");
 
 /// What to do after `mwf init --local` (`.mwf/` is ignored).
 pub const INIT_NEXT_STEPS_LOCAL: &str = include_str!("../templates/init-next-steps-local.txt");
+
+/// The line in front of the fenced SessionStart context (ADR 0051).
+pub const HOOK_SESSION_START_INTRO: &str =
+    include_str!("../templates/hook-session-start-intro.txt");
+
+/// The line in front of the fenced pages a prompt recalls (ADR 0051).
+pub const HOOK_PROMPT_INTRO: &str = include_str!("../templates/hook-prompt-intro.txt");
+
+/// What the Stop hook tells the agent once per turn, following the ingest steps of ADR 0040.
+pub const HOOK_STOP_REMINDER: &str = include_str!("../templates/hook-stop-reminder.txt");
+
+/// Why PreToolUse refuses a file edit under `.mwf/` (ADR 0024).
+pub const HOOK_DENY_EDIT: &str = include_str!("../templates/hook-deny-edit.txt");
+
+/// Why PreToolUse refuses a shell command that looks like it writes under `.mwf/` (ADR 0024).
+pub const HOOK_DENY_SHELL: &str = include_str!("../templates/hook-deny-shell.txt");
 
 /// The one skill (ADR 0036): its directory name and the `name:` in its frontmatter.
 pub const SKILL_NAME: &str = "mwf";
@@ -277,6 +294,43 @@ mod tests {
             ] {
                 assert!(!text.contains(stale), "{path} mentions 1.x {stale:?}");
             }
+        }
+    }
+
+    const HOOK_TEXTS: [(&str, &str); 5] = [
+        ("hook-session-start-intro", HOOK_SESSION_START_INTRO),
+        ("hook-prompt-intro", HOOK_PROMPT_INTRO),
+        ("hook-stop-reminder", HOOK_STOP_REMINDER),
+        ("hook-deny-edit", HOOK_DENY_EDIT),
+        ("hook-deny-shell", HOOK_DENY_SHELL),
+    ];
+
+    #[test]
+    fn hook_texts_are_single_lines_naming_real_commands() {
+        let cli = cli_commands();
+        for (name, text) in HOOK_TEXTS {
+            let line = text.strip_suffix('\n').expect("one final newline");
+            assert!(
+                !line.is_empty() && !line.contains(['\n', '\r', '\t']),
+                "{name}: one line"
+            );
+            assert!(line.starts_with("mwf: "), "{name}: says it is mwf");
+            let named = mentioned_commands(line);
+            assert!(
+                named.is_subset(&cli),
+                "{name}: unknown commands {:?}",
+                &named - &cli
+            );
+            for opt in options(line) {
+                assert!(CLI_MD.contains(opt), "{name}: {opt} is not in docs/cli.md");
+            }
+            for stale in ["mwf_", "/mwf", "[[", "MCP", "doctor", "recall"] {
+                assert!(!line.contains(stale), "{name} mentions 1.x {stale:?}");
+            }
+        }
+        // The ingest steps of ADR 0040.
+        for step in ["`mwf search", "`mwf patch`", "`mwf new`", "do nothing"] {
+            assert!(HOOK_STOP_REMINDER.contains(step), "reminder lacks {step}");
         }
     }
 }

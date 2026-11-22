@@ -11,6 +11,15 @@ publish.workspace = true
 [dependencies]
 mwf-app.workspace = true
 mwf-assets.workspace = true
+# Only the OS generator (getrandom 0.4, already in the tree) for the fence nonce; no ChaCha.
+rand = { version = "0.10.4", default-features = false, features = ["std", "sys_rng"] }
+# Exactly 1.0.228, as in mwf-store and mwf-app: serde_derive 1.0.229+ uses syn 3 and deny.toml
+# rejects duplicate major versions.
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = "3.27.0"
 
 [lints]
 workspace = true

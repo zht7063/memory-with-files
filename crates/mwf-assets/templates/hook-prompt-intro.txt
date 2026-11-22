@@ -1,0 +1,1 @@
+mwf: wiki pages that may be relevant to this prompt, one per line as slug: title — summary. Read one with `mwf show <slug>` before you rely on it.
