@@ -158,8 +158,7 @@ pub(crate) fn ensure_last_rule(path: &Path, line: &str) -> Result<(), StoreError
     let last_rule = String::from_utf8_lossy(&text)
         .lines()
         .map(|l| l.strip_suffix('\r').unwrap_or(l))
-        .filter(|l| !l.trim().is_empty() && !l.starts_with('#'))
-        .last()
+        .rfind(|l| !l.trim().is_empty() && !l.starts_with('#'))
         .map(str::to_owned);
     if last_rule.as_deref() == Some(line) {
         return Ok(());
