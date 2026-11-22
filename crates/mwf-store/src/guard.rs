@@ -8,7 +8,7 @@ use mwf_domain::{Slug, Timestamp};
 
 use crate::error::{StoreError, io_at};
 use crate::fsx::{Kind, exists_as, read_file, sync_dir, with_line, write_atomic, write_file};
-use crate::project::{INDEX_FILE, LOG_FILE, PAGES_DIR, Project, TRASH_DIR};
+use crate::project::{INDEX_FILE, LOG_FILE, PAGES_DIR, Project, TRASH_DIR, check_pinned};
 
 /// Proof of holding `.mwf/.lock`; every write goes through it. Dropping it releases the lock.
 ///
@@ -34,15 +34,24 @@ use crate::project::{INDEX_FILE, LOG_FILE, PAGES_DIR, Project, TRASH_DIR};
 #[derive(Debug)]
 pub struct WriteGuard<'p> {
     project: &'p Project,
-    _lock: File,
+    lock: File,
+    lock_path: PathBuf,
 }
 
 impl<'p> WriteGuard<'p> {
-    pub(crate) fn new(project: &'p Project, lock: File) -> Self {
+    pub(crate) fn new(project: &'p Project, lock: File, lock_path: PathBuf) -> Self {
         WriteGuard {
             project,
-            _lock: lock,
+            lock,
+            lock_path,
         }
+    }
+
+    /// Checks before each write that `.mwf/.lock` is still the file this guard locked. If it
+    /// was deleted or replaced (say, by a workspace cleanup), another process can lock the new
+    /// file, so this guard no longer excludes anyone and must stop writing.
+    fn check_lock(&self) -> Result<(), StoreError> {
+        check_pinned(&self.lock, &self.lock_path, false)
     }
 
     /// The locked project, for reads inside the lock.
@@ -52,6 +61,7 @@ impl<'p> WriteGuard<'p> {
 
     /// Creates or replaces `pages/<slug>.md` atomically; creates `pages/` when missing.
     pub fn write_page(&mut self, slug: &Slug, bytes: &[u8]) -> Result<(), StoreError> {
+        self.check_lock()?;
         self.ensure_dir(PAGES_DIR)?;
         write_file(&self.project.page_path(slug)?, bytes)
     }
@@ -60,6 +70,7 @@ impl<'p> WriteGuard<'p> {
     /// When that name is taken (two deletes of one slug in the same second), appends `.1`,
     /// `.2`, … before `.md` instead of overwriting.
     pub fn move_to_trash(&mut self, slug: &Slug, ts: &Timestamp) -> Result<PathBuf, StoreError> {
+        self.check_lock()?;
         let from = self.existing_page(slug)?;
         let trash = self.ensure_dir(TRASH_DIR)?;
         let mut to = trash.join(format!("{slug}.{ts}.md"));
@@ -77,6 +88,7 @@ impl<'p> WriteGuard<'p> {
     /// Renames `pages/<from>.md` to `pages/<to>.md` without changing its bytes; fails with
     /// `PageExists` rather than replace an existing `to`.
     pub fn rename_page(&mut self, from: &Slug, to: &Slug) -> Result<(), StoreError> {
+        self.check_lock()?;
         let from_path = self.existing_page(from)?;
         let to_path = self.project.page_path(to)?;
         if fs::symlink_metadata(&to_path).is_ok() {
@@ -88,6 +100,7 @@ impl<'p> WriteGuard<'p> {
 
     /// Replaces `index.md` atomically.
     pub fn write_index(&mut self, text: &str) -> Result<(), StoreError> {
+        self.check_lock()?;
         write_file(&self.project.path(INDEX_FILE)?, text.as_bytes())
     }
 
@@ -96,6 +109,7 @@ impl<'p> WriteGuard<'p> {
     /// line; a missing final newline (as a union merge can leave) is added first, and a missing
     /// `log.md` is created.
     pub fn append_log(&mut self, line: &str) -> Result<(), StoreError> {
+        self.check_lock()?;
         let path = self.project.path(LOG_FILE)?;
         let text = read_file(&path)?.unwrap_or_default();
         write_atomic(&path, &with_line(text, line))

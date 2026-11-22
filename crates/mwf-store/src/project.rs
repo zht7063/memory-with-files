@@ -4,6 +4,7 @@
 use std::fs::{self, File, Metadata, OpenOptions, TryLockError};
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use mwf_domain::{Slug, render_index};
@@ -49,29 +50,69 @@ pub enum GitMode {
     Local,
 }
 
-/// A project: the directory that holds `.mwf/`, and the identity of that `.mwf/` directory
-/// when the project was opened. Every operation checks that `.mwf` is still that directory and
-/// not a symlink, so a `.mwf` swapped after [`Project::find`] or [`Project::lock`] fails with
-/// `Changed` instead of sending reads or writes elsewhere (ADR 0048).
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A project: the directory that holds `.mwf/`, and an open handle to that `.mwf/` directory.
+/// The handle pins its inode, so a deleted and recreated `.mwf` cannot reuse it; every
+/// operation checks that the `.mwf` path still names the held directory and is not a symlink,
+/// so a `.mwf` swapped after [`Project::find`] or [`Project::lock`] fails with `Changed`
+/// instead of sending reads or writes elsewhere (ADR 0048).
+#[derive(Debug, Clone)]
 pub struct Project {
     root: PathBuf,
-    mwf_id: DirId,
+    mwf: Arc<File>,
 }
 
-/// (device, inode) of a directory; mwf targets only Unix (ADR 0012).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct DirId(u64, u64);
+/// Same root and same held `.mwf` directory.
+impl PartialEq for Project {
+    fn eq(&self, other: &Self) -> bool {
+        let id = |p: &Project| p.mwf.metadata().ok().map(|m| file_id(&m));
+        self.root == other.root && id(self).is_some() && id(self) == id(other)
+    }
+}
 
+impl Eq for Project {}
+
+/// (device, inode); mwf targets only Unix (ADR 0012).
 #[cfg(unix)]
-fn dir_id(meta: &Metadata) -> DirId {
+fn file_id(meta: &Metadata) -> (u64, u64) {
     use std::os::unix::fs::MetadataExt;
-    DirId(meta.dev(), meta.ino())
+    (meta.dev(), meta.ino())
 }
 
 #[cfg(not(unix))]
-fn dir_id(_meta: &Metadata) -> DirId {
-    DirId(0, 0)
+fn file_id(_meta: &Metadata) -> (u64, u64) {
+    (0, 0)
+}
+
+/// Checks that `path` still names the file or directory `held` is open on, without following
+/// a symlink at `path`. Missing, replaced, or the wrong kind is `Changed`.
+pub(crate) fn check_pinned(held: &File, path: &Path, dir: bool) -> Result<(), StoreError> {
+    let changed = || StoreError::Changed {
+        path: path.to_path_buf(),
+    };
+    let current = match fs::symlink_metadata(path) {
+        Ok(meta) => meta,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Err(changed()),
+        Err(e) => return Err(io_at(path)(e)),
+    };
+    let held = held.metadata().map_err(io_at(path))?;
+    let kind_ok = if dir {
+        current.is_dir()
+    } else {
+        current.is_file()
+    };
+    if kind_ok && held.is_dir() == dir && file_id(&current) == file_id(&held) {
+        Ok(())
+    } else {
+        Err(changed())
+    }
+}
+
+/// Opens `.mwf` and checks the handle is the real directory at that path (the open follows
+/// symlinks, so a swap between the type check and the open is caught here).
+fn open_mwf(mwf: &Path) -> Result<Arc<File>, StoreError> {
+    let file = File::open(mwf).map_err(io_at(mwf))?;
+    check_pinned(&file, mwf, true)?;
+    Ok(Arc::new(file))
 }
 
 impl Project {
@@ -86,7 +127,7 @@ impl Project {
                 Ok(meta) if meta.is_dir() => {
                     return Ok(Project {
                         root: dir.to_path_buf(),
-                        mwf_id: dir_id(&meta),
+                        mwf: open_mwf(&mwf)?,
                     });
                 }
                 Ok(meta) if meta.file_type().is_symlink() => {
@@ -164,11 +205,8 @@ impl Project {
             let _ = fs::remove_dir_all(&staging);
         }
         result?;
-        let meta = fs::symlink_metadata(&mwf).map_err(io_at(&mwf))?;
-        Ok(Project {
-            root,
-            mwf_id: dir_id(&meta),
-        })
+        let mwf = open_mwf(&mwf)?;
+        Ok(Project { root, mwf })
     }
 
     /// The directory that holds `.mwf/`.
@@ -184,12 +222,8 @@ impl Project {
     /// `.mwf/` after checking it is still the directory this project was opened with.
     pub(crate) fn checked_mwf(&self) -> Result<PathBuf, StoreError> {
         let mwf = self.mwf_dir();
-        match fs::symlink_metadata(&mwf) {
-            Ok(meta) if meta.is_dir() && dir_id(&meta) == self.mwf_id => Ok(mwf),
-            Ok(_) => Err(StoreError::Changed { path: mwf }),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => Err(StoreError::Changed { path: mwf }),
-            Err(e) => Err(io_at(&mwf)(e)),
-        }
+        check_pinned(&self.mwf, &mwf, true)?;
+        Ok(mwf)
     }
 
     /// `.mwf/<name>`, checking `.mwf` first; the caller checks `<name>` itself.
@@ -291,12 +325,8 @@ impl Project {
         // While waiting, `.mwf` or `.lock` may have been replaced; a lock on a file that is no
         // longer `.mwf/.lock` would exclude nobody.
         self.checked_mwf()?;
-        let current = fs::symlink_metadata(&path).map_err(io_at(&path))?;
-        let held = file.metadata().map_err(io_at(&path))?;
-        if !current.is_file() || dir_id(&current) != dir_id(&held) {
-            return Err(StoreError::Changed { path });
-        }
-        Ok(WriteGuard::new(self, file))
+        check_pinned(&file, &path, false)?;
+        Ok(WriteGuard::new(self, file, path))
     }
 }
 
@@ -309,7 +339,10 @@ fn lock_within(file: &File, path: &Path, timeout: Duration) -> Result<(), StoreE
             Err(TryLockError::WouldBlock) => {
                 let waited = start.elapsed();
                 if waited >= timeout {
-                    return Err(StoreError::LockTimeout { waited: timeout });
+                    return Err(StoreError::LockTimeout {
+                        path: path.to_path_buf(),
+                        waited: timeout,
+                    });
                 }
                 std::thread::sleep(LOCK_POLL.min(timeout - waited));
             }

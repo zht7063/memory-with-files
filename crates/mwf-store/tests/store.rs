@@ -393,7 +393,10 @@ fn lock_is_exclusive_and_times_out() {
     let err = project.lock(Duration::from_millis(300)).unwrap_err();
     let waited = started.elapsed();
     match err {
-        StoreError::LockTimeout { waited } => assert_eq!(waited, Duration::from_millis(300)),
+        StoreError::LockTimeout { path, waited } => {
+            assert_eq!(path, project.mwf_dir().join(".lock"));
+            assert_eq!(waited, Duration::from_millis(300));
+        }
         e => panic!("{e:?}"),
     }
     assert!(waited >= Duration::from_millis(300), "{waited:?}");
@@ -1080,4 +1083,86 @@ fn a_store_subdirectory_swapped_under_a_held_guard_is_refused() {
     assert!(wrong(project.read_page(&slug("a")).map(drop)));
     assert_eq!(names(&out), ["a.md"]);
     assert_eq!(read(out.join("a.md")), "outside");
+}
+
+/// Re-review 3 finding 1: a deleted and recreated `.mwf` is a different directory even when
+/// the file system would hand out the same inode number again.
+#[test]
+fn a_deleted_and_recreated_mwf_is_changed() {
+    let (_dir, project) = init(GitMode::Track);
+    let mwf = project.mwf_dir();
+    for round in 0..100 {
+        fs::remove_dir_all(&mwf).unwrap();
+        fs::create_dir(&mwf).unwrap();
+        fs::create_dir(mwf.join("pages")).unwrap();
+        fs::write(mwf.join("pages/a.md"), "impostor").unwrap();
+        match project.read_page(&slug("a")) {
+            Err(StoreError::Changed { path }) => assert_eq!(path, mwf),
+            other => panic!("round {round}: {other:?}"),
+        }
+        assert!(matches!(
+            project.lock(LOCK_WAIT).unwrap_err(),
+            StoreError::Changed { .. }
+        ));
+    }
+    // A fresh lookup opens the new directory.
+    let again = Project::find(project.root()).unwrap();
+    assert_ne!(again, project);
+    assert_eq!(again.read_page(&slug("a")).unwrap().unwrap(), b"impostor");
+}
+
+/// Re-review 3 finding 2: a guard whose `.lock` was removed or replaced stops writing, since a
+/// second writer can now lock the new file.
+#[test]
+fn a_guard_stops_writing_when_its_lock_file_is_removed_or_replaced() {
+    let changed = |r: Result<(), StoreError>| matches!(r, Err(StoreError::Changed { .. }));
+    for replace in [false, true] {
+        let (_dir, project) = init(GitMode::Track);
+        let lock = project.mwf_dir().join(".lock");
+        let mut guard = project.lock(LOCK_WAIT).unwrap();
+        guard.write_page(&slug("a"), b"one").unwrap();
+        fs::remove_file(&lock).unwrap();
+        if replace {
+            fs::write(&lock, "").unwrap();
+        }
+        // Another writer gets the lock on the new file...
+        let other = project.lock(Duration::ZERO).unwrap();
+        // ...so the first guard must refuse every write.
+        assert!(changed(guard.write_page(&slug("a"), b"two")));
+        assert!(changed(guard.append_log("x")));
+        assert!(changed(guard.write_index("x")));
+        assert!(changed(guard.rename_page(&slug("a"), &slug("b"))));
+        assert!(changed(
+            guard
+                .move_to_trash(&slug("a"), &ts("2026-11-20T10:00:00Z"))
+                .map(drop)
+        ));
+        drop(other);
+        drop(guard);
+        assert_eq!(project.read_page(&slug("a")).unwrap().unwrap(), b"one");
+        assert_eq!(project.read_log(5).unwrap(), Vec::<String>::new());
+    }
+}
+
+/// Re-review 3 finding 3: an init waiting on another init's root lock names the root.
+#[test]
+fn init_lock_timeout_names_the_repository_root() {
+    let (_dir, root) = git_repo();
+    let held = fs::File::open(&root).unwrap();
+    held.lock().unwrap();
+    let err = Project::init(&root, GitMode::Track).unwrap_err();
+    match &err {
+        StoreError::LockTimeout { path, waited } => {
+            assert_eq!(path, &root);
+            assert_eq!(*waited, LOCK_WAIT);
+        }
+        e => panic!("{e:?}"),
+    }
+    assert!(!err.to_string().contains(".lock"), "{err}");
+    assert!(
+        err.to_string().contains(&root.display().to_string()),
+        "{err}"
+    );
+    drop(held);
+    Project::init(&root, GitMode::Track).unwrap();
 }

@@ -21,9 +21,10 @@ pub enum StoreError {
     /// `ALREADY_INITIALIZED`: `init` found an existing `.mwf` and changed nothing (ADR 0048).
     #[error("{} already exists; init changes nothing in an existing project", path.display())]
     AlreadyInitialized { path: PathBuf },
-    /// `LOCK_TIMEOUT`: another mwf process held `.mwf/.lock` for the whole wait (ADR 0033).
-    #[error("another mwf write held .mwf/.lock for {} ms; retry", waited.as_millis())]
-    LockTimeout { waited: Duration },
+    /// `LOCK_TIMEOUT`: another mwf process held the lock on `path` for the whole wait (ADR
+    /// 0033): `.mwf/.lock` for writes, the repository root for `init`.
+    #[error("another mwf process kept {} locked for {} ms; retry", path.display(), waited.as_millis())]
+    LockTimeout { path: PathBuf, waited: Duration },
     /// `config.toml` is not valid TOML or has an unknown key or a bad value (ADR 0039).
     #[error("invalid {}: {message}", path.display())]
     Config { path: PathBuf, message: String },
@@ -40,8 +41,8 @@ pub enum StoreError {
         path: PathBuf,
         expected: &'static str,
     },
-    /// `.mwf`, or `.mwf/.lock` while waiting for it, was replaced or removed after the project
-    /// was opened; mwf stops rather than follow the new entry (ADR 0048).
+    /// `.mwf`, or the `.mwf/.lock` a guard holds, was removed or replaced after the project
+    /// was opened or the lock taken; mwf stops rather than follow the new entry (ADR 0048).
     #[error("{} changed since mwf opened the project; run the command again", path.display())]
     Changed { path: PathBuf },
     /// Any other file system failure, with the path it happened on.
