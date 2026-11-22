@@ -13,6 +13,7 @@ mwf-domain.workspace = true
 # Exactly 1.0.228: serde_derive 1.0.229+ uses syn 3 while divan and thiserror-impl use
 # syn 2, and deny.toml rejects duplicate major versions.
 serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "1"
 thiserror = "2"
 toml = { version = "1.2.2", default-features = false, features = ["parse", "serde", "std"] }
 

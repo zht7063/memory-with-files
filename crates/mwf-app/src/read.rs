@@ -51,6 +51,20 @@ fn rev(corpus: &Corpus, page: &Page) -> String {
         .to_string()
 }
 
+/// The `list` row of a corpus page.
+pub(crate) fn page_summary(corpus: &Corpus, p: &Page) -> PageSummary {
+    PageSummary {
+        slug: p.slug.to_string(),
+        title: p.fm.title.clone(),
+        page_type: p.fm.page_type.as_str().to_owned(),
+        summary: p.fm.summary.clone(),
+        tags: p.fm.tags.clone(),
+        status: p.fm.status.as_str().to_owned(),
+        updated: p.fm.updated.to_string(),
+        rev: rev(corpus, p),
+    }
+}
+
 impl App {
     /// One page with its rev, and the title and summary of the pages it links to and that link
     /// to it (ADR 0040).
@@ -119,16 +133,7 @@ impl App {
         Ok(corpus
             .pages()
             .filter(|p| filter.matches(p))
-            .map(|p| PageSummary {
-                slug: p.slug.to_string(),
-                title: p.fm.title.clone(),
-                page_type: p.fm.page_type.as_str().to_owned(),
-                summary: p.fm.summary.clone(),
-                tags: p.fm.tags.clone(),
-                status: p.fm.status.as_str().to_owned(),
-                updated: p.fm.updated.to_string(),
-                rev: rev(&corpus, p),
-            })
+            .map(|p| page_summary(&corpus, p))
             .collect())
     }
 

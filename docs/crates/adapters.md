@@ -18,12 +18,19 @@ mod render;  // 纯文本
 
 ## mwf-hooks
 
-**职责**：`mwf hook <event> --host claude|codex`。解析宿主 JSON、调用 `mwf-app`、输出宿主格式的一行 JSON；随机 fence、清理、截断；内部计时预算；**任何错误都退出 0**（0030）。PreToolUse 守卫：Claude 读 `tool_input.file_path`，Codex 解析 `apply_patch` 文本中的 `*** Add/Update/Delete File:` 行，shell 命令尽力检测（0024）。
+**职责**：`mwf hook session-start|prompt|stop|pre-tool --host claude|codex`（SessionStart、UserPromptSubmit、Stop、PreToolUse）。解析宿主 JSON、调用 `mwf-app`、输出宿主格式的一行 JSON；随机 fence、清理、截断；内部计时预算；**任何错误都退出 0**（0030）。PreToolUse 守卫：Claude 读 `tool_input.file_path`，Codex 解析 `apply_patch` 文本中的 `*** Add/Update/Delete File:` 行，shell 命令尽力检测（0024）。细节见 [0051](../decisions/0051-hook-apis-and-session-state.md)。
 
 ```rust
-pub fn run(event: &str, host: Host, stdin: &mut dyn Read, stdout: &mut dyn Write) -> ExitCode; // 恒为 0
+pub struct Io<'a> { pub stdin: &'a mut dyn Read, pub stdout: &'a mut dyn Write, pub stderr: &'a mut dyn Write }
+pub fn run(args: Vec<OsString>, io: &mut Io) -> ExitCode;   // args 是 `hook` 之后的参数；恒为 0
 mod claude; mod codex; mod fence; mod guard;
 ```
+
+- 项目根：宿主 JSON 的 `cwd`（缺失或不是绝对路径时用进程目录）向上查找；没有 `.mwf/` 时输出 `{}`。
+- 预算：内部截止 3 s；stdin 上限 1 MiB；每次 `additionalContext` 最多 9800 字符；P4 安装时写入宿主超时 10 s。hook 不取写锁。
+- Stop：`stop_hook_active` 为 true 时 `{}`；否则 `App::stop_reminder(session_id, turn)`（Claude `prompt_id`、Codex `turn_id`）。Claude 输出 `hookSpecificOutput.additionalContext`，Codex 输出 `decision: "block"` + `reason`。
+- SessionStart：`source` 为 `clear` / `compact` 时先 `reset_session`。UserPromptSubmit：跳过 `/mwf…` 命令行；注入 slug、标题、summary，不带 rev。
+- 失败：未知事件 / 宿主、坏 JSON、超限：`{}`，stderr 一行；SessionStart / prompt 的 app 错误（含 `INVALID_CONFIG`）：一行 `systemMessage`，只含错误码；Stop / PreToolUse 出错：`{}`（守卫放行）。
 
 依赖：`mwf-app`、`mwf-assets`（提醒文本）、`serde`、`serde_json`、`rand`（fence）。禁止：依赖 cli / lifecycle / domain / store / search。
 

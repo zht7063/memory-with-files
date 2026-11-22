@@ -215,3 +215,26 @@ pub struct LintIssue {
     pub severity: Severity,
     pub message: String,
 }
+
+/// `[hooks]` of `.mwf/config.toml` (ADRs 0039, 0051), as [`crate::App::hooks_config`] reads it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct HooksConfig {
+    /// Distinct prompt terms a page must match before `recall` returns it.
+    pub recall_min_terms: usize,
+    /// Most pages `recall` returns per prompt.
+    pub recall_top_k: usize,
+    /// Whether the Stop hook reminds the agent to save memories.
+    pub stop_reminder: bool,
+    /// Character budget of the SessionStart injection, for [`crate::App::session_context`].
+    pub session_start_max_chars: usize,
+}
+
+/// What SessionStart injects (ADR 0051): `text` is at most the requested number of characters
+/// (Unicode scalar values, newlines included) and empty for a project with nothing to show.
+/// `truncated` is set when content was cut; `text` then ends with a hint naming the command
+/// that shows the rest.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SessionContext {
+    pub text: String,
+    pub truncated: bool,
+}

@@ -7,8 +7,10 @@ mod error;
 mod fsx;
 mod guard;
 mod project;
+mod session;
 
 pub use config::{Config, DEFAULT_CONFIG_TOML, HooksConfig};
 pub use error::StoreError;
 pub use guard::WriteGuard;
 pub use project::{GitMode, LOCK_WAIT, MWF_GITIGNORE, Project};
+pub use session::{SESSION_ID_MAX, SESSION_MAX_AGE, SessionState, SessionStore, session_file_id};

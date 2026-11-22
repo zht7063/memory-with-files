@@ -1,6 +1,7 @@
 # 0030 hooks 行为
 
 - 状态：已接受（2026-11-20）
+- 注：SessionStart 的内容、顺序与截断，Stop 的输出形式，预算与失败输出见 [0051](0051-hook-apis-and-session-state.md)；SessionStart 注入由页面渲染的目录行，不读 `index.md`。
 
 ## 决定
 

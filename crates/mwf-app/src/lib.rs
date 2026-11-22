@@ -6,6 +6,7 @@ mod clock;
 mod corpus;
 mod dto;
 mod error;
+mod hooks;
 mod lint;
 mod read;
 mod redact;
@@ -20,6 +21,7 @@ pub use clock::{Clock, FixedClock, SystemClock};
 pub use corpus::{RELATED_LIMIT, RELATED_MIN_TERMS};
 pub use dto::*;
 pub use error::{AppError, ErrorCode};
+pub use hooks::{RECALL_MIN_PROMPT_TERMS, SESSION_LOG_LINES};
 pub use lint::DUPLICATE_SIMILARITY;
 pub use redact::{
     looks_secret, slug as shown_slug, summary as shown_summary, title as shown_title,

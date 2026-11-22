@@ -48,6 +48,7 @@ mwf delete <slug> [--unlink]                                       移入 .mwf/t
 
 ```
 mwf hook <event> --host claude|codex     由宿主调用；读 stdin JSON，输出一行 JSON，总是退出 0
+                                         event：session-start | prompt | stop | pre-tool（0051）
 mwf install --host claude|codex
 mwf uninstall --host claude|codex
 ```
