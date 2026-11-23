@@ -121,7 +121,14 @@ fn shell_scripts(cmd: &str) -> Vec<String> {
             if flags.starts_with('-') {
                 continue; // `--login`, `--norc`, …
             }
-            has_c |= w.starts_with('-') && flags.contains('c');
+            if let Some(i) = flags.find('c').filter(|_| w.starts_with('-')) {
+                has_c = true;
+                // An attached script, as in `bash -lc"rm …"`: bash itself rejects the
+                // cluster, but a guardrail errs towards checking it.
+                if flags.len() > i + 1 {
+                    scripts.push(flags[i + 1..].to_owned());
+                }
+            }
             // `-o pipefail` and `-O extglob` take an argument.
             if flags.contains(['o', 'O']) {
                 rest.next();
@@ -342,6 +349,15 @@ mod tests {
             "bash -c \"sh -c 'rm \\\".mwf/pages/x.md\\\"'\"",
             "bash -c 'sh -c \"bash -lc \\\"rm .mwf/a\\\"\"'",
             "bash -c r\\m\\ .mwf/a",
+            // From the review of PR #62.
+            "bash -lc\"rm .mwf/pages/a.md\"",
+            "bash -lc 'rm .mwf/pages/a.md';",
+            "bash -lc 'rm .mwf/pages/a.md'&& ls",
+            "bash -c 'rm .mwf/a'|cat",
+            "env VAR=1 sh -c \"rm .mwf/pages/a.md\"",
+            "bash -c -- \"rm .mwf/pages/a.md\"",
+            "sh -c \"echo x>.mwf/pages/a.md\"",
+            "sh -c \"echo x>>'.mwf/log.md'\"",
         ] {
             assert!(shell_writes_mwf(cmd), "{cmd}");
         }

@@ -610,6 +610,12 @@ mod tests {
         let (_dir, root) = project();
         for (host, command) in [
             ("claude", json!("bash -lc 'rm .mwf/pages/x.md'")),
+            ("claude", json!("bash -lc\"rm .mwf/pages/x.md\"")),
+            (
+                "claude",
+                json!("env VAR=1 sh -c \"echo x>.mwf/pages/a.md\""),
+            ),
+            ("codex", json!(["bash", "-c", "--", "rm .mwf/pages/x.md"])),
             ("codex", json!(["bash", "-lc", "rm .mwf/pages/x.md"])),
             (
                 "codex",
