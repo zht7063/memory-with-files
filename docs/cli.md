@@ -48,6 +48,8 @@ mwf delete <slug> [--unlink]                                       移入 .mwf/t
 
 ## 宿主集成
 
+先安装 `mwf`：`brew install zht7063/tap/mwf`（仅正式版），或从 GitHub Release 下载 `mwf-<target>.tar.xz`（macOS / Linux musl 的 arm64 与 x86_64），见根目录 [README](../README.md#install) 与 [0054](decisions/0054-release-config.md)。
+
 ```
 mwf hook <event> --host claude|codex     由宿主调用；读 stdin JSON，输出一行 JSON，总是退出 0
                                          event：session-start | prompt | stop | pre-tool（0051）
