@@ -8,6 +8,7 @@ edition = "2024"
 rust-version = "1.100"
 license = "MIT"
 repository = "https://github.com/zht7063/memory-with-files"
+homepage = "https://github.com/zht7063/memory-with-files"
 publish = false
 
 [workspace.dependencies]
@@ -25,3 +26,8 @@ mwf-assets = { path = "crates/mwf-assets" }
 unwrap_used = "deny"
 expect_used = "deny"
 panic = "deny"
+
+# The profile that dist builds release archives with (docs/decisions/0054-release-config.md).
+[profile.dist]
+inherits = "release"
+lto = "thin"

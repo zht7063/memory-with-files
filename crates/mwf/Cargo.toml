@@ -6,7 +6,12 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
 publish.workspace = true
+
+# Only this crate ships; the workspace sets publish = false, which dist would otherwise skip (docs/decisions/0054-release-config.md).
+[package.metadata.dist]
+dist = true
 
 [dependencies]
 mwf-cli.workspace = true

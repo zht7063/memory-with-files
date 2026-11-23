@@ -14,7 +14,8 @@ crates/
   mwf-cli/  mwf-hooks/  mwf-lifecycle/  mwf-assets/
   mwf/                  bin；tests/ 下是端到端测试
 docs/
-.github/workflows/      ci.yml（P0）、release.yml（P4，由 dist 生成）
+dist-workspace.toml     dist 发布配置（0054）
+.github/workflows/      ci.yml（P0）、release.yml（P4，由 dist 生成，不手改）
 .github/scripts/        check-crate-graph.sh：workspace 的 crate 与 workspace 内依赖（含 dev）须与 architecture.md 拓扑图的节点和边完全一致；check-crate-graph-test.sh 是它的回归测试
 ```
 
