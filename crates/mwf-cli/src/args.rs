@@ -7,7 +7,15 @@ use mwf_app::StatusFilter;
 
 /// mwf: a project-local wiki engine for coding agents.
 #[derive(Debug, Parser)]
-#[command(name = "mwf", version, color = ColorChoice::Never, term_width = 100)]
+// `hook`, `install` and `uninstall` are dispatched by the bin before clap (ADR 0052), so they
+// are named here instead of under `Commands:`.
+#[command(
+    name = "mwf",
+    version,
+    color = ColorChoice::Never,
+    term_width = 100,
+    after_help = "Host integration (dispatched before the commands above):\n  install    Add mwf's hooks and skill to a host: mwf install --host claude|codex [--dry-run]\n  uninstall  Remove them: mwf uninstall --host claude|codex [--dry-run]\n  hook       Run by the host's hooks, not by hand: mwf hook <event> --host claude|codex\n`mwf install --help` and `mwf uninstall --help` describe both."
+)]
 pub(crate) struct Cli {
     /// Print `{"ok": true, "data": …}` or `{"ok": false, "error": …}` instead of text.
     #[arg(long, global = true)]

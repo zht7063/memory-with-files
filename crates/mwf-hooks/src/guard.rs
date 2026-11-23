@@ -2,7 +2,8 @@
 //! and a best-effort check of whether a shell command writes under a `.mwf` directory. Paths
 //! named by edit tools and patches are checked with `App::is_inside_mwf`, which follows
 //! symlinks; shell commands are only scanned as text, so they miss tricks such as variables,
-//! `cd .mwf && …` or `bash -c`. The guard is a guardrail, not a security boundary.
+//! `cd .mwf && …` or `eval`; the script of `bash -c` / `sh -lc` is unwrapped and scanned
+//! too. The guard is a guardrail, not a security boundary.
 
 /// The paths of the `*** Add File:`, `*** Update File:`, `*** Delete File:` and `*** Move to:`
 /// lines of an `apply_patch` patch. Headers start at column zero; an indented line is hunk
@@ -40,9 +41,33 @@ pub fn mentions_mwf(s: &str) -> bool {
 /// into one, or `rm`, `mv`, `cp`, `sed -i` and similar commands with a `.mwf` operand. Each
 /// command of a list or pipeline is checked on its own. Commands run as `mwf …` are allowed,
 /// since mwf is how `.mwf/` is written, but not a redirect the shell does around them.
+/// The script of a `bash -c '…'` (or `sh`, `zsh`, …) is checked the same way, nested ones too.
 pub fn shell_writes_mwf(cmd: &str) -> bool {
+    writes_at_depth(cmd, 0)
+}
+
+/// A shell command line for an argv such as Codex's `["bash", "-lc", "…"]`, each word
+/// single-quoted so `shell_writes_mwf` reads the same words back.
+pub fn argv_command<'a>(argv: impl IntoIterator<Item = &'a str>) -> String {
+    argv.into_iter()
+        .map(|w| format!("'{}'", w.replace('\'', "'\\''")))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// How deep `bash -c "sh -c '…'"` nesting is unwrapped; deeper scripts are not checked.
+const MAX_SHELL_DEPTH: usize = 8;
+
+fn writes_at_depth(cmd: &str, depth: usize) -> bool {
     if !cmd.to_ascii_lowercase().contains(".mwf") {
         return false;
+    }
+    if depth < MAX_SHELL_DEPTH
+        && shell_scripts(cmd)
+            .iter()
+            .any(|script| writes_at_depth(script, depth + 1))
+    {
+        return true;
     }
     cmd.replace("&&", "\n")
         .replace("||", "\n")
@@ -61,6 +86,103 @@ const WRITES_DESTINATION: [&str; 4] = ["cp", "install", "ln", "rsync"];
 const WRAPPERS: [&str; 8] = [
     "sudo", "env", "command", "exec", "nohup", "time", "xargs", "builtin",
 ];
+
+/// Shells whose `-c` script is unwrapped.
+const SHELLS: [&str; 7] = ["sh", "bash", "zsh", "dash", "ksh", "mksh", "ash"];
+
+/// The scripts passed to `bash -c` and similar shells run as commands of `cmd`, read with
+/// shell quoting: `'…'` is literal, `"…"` and bare words honour backslash escapes.
+fn shell_scripts(cmd: &str) -> Vec<String> {
+    let mut scripts = Vec::new();
+    for words in shell_words(cmd).split(Option::is_none) {
+        let words: Vec<&str> = words.iter().flatten().map(String::as_str).collect();
+        let Some(start) = words
+            .iter()
+            .position(|w| !(WRAPPERS.contains(w) || (w.contains('=') && !w.starts_with('-'))))
+        else {
+            continue;
+        };
+        let name = words[start].rsplit('/').next().unwrap_or(words[start]);
+        if !SHELLS.contains(&name) {
+            continue;
+        }
+        let mut has_c = false;
+        let mut rest = words[start + 1..].iter();
+        while let Some(w) = rest.next() {
+            if *w == "--" {
+                continue;
+            }
+            let Some(flags) = w.strip_prefix(['-', '+']) else {
+                if has_c {
+                    scripts.push((*w).to_owned());
+                }
+                break;
+            };
+            if flags.starts_with('-') {
+                continue; // `--login`, `--norc`, …
+            }
+            if let Some(i) = flags.find('c').filter(|_| w.starts_with('-')) {
+                has_c = true;
+                // An attached script, as in `bash -lc"rm …"`: bash itself rejects the
+                // cluster, but a guardrail errs towards checking it.
+                if flags.len() > i + 1 {
+                    scripts.push(flags[i + 1..].to_owned());
+                }
+            }
+            // `-o pipefail` and `-O extglob` take an argument.
+            if flags.contains(['o', 'O']) {
+                rest.next();
+            }
+        }
+    }
+    scripts
+}
+
+/// The words of `cmd` with quotes removed, and `None` for each unquoted `;`, `&`, `|`,
+/// newline, `(` or `)` between commands.
+fn shell_words(cmd: &str) -> Vec<Option<String>> {
+    let mut out = Vec::new();
+    let mut word: Option<String> = None;
+    let mut chars = cmd.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '\'' => {
+                let w = word.get_or_insert_with(String::new);
+                w.extend(chars.by_ref().take_while(|&c| c != '\''));
+            }
+            '"' => {
+                let w = word.get_or_insert_with(String::new);
+                while let Some(c) = chars.next() {
+                    match c {
+                        '"' => break,
+                        '\\' => match chars.next() {
+                            Some(e @ ('"' | '\\' | '$' | '`')) => w.push(e),
+                            Some('\n') | None => {}
+                            Some(e) => {
+                                w.push('\\');
+                                w.push(e);
+                            }
+                        },
+                        c => w.push(c),
+                    }
+                }
+            }
+            '\\' => match chars.next() {
+                Some('\n') | None => {}
+                Some(e) => word.get_or_insert_with(String::new).push(e),
+            },
+            c if c.is_whitespace() || matches!(c, ';' | '&' | '|' | '(' | ')') => {
+                out.extend(word.take().map(Some));
+                if !c.is_whitespace() || c == '\n' {
+                    out.push(None);
+                }
+            }
+            c => word.get_or_insert_with(String::new).push(c),
+        }
+    }
+    out.extend(word.map(Some));
+    out
+}
 
 fn segment_writes(segment: &str) -> bool {
     let words: Vec<&str> = segment
@@ -211,6 +333,60 @@ mod tests {
         ] {
             assert!(shell_writes_mwf(cmd), "{cmd}");
         }
+    }
+
+    #[test]
+    fn shell_c_scripts_are_unwrapped() {
+        for cmd in [
+            "bash -c 'rm .mwf/pages/x.md'",
+            "bash -lc \"sed -i s/a/b/ .mwf/pages/x.md\"",
+            "sh -c 'mv a.md .mwf/pages/x.md'",
+            "/bin/zsh -ec 'cp a.md .mwf/pages/'",
+            "sudo env X=1 bash -o pipefail -c 'ls; rm .mwf/log.md'",
+            "bash --norc -c 'echo hi > .mwf/pages/a.md'",
+            "cd /x && bash -c \"cat a | sh -c 'tee .mwf/log.md'\"",
+            // Nested quoting and escapes.
+            "bash -c \"sh -c 'rm \\\".mwf/pages/x.md\\\"'\"",
+            "bash -c 'sh -c \"bash -lc \\\"rm .mwf/a\\\"\"'",
+            "bash -c r\\m\\ .mwf/a",
+            // From the review of PR #62.
+            "bash -lc\"rm .mwf/pages/a.md\"",
+            "bash -lc 'rm .mwf/pages/a.md';",
+            "bash -lc 'rm .mwf/pages/a.md'&& ls",
+            "bash -c 'rm .mwf/a'|cat",
+            "env VAR=1 sh -c \"rm .mwf/pages/a.md\"",
+            "bash -c -- \"rm .mwf/pages/a.md\"",
+            "sh -c \"echo x>.mwf/pages/a.md\"",
+            "sh -c \"echo x>>'.mwf/log.md'\"",
+        ] {
+            assert!(shell_writes_mwf(cmd), "{cmd}");
+        }
+        // Codex argv, as the hook receives it.
+        for argv in [
+            &["bash", "-lc", "rm .mwf/pages/x.md"][..],
+            &["sh", "-c", "sed -i 's/a/b/' .mwf/pages/x.md"],
+            &["bash", "-c", "bash -c 'mv x .mwf/pages/y.md'"],
+            &["rm", ".mwf/it's.md"],
+        ] {
+            assert!(
+                shell_writes_mwf(&argv_command(argv.iter().copied())),
+                "{argv:?}"
+            );
+        }
+        for cmd in [
+            "bash -c 'cat .mwf/index.md'",
+            "bash -lc 'mwf show a'",
+            "sh -c 'grep -rn x .mwf | head'",
+            "bash script.sh .mwf",
+            "bash -c 'echo rm' .mwf",
+        ] {
+            assert!(!shell_writes_mwf(cmd), "{cmd}");
+        }
+        assert!(!shell_writes_mwf(&argv_command([
+            "bash",
+            "-lc",
+            "cat .mwf/log.md"
+        ])));
     }
 
     #[test]
