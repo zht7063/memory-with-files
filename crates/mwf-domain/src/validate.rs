@@ -62,7 +62,7 @@ pub fn validate(file_stem: &str, text: &str, now: &Timestamp) -> Vec<Issue> {
             "secret",
             Severity::Error,
             format!(
-                "likely secret ({}) at line {}: {}",
+                "likely secret ({}) at line {} of the page file: {}",
                 f.rule, f.line, f.redacted
             ),
         );

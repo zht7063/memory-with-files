@@ -59,7 +59,7 @@ P4 实现 `mwf-lifecycle` 前，下列细节在已有 ADR 中没有规定：Code
 
 - `mwf install|uninstall --host claude|codex [--dry-run] [--json]`；`--host=<宿主>` 亦可；`--json` 与其他命令一样是全局的，也可写在命令之前（`mwf --json install …`，0050），bin 跳过它找命令。参数手工解析（0042：`mwf-lifecycle` 不依赖 `clap`），`-h` / `--help` 出现在任何位置都打印帮助到 stdout，退出 0。
 - 用法错误退出 2，格式与 0050 相同：纯文本写 stderr `error: <原因>`、`Usage:` 行与 `--help` 提示；`--json` 时 stdout 一行 `{"ok":false,"error":{"code":"USAGE","message":…}}`。信息**从不复述参数的值**（本 crate 没有 secret 扫描器，0025），只说哪一类错误。
-- `mwf --help`（clap）不列出 `install` / `uninstall`，与 `hook` 一样由 bin 在 clap 之前分发；它们各自有 `--help`，命令集合记录在 [cli.md](../cli.md) 与 skill 的命令速查中。
+- `mwf --help`（clap）不列出 `install` / `uninstall`，与 `hook` 一样由 bin 在 clap 之前分发；它们各自有 `--help`，命令集合记录在 [cli.md](../cli.md) 与 skill 的命令速查中。顶层帮助末尾另有一段 `Host integration` 提示列出这三条命令（[0053](0053-smoke-test-follow-ups.md)）。
 - 成功：纯文本第一行 `installed mwf for Claude Code` / `uninstalled mwf from Codex`（`--dry-run` 时 `would install … (dry run: nothing was written)`），然后 `hooks: <路径>: <状态>`、每个事件一行、`skill: <目录>`、每个文件一行、`hook command: <命令>`（只在 install）、`note: …`。由 `crates/mwf/tests/snapshots/lifecycle_*.snap` 固定。
 - `--json` 成功：`{"ok":true,"data":{"action","host","dry_run","command"(仅 install),"hooks":{"path","status","backup","events":{<Event>:<状态>}},"skill":{"dir","files":[{"path","status","backup"}]},"notes":[…]}}`，键序如上。文件状态：`created` / `updated` / `unchanged` / `removed` / `absent`；事件状态：`added` / `updated` / `unchanged` / `removed` / `absent`。
 - 失败退出 1：`INVALID_ENV`、`INVALID_EXECUTABLE`、`HOST_CONFIG_INVALID`、`WRONG_FILE_TYPE`、`CHANGED`、`IO`（见 [cli.md](../cli.md)）。纯文本 `error[CODE]: message` 写 stderr；`--json` 一行写 stdout。stdout 写不进去时退出 1。

@@ -9,8 +9,8 @@ Run the read and write commands from anywhere inside the project; they find `.mw
 | Command | Does |
 | --- | --- |
 | `mwf show <slug>` | Frontmatter, body, `rev`, links out and links in, with each linked page's title and summary. |
-| `mwf search <query>... [--type T]... [--tag t]... [--status active\|archived\|all] [--limit N]` | BM25 search: slug, title, summary, score and `rev` of each hit. Repeat `--type` to allow several types; repeat `--tag` to require several tags. Default: active pages, 10 hits. |
-| `mwf list [--type T]... [--tag t]... [--status active\|archived\|all]` | Pages by slug, with the same filters. |
+| `mwf search <query>... [--type T]... [--tag t]... [--status active\|archived\|all] [--limit N]` | BM25 search over valid pages: slug, title, summary, score and `rev` of each hit. Repeat `--type` to allow several types; repeat `--tag` to require several tags. Default: active pages, 10 hits. |
+| `mwf list [--type T]... [--tag t]... [--status active\|archived\|all]` | Pages by slug, with the same filters. `list` and `search` show valid pages only; `mwf lint` reports a page file whose frontmatter does not parse. |
 | `mwf index [--rebuild]` | The table of contents of the current pages; `--rebuild` also rewrites `.mwf/index.md`. |
 | `mwf log [-n N]` | The last N writes (default 20). |
 | `mwf lint` | Checks every page; exits 1 when there is an error. |

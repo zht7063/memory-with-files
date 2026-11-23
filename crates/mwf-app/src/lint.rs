@@ -105,7 +105,7 @@ impl App {
                             "secret",
                             Severity::Error,
                             format!(
-                                "likely secret ({}) at line {}: {}",
+                                "likely secret ({}) at line {} of the page file: {}",
                                 f.rule, f.line, f.redacted
                             ),
                         ));

@@ -42,7 +42,12 @@ fn check_secrets(slug: &Slug, before: &str, after: &str) -> Result<(), AppError>
     }
     let list: Vec<String> = found
         .iter()
-        .map(|f| format!("{} at line {} ({})", f.rule, f.line, f.redacted))
+        .map(|f| {
+            format!(
+                "{} at line {} of the page file ({})",
+                f.rule, f.line, f.redacted
+            )
+        })
         .collect();
     let findings: Vec<_> = found
         .iter()

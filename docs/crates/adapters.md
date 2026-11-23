@@ -18,7 +18,7 @@ mod render;  // 纯文本
 
 ## mwf-hooks
 
-**职责**：`mwf hook session-start|prompt|stop|pre-tool --host claude|codex`（SessionStart、UserPromptSubmit、Stop、PreToolUse）。解析宿主 JSON、调用 `mwf-app`、输出宿主格式的一行 JSON；随机 fence、清理、截断；内部计时预算；**任何错误都退出 0**（0030）。PreToolUse 守卫：Claude 读 `tool_input.file_path`，Codex 解析 `apply_patch` 文本中的 `*** Add/Update/Delete File:` 行，shell 命令尽力检测（0024）。细节见 [0051](../decisions/0051-hook-apis-and-session-state.md)。
+**职责**：`mwf hook session-start|prompt|stop|pre-tool --host claude|codex`（SessionStart、UserPromptSubmit、Stop、PreToolUse）。解析宿主 JSON、调用 `mwf-app`、输出宿主格式的一行 JSON；随机 fence、清理、截断；内部计时预算；**任何错误都退出 0**（0030）。PreToolUse 守卫：Claude 读 `tool_input.file_path`，Codex 解析 `apply_patch` 文本中的 `*** Add/Update/Delete File:` 行，shell 命令尽力检测，并解包 `bash -c` 等的脚本（0024、0053）。细节见 [0051](../decisions/0051-hook-apis-and-session-state.md)。
 
 ```rust
 pub struct Io<'a> { pub stdin: &'a mut dyn Read, pub stdout: &'a mut dyn Write, pub stderr: &'a mut dyn Write }

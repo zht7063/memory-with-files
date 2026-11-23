@@ -29,9 +29,11 @@ mwf log [-n N]                          最近 N 条写操作（默认 20）
 mwf lint                                检查全部页面；有 error 时退出 1
 ```
 
+`list`、`search`（含 `--status all`）只包含能解析的页面；frontmatter 不合法的页面文件由 `lint` 报告，`show` 给出解析错误（[0053](decisions/0053-smoke-test-follow-ups.md)）。
+
 ## 写
 
-所有写命令：持写锁 → 校验 → secret 扫描 → 原子写 → 重建 `index.md` → 追加 `log.md`；成功后输出新的 `rev`。
+所有写命令：持写锁 → 校验 → secret 扫描 → 原子写 → 重建 `index.md` → 追加 `log.md`；成功后输出新的 `rev`。正文按 stdin 原样存储，不做规范化：只差末尾换行也是改动（`updated`），写入相同字节才是 `unchanged`（0053）。
 
 ```
 mwf new <slug> --type T --title "…" --summary "…" [--tag t]...    正文从 stdin
@@ -52,6 +54,8 @@ mwf hook <event> --host claude|codex     由宿主调用；读 stdin JSON，输�
 mwf install --host claude|codex [--dry-run]
 mwf uninstall --host claude|codex [--dry-run]
 ```
+
+这三条命令由 bin 在 clap 之前分发，不在 `mwf --help` 的 `Commands:` 中，帮助末尾的 `Host integration` 一段列出它们（0052、0053）。`uninstall` 不删除上一级的 `skills/`、`.agents/` 目录，也保留 `.mwf-bak-*` 备份（0052）。
 
 `install` 把四个 hook（每个事件一条 `mwf hook <event> --host <host>`，超时 10 s）加入宿主的用户级 hooks 文件，并写入 `mwf` skill；`uninstall` 只删除这些。`--dry-run` 只打印将要做的改动。文件位置（0031、0052）：
 
@@ -75,7 +79,7 @@ mwf uninstall --host claude|codex [--dry-run]
 | `INVALID_FIELD` | frontmatter 字段不合法（type 不在枚举内、summary 过长……） |
 | `REV_MISMATCH` | `write` 的 rev 与当前不一致 |
 | `PATCH_NO_MATCH` / `PATCH_AMBIGUOUS` | `patch` 旧串无匹配 / 多处匹配 |
-| `SECRET_DETECTED` | 新增内容疑似密钥 |
+| `SECRET_DETECTED` | 新增内容疑似密钥；行号是页面文件（含 frontmatter）的行号（0049、0053） |
 | `HAS_BACKLINKS` | `delete` 时仍有入链 |
 | `LOCK_TIMEOUT` | 等写锁超时 |
 | `INVALID_PAGE` | 要读或改的页面文件本身不合法；运行 `mwf lint`（[0049](decisions/0049-app-defaults.md)） |

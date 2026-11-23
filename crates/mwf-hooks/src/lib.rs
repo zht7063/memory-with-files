@@ -401,11 +401,9 @@ impl Hook<'_> {
                 let command = match input.get("command").or_else(|| input.get("cmd")) {
                     Some(Value::String(s)) => s.clone(),
                     // Codex may pass argv, as `["bash", "-lc", "…"]`.
-                    Some(Value::Array(argv)) => argv
-                        .iter()
-                        .filter_map(Value::as_str)
-                        .collect::<Vec<_>>()
-                        .join(" "),
+                    Some(Value::Array(argv)) => {
+                        guard::argv_command(argv.iter().filter_map(Value::as_str))
+                    }
                     _ => String::new(),
                 };
                 guard::shell_writes_mwf(&command).then_some(mwf_assets::HOOK_DENY_SHELL)
@@ -605,6 +603,26 @@ mod tests {
             let (out, _) = hook_late_at(&root, &args, input.clone(), k);
             assert_eq!(out, "{}\n", "deadline at check {k}: the tool is allowed");
         }
+    }
+
+    #[test]
+    fn pre_tool_denies_shell_c_scripts_from_both_hosts() {
+        let (_dir, root) = project();
+        for (host, command) in [
+            ("claude", json!("bash -lc 'rm .mwf/pages/x.md'")),
+            ("codex", json!(["bash", "-lc", "rm .mwf/pages/x.md"])),
+            (
+                "codex",
+                json!(["sh", "-c", "sed -i 's/a/b/' .mwf/pages/x.md"]),
+            ),
+        ] {
+            let input = json!({"tool_name": "Bash", "tool_input": {"command": command}});
+            let (out, _) = hook_late_at(&root, &["pre-tool", "--host", host], input, usize::MAX);
+            assert!(out.contains("\"permissionDecision\":\"deny\""), "{out}");
+        }
+        let input = json!({"tool_name": "Bash", "tool_input": {"command": ["bash", "-lc", "cat .mwf/log.md"]}});
+        let (out, _) = hook_late_at(&root, &["pre-tool", "--host", "codex"], input, usize::MAX);
+        assert_eq!(out, "{}\n");
     }
 
     #[test]
