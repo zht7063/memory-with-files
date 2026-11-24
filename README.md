@@ -32,7 +32,7 @@ Each [GitHub release](https://github.com/zht7063/memory-with-files/releases) has
 Windows is not supported. To install from an archive, check its hash, extract it, and put `mwf` on your `PATH`:
 
 ```sh
-tag=v2.0.0
+tag=v2.1.0
 target=x86_64-unknown-linux-musl
 base="https://github.com/zht7063/memory-with-files/releases/download/$tag"
 curl -LO "$base/mwf-$target.tar.xz"

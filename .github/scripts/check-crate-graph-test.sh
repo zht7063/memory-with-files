@@ -39,7 +39,7 @@ outside_same_name() {
 
 # A version-only dev-dependency that [patch.crates-io] resolves to the member.
 patched_dev_dependency() {
-  printf '\n[dev-dependencies]\nmwf-domain = "2.0.0"\n' >>crates/mwf-search/Cargo.toml
+  printf '\n[dev-dependencies]\nmwf-domain = "2.1.0"\n' >>crates/mwf-search/Cargo.toml
   printf '\n[patch.crates-io]\nmwf-domain = { path = "crates/mwf-domain" }\n' >>Cargo.toml
 }
 
@@ -70,7 +70,7 @@ edge_in_other_diagram() {
 crate_not_in_diagram() {
   mkdir -p crates/mwf-extra/src
   touch crates/mwf-extra/src/lib.rs
-  printf '[package]\nname = "mwf-extra"\nversion = "2.0.0"\nedition = "2024"\n' \
+  printf '[package]\nname = "mwf-extra"\nversion = "2.1.0"\nedition = "2024"\n' \
     >crates/mwf-extra/Cargo.toml
 }
 
