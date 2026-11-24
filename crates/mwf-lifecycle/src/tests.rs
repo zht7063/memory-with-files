@@ -541,3 +541,109 @@ fn the_codex_trust_note_follows_what_changes() {
     let out = h.ok(&["install", "--host", "codex", "--dry-run"]);
     assert!(!out.contains("run /hooks"), "{out}");
 }
+
+#[test]
+fn antigravity_installs_a_plugin_directory_and_removes_it_whole() {
+    let h = Home::new();
+    let out = h.ok(&["install", "--host", "agy"]);
+    assert!(out.starts_with("installed mwf for Antigravity\n"), "{out}");
+    assert!(out.contains("PreInvocation: added"), "{out}");
+    assert!(out.contains("plugin.json: created"), "{out}");
+    assert!(out.contains("before you remove or move mwf"), "{out}");
+    let dir = h.root.join(".gemini/config/plugins/mwf");
+    let doc = json::parse(&fs::read_to_string(dir.join("hooks.json")).unwrap()).unwrap();
+    assert!(doc.same(&hooks::plugin_hooks("mwf")));
+    assert!(hooks::is_plugin_hooks(&doc));
+    let manifest = fs::read_to_string(dir.join("plugin.json")).unwrap();
+    let manifest = json::parse(&manifest).unwrap();
+    assert_eq!(manifest.get("name").and_then(Json::as_str), Some("mwf"));
+    assert_eq!(
+        manifest.get("version").and_then(Json::as_str),
+        Some(env!("CARGO_PKG_VERSION"))
+    );
+    let before = h.tree();
+    let again = h.ok(&["install", "--host", "antigravity"]);
+    assert!(
+        !again.contains("added") && !again.contains("created"),
+        "{again}"
+    );
+    assert_eq!(h.tree(), before);
+
+    let out = h.ok(&["uninstall", "--host", "antigravity"]);
+    assert!(out.contains("PreToolUse: removed"), "{out}");
+    let tree: Vec<_> = h.tree().into_keys().collect();
+    // No backups: both files were exactly what install wrote.
+    assert_eq!(
+        tree,
+        [
+            ".agents/",
+            ".agents/skills/",
+            ".gemini/",
+            ".gemini/config/",
+            ".gemini/config/plugins/"
+        ]
+    );
+}
+
+#[test]
+fn edited_antigravity_plugin_files_are_backed_up() {
+    let h = Home::new();
+    h.ok(&["install", "--host", "antigravity"]);
+    let dir = h.root.join(".gemini/config/plugins/mwf");
+    fs::write(dir.join("hooks.json"), "not json").unwrap();
+    let out = h.ok(&["install", "--host", "antigravity"]);
+    assert!(out.contains("hooks.json: updated (backup: "), "{out}");
+    assert!(out.contains("SessionStart: updated"), "{out}");
+    let doc = json::parse(&fs::read_to_string(dir.join("hooks.json")).unwrap()).unwrap();
+    assert!(hooks::is_plugin_hooks(&doc));
+    // A hand-added event is the user's: uninstall keeps a copy of the file.
+    let mut text = fs::read_to_string(dir.join("hooks.json")).unwrap();
+    text = text.replacen("\"Stop\"", "\"PostToolUse\": [],\n    \"Stop\"", 1);
+    fs::write(dir.join("hooks.json"), &text).unwrap();
+    let out = h.ok(&["uninstall", "--host", "antigravity"]);
+    assert!(out.contains("hooks.json: removed (backup: "), "{out}");
+    assert!(out.contains("plugin.json: removed\n"), "{out}");
+    assert!(
+        out.contains("kept "),
+        "the backups keep the directory: {out}"
+    );
+    let left: Vec<_> = h
+        .tree()
+        .into_keys()
+        .filter(|k| k.contains(".mwf-bak-"))
+        .collect();
+    assert_eq!(left.len(), 2, "two hooks.json backups: {left:?}");
+}
+
+#[test]
+fn the_shared_skill_stays_while_another_host_uses_it() {
+    let h = Home::new();
+    h.ok(&["install", "--host", "codex"]);
+    h.ok(&["install", "--host", "antigravity"]);
+    let skill = h.root.join(".agents/skills/mwf/SKILL.md");
+    let out = h.ok(&["uninstall", "--host", "codex"]);
+    assert!(out.contains("SKILL.md: unchanged"), "{out}");
+    assert!(out.contains("still installed for Antigravity"), "{out}");
+    assert!(skill.exists());
+    let out = h.ok(&["uninstall", "--host", "antigravity"]);
+    assert!(out.contains("SKILL.md: removed"), "{out}");
+    assert!(!skill.exists());
+
+    // The other way round, and an unreadable Codex file also keeps it.
+    h.ok(&["install", "--host", "codex"]);
+    h.ok(&["install", "--host", "antigravity"]);
+    let out = h.ok(&["uninstall", "--host", "antigravity"]);
+    assert!(out.contains("still installed for Codex"), "{out}");
+    assert!(skill.exists());
+    h.ok(&["install", "--host", "antigravity"]);
+    fs::write(h.root.join(".codex/hooks.json"), "{,").unwrap();
+    let out = h.ok(&["uninstall", "--host", "antigravity"]);
+    assert!(
+        out.contains("could not tell whether mwf is still installed for Codex"),
+        "{out}"
+    );
+    assert!(skill.exists());
+    // Claude's skill is its own: its uninstall never looks at the others.
+    let out = h.ok(&["install", "--host", "claude"]);
+    assert!(!out.contains("kept the shared skill"), "{out}");
+}

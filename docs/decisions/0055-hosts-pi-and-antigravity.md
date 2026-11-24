@@ -2,6 +2,7 @@
 
 - 状态：已接受（2026-11-24）；取代 [0020](0020-hosts.md) 中的“Pi 延后”；细化 [0024](0024-bypass-guard.md)、[0031](0031-install-scope.md)、[0051](0051-hook-apis-and-session-state.md)、[0052](0052-install-and-uninstall.md)
 - 实现：两个宿主各分两步落地，先 Antigravity，后 pi（hooks、lifecycle 与 pi 的扩展资产）。在它们合并之前，不要从 `v2` 发布正式版：本文档与 skill 的命令速查已经列出两个新宿主。
+- 修订（2026-11-24，Antigravity 实现）：补充 Stop 在模型出错与用户中断时的实测结果、没有可用 `cwd` 时不退回进程目录、pre-tool 在参数错误时也放行，以及 lifecycle 输出中插件文件的形式。
 
 ## 背景
 
@@ -23,7 +24,9 @@
 - **没有 UserPromptSubmit**。PreInvocation 在每次模型调用前都触发；`invocationNum` 在每条用户 prompt 开始时归 0。
 - **注入**：SessionStart 与 PreInvocation 输出 `{"injectSteps":[{"systemMessage":{"systemMessage":…}}]}`，内容以 system message 进入对话，之后每次模型请求都还在，所以注入会累积。
 - **Stop**：`{"decision":"continue","reason":…}` 把 `reason` 作为 system message 注入并继续；最多继续 10 次。`continuationActive` 始终为 false，不可用。`executionNum` 每继续一次加 1，每条新 prompt 归 0。
-- **工具**：实际提供给模型的是 `read_file`、`write_file`（`Path`、`Content`）、`edit_file`（`Path`、`Target`、`Replacement`）和 `run_command`（`CommandLine`，**没有** `Cwd`）。文档列出的 `write_to_file` / `replace_file_content` / `TargetFile` 在 CLI 中不存在。
+  - 模型出错（mock 返回 HTTP 400）时 Stop **照样触发**，`terminationReason` 为 `ERROR`，`error` 是错误信息；此时回答 `continue` 会**重新进入循环**，即重试失败的 turn。正常结束时 `terminationReason` 为 `NO_TOOL_CALL`，`error` 为空串。
+  - 用户在交互模式按 Esc 中断时（“Interrupted”）**不触发 Stop**，等待 30 s 也没有。
+- **工具**：实际提供给模型的是 `read_file`、`write_file`（`Path`、`Content`）、`edit_file`（`Path`、`Target`、`Replacement`）和 `run_command`（`CommandLine`，**没有** `Cwd`）。文档列出的 `write_to_file` / `replace_file_content` / `TargetFile` 在 CLI 中不存在。`write_file` 只接受绝对路径（相对路径由 agy 自己拒绝：`must be an absolute path`）；守卫仍按 `cwd` 解析相对路径，以防将来放开。
 - **PreToolUse 失败时拦截（fail closed）**，与文档说的“忽略”相反。退出码非 0、输出不是 JSON、超时、命令不存在（127）都会拦下工具调用，**输出 `{}` 也算拒绝**；只有空 stdout 或 `{"decision":"allow"}` 才放行。`{"decision":"deny","reason":R}` 让工具结果变成 `tool call denied by pre-tool hook: R`。SessionStart、PreInvocation、Stop 失败时放行。
 - **skills**：读 `~/.gemini/config/skills/`，也读 `~/.agents/skills/`。同名时只出现一次，`~/.gemini/config/skills/` 优先。
 
@@ -58,6 +61,8 @@
 - 两个文件按 0052 对 skill 文件的规则管理：内容与本二进制要写的不同就先备份再改写；内容相同为 `unchanged`；`uninstall` 删除两个文件（与本版本不同的先备份），再删除变空的 `mwf/`。上一级的 `plugins/` 不删。
 - 基准目录是 `HOME`；`.gemini/config/plugins/mwf/` 等缺少的目录逐级创建（与 `.codex/` 相同）。符号链接、身份核对、原子写与备份同 0052。
 - 用户在 agy 中禁用了插件时，`install` 不会重新启用它（启用状态不在插件目录中）。
+- `hooks.json` 整个由 mwf 写出：内容与本二进制要写的字节相同为 `unchanged`，否则（含不是 JSON 的文件）先备份再改写。`uninstall` 时，文件恰好是某次 install 写出的样子（四个事件、任意 mwf 程序路径）就不备份，否则先备份。
+- **输出**（0052 的形状加一个键）：`hooks` 指插件的 `hooks.json`，`events` 的键是 `SessionStart`、`PreInvocation`、`Stop`、`PreToolUse`，状态比较新旧文件中该事件的内容（旧文件不是 JSON 时各事件为 `updated` / `removed`）；`plugin` 为 `{"path","status","backup"}`，在 `hooks` 与 `skill` 之间，只在 `antigravity` 时出现；文本输出相应多一行 `plugin: <路径>: <状态>`。`install` 的 notes 总是提醒先 `uninstall` 再删除或移动 mwf。由 `crates/mwf/tests/snapshots/lifecycle_antigravity.snap` 固定。
 
 ### Antigravity：hook 输入与输出
 
@@ -65,11 +70,11 @@
 | --- | --- | --- | --- |
 | session-start | SessionStart | 会话 = `conversationId`；不 reset（`/clear` 已是新会话，也没有压缩事件） | `{"injectSteps":[{"systemMessage":{"systemMessage":<fence 文本>}}]}` |
 | prompt | PreInvocation | 只在 `invocationNum == 0` 时 recall（每条用户 prompt 一次），否则 `{}`；prompt = `lastUserInput` | 同上 |
-| stop | Stop | 只在 `executionNum == 0` 时调用 `stop_reminder`（`executionNum > 0` 相当于 `stop_hook_active`），turn 缺失（0051：返回 true） | `{"decision":"continue","reason":<提醒>}` |
+| stop | Stop | 只在 `executionNum == 0`、`error` 为空且 `terminationReason` 为 `NO_TOOL_CALL`（或文档写的 `model_stop`，不分大小写）时调用 `stop_reminder`；其他情况（续出的轮次、出错、`max_steps_exceeded` 等）输出 `{}`，不让已失败或被截断的 turn 继续。turn 缺失（0051：返回 true） | `{"decision":"continue","reason":<提醒>}` |
 | pre-tool | PreToolUse | `write_file` / `edit_file` 读 `toolCall.args.Path`；`run_command` 把 `toolCall.args.CommandLine` 交给 shell 检测（含 0053 的 `-c` 解包） | `{"decision":"deny","reason":…}` |
 
-- **项目根**：`cwd`；缺失或不是绝对路径时用 `workspacePaths[0]`，再不行用进程目录（0051）。相对的 `Path` 以同一个基准解析。
-- **pre-tool 永不输出 `{}`**：放行、没有 `.mwf/`、坏输入、超过截止时间、任何错误（含 panic 被捕获），都输出 `{"decision":"allow"}`。其他三个事件的“空”仍是 `{}`。
+- **项目根**：`cwd`；缺失或不是绝对路径时用 `workspacePaths[0]`（同样须是绝对路径）。**两者都不可用时什么都不做**：输出“空”，stderr 一行。不退回进程目录：hook 进程的工作目录是插件目录，不是项目。相对的 `Path` 以同一个基准解析。
+- **pre-tool 永不输出 `{}`**：放行、没有 `.mwf/`、坏输入、超过截止时间、任何错误（含 panic 被捕获），都输出 `{"decision":"allow"}`。参数本身有错（未知选项、`--host` 重复等）时，只要参数中有 `pre-tool` 与 `--host antigravity|agy`，也输出 allow：这一判断直接扫描原始参数，不依赖完整的参数解析。其他三个事件的“空”仍是 `{}`。
 - **app 错误**（SessionStart / prompt）：agy 没有只给用户看的 `systemMessage` 顶层字段；`injectSteps` 的 `errorMessage` 会在 `-p` 模式下让整轮以非 0 退出。所以把 0051 的提示文本 ``mwf: <event> hook skipped (<CODE>); run `mwf lint` `` 作为一条 system message 注入，由 agent 转告用户。
 - 预算同 0051（内部截止 3 s、stdin 1 MiB、每次注入最多 9800 字符），宿主超时写 10 s。
 
@@ -108,7 +113,7 @@ agy 在 PreToolUse 出错时拦截。mwf 二进制被删除或改名、`PATH` �
   - pi：`extensions/mwf/index.ts` 存在。
   - Antigravity：`~/.gemini/config/plugins/mwf/` 中有 `plugin.json` 或 `hooks.json`。
 - 判定时读不了（环境变量不合法、文件不是 JSON、类型不对等）就当作仍安装着、保留 skill，并在 notes 中说明。宁可留下 skill，也不误删另一个宿主正在用的。
-- 保留时 skill 的状态为 `unchanged`。
+- 保留时 skill 的状态为 `unchanged`，notes 说明由哪个宿主保留（或无法判断）。pi 的判定在 pi 的实现中加入。
 
 ### 守卫覆盖（0024 的补充）
 

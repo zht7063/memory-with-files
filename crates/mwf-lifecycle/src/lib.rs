@@ -1,7 +1,7 @@
-//! Lifecycle adapter: `mwf install|uninstall --host claude|codex [--dry-run] [--json]`.
+//! Lifecycle adapter: `mwf install|uninstall --host claude|codex|antigravity [--dry-run] [--json]`.
 //!
 //! See [docs/crates/adapters.md](https://github.com/zht7063/memory-with-files/blob/v2/docs/crates/adapters.md)
-//! and ADRs 0031, 0037 and 0052. `install` adds mwf's four hooks to the host's hooks document and
+//! and ADRs 0031, 0037, 0052 and 0055. `install` adds mwf's four hooks to the host's hooks document and
 //! writes the `mwf` skill; `uninstall` removes exactly those. Nothing else in the host's files
 //! changes, and no project's `.mwf/` is read or written.
 
@@ -29,6 +29,7 @@ pub struct Io<'a> {
 pub(crate) enum Host {
     Claude,
     Codex,
+    Antigravity,
 }
 
 impl Host {
@@ -36,6 +37,7 @@ impl Host {
         match self {
             Host::Claude => "claude",
             Host::Codex => "codex",
+            Host::Antigravity => "antigravity",
         }
     }
 
@@ -43,8 +45,20 @@ impl Host {
         match self {
             Host::Claude => "Claude Code",
             Host::Codex => "Codex",
+            Host::Antigravity => "Antigravity",
         }
     }
+}
+
+/// mwf's Antigravity plugin directory, below `HOME` (ADR 0055).
+const PLUGIN_DIR: &str = ".gemini/config/plugins/mwf";
+
+/// The plugin's `plugin.json`.
+fn plugin_manifest() -> String {
+    format!(
+        "{{\n  \"name\": \"mwf\",\n  \"displayName\": \"mwf\",\n  \"version\": \"{}\",\n  \"description\": \"Project wiki memory: brings relevant .mwf/ pages into the session and keeps agents from editing .mwf/ directly.\"\n}}\n",
+        env!("CARGO_PKG_VERSION")
+    )
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -164,7 +178,9 @@ fn error_json(e: &Error) -> String {
 
 fn usage(action: Action) -> String {
     let what = match action {
-        Action::Install => "Add mwf's hooks and the mwf skill to a host (Claude Code or Codex)",
+        Action::Install => {
+            "Add mwf's hooks and the mwf skill to a host (Claude Code, Codex or Antigravity)"
+        }
         Action::Uninstall => {
             "Remove mwf's hooks and the mwf skill from a host; project wikis (.mwf/) stay"
         }
@@ -175,14 +191,15 @@ fn usage(action: Action) -> String {
 Usage: mwf {} --host <HOST> [--dry-run] [--json]
 
 Options:
-      --host <HOST>  claude or codex
+      --host <HOST>  claude, codex or antigravity (also agy)
       --dry-run      Print what would change; write nothing
       --json         Print `{{\"ok\": true, \"data\": …}}` or `{{\"ok\": false, \"error\": …}}` instead of text
   -h, --help         Print help
 
 Files:
-  claude  $CLAUDE_CONFIG_DIR (default ~/.claude): settings.json and skills/mwf/
-  codex   $CODEX_HOME (default ~/.codex): hooks.json; and ~/.agents/skills/mwf/
+  claude       $CLAUDE_CONFIG_DIR (default ~/.claude): settings.json and skills/mwf/
+  codex        $CODEX_HOME (default ~/.codex): hooks.json; and ~/.agents/skills/mwf/
+  antigravity  ~/.gemini/config/plugins/mwf/ (plugin.json, hooks.json); and ~/.agents/skills/mwf/
 ",
         action.name()
     )
@@ -229,8 +246,12 @@ fn parse(args: &[OsString]) -> Result<Parsed, String> {
             let h = match value {
                 "claude" => Host::Claude,
                 "codex" => Host::Codex,
+                "antigravity" | "agy" => Host::Antigravity,
                 _ => {
-                    return Err("invalid value for '--host <HOST>': use claude or codex".to_owned());
+                    return Err(
+                        "invalid value for '--host <HOST>': use claude, codex or antigravity"
+                            .to_owned(),
+                    );
                 }
             };
             if host.replace(h).is_some() {
@@ -260,6 +281,8 @@ struct Layout {
     hooks_rel: PathBuf,
     skill_base: PathBuf,
     skill_rel: PathBuf,
+    /// Antigravity's `plugin.json`, below `hooks_base`.
+    plugin_rel: Option<PathBuf>,
 }
 
 /// The directory in `var`, when it is set and not empty; it must be absolute.
@@ -309,6 +332,13 @@ fn layout(host: Host, env: &Env) -> Result<Layout, Error> {
             };
             (hooks, (h, name, ".agents/skills/mwf"))
         }
+        Host::Antigravity => {
+            let (h, name) = home(env)?;
+            (
+                (h.clone(), name, ".gemini/config/plugins/mwf/hooks.json"),
+                (h, name, ".agents/skills/mwf"),
+            )
+        }
     };
     for (base, name, _) in [&hooks, &skill] {
         if !fs::metadata(base).is_ok_and(|m| m.is_dir()) {
@@ -323,7 +353,63 @@ fn layout(host: Host, env: &Env) -> Result<Layout, Error> {
         hooks_rel: PathBuf::from(hooks.2),
         skill_base: skill.0,
         skill_rel: PathBuf::from(skill.2),
+        plugin_rel: (host == Host::Antigravity).then(|| Path::new(PLUGIN_DIR).join("plugin.json")),
     })
+}
+
+/// The notes saying why `uninstall --host host` keeps the shared skill in `~/.agents/skills/`:
+/// another host that reads it still has mwf installed, or it is unclear whether it does
+/// (ADR 0055). Empty: the skill goes.
+fn skill_keepers(host: Host, env: &Env) -> Vec<String> {
+    let mut out = Vec::new();
+    for other in [Host::Codex, Host::Antigravity] {
+        if other == host || host == Host::Claude {
+            continue;
+        }
+        match installed(other, env) {
+            Ok(false) => {}
+            Ok(true) => out.push(format!(
+                "kept the shared skill: mwf is still installed for {}",
+                other.title()
+            )),
+            Err(()) => out.push(format!(
+                "kept the shared skill: could not tell whether mwf is still installed for {}",
+                other.title()
+            )),
+        }
+    }
+    out
+}
+
+/// Whether mwf is installed for `host`; `Err` when that cannot be read.
+fn installed(host: Host, env: &Env) -> Result<bool, ()> {
+    let exists = |p: &Path| match fs::symlink_metadata(p) {
+        Ok(_) => Ok(true),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(_) => Err(()),
+    };
+    match host {
+        Host::Codex => {
+            let path = match dir_var(env.codex_home.as_ref(), "CODEX_HOME").map_err(|_| ())? {
+                Some(dir) => dir.join("hooks.json"),
+                None => home(env).map_err(|_| ())?.0.join(".codex/hooks.json"),
+            };
+            let text = match fs::read_to_string(&path) {
+                Ok(t) => t,
+                Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
+                Err(_) => return Err(()),
+            };
+            if text.is_empty() {
+                return Ok(false);
+            }
+            Ok(hooks::has_ours(&json::parse(&text).map_err(|_| ())?, host))
+        }
+        Host::Antigravity => {
+            let dir = home(env).map_err(|_| ())?.0.join(PLUGIN_DIR);
+            Ok(exists(&dir.join("plugin.json"))? || exists(&dir.join("hooks.json"))?)
+        }
+        Host::Claude => Ok(false),
+    }
 }
 
 /// The program the hook commands run (ADRs 0037, 0052): `mwf` when the first `mwf` that a
@@ -423,6 +509,8 @@ struct Report {
     hooks_path: PathBuf,
     hooks: FileReport,
     events: Events,
+    /// Antigravity's `plugin.json` and its path.
+    plugin: Option<(PathBuf, FileReport)>,
     skill_dir: PathBuf,
     skill: Vec<FileReport>,
     notes: Vec<String>,
@@ -447,6 +535,9 @@ fn plan_hooks(
     cmd: &Command,
     program: &str,
 ) -> Result<(FileReport, Events), Error> {
+    if cmd.host == Host::Antigravity {
+        return plan_plugin_hooks(layout, cmd.action, program);
+    }
     let (base, rel) = (&layout.hooks_base, &layout.hooks_rel);
     let path = base.join(rel);
     let snap = fsx::read(base, rel)?;
@@ -501,36 +592,105 @@ fn plan_hooks(
     ))
 }
 
-/// The skill files' changes (ADR 0052: the `mwf` skill directory is mwf's).
-fn plan_skill(layout: &Layout, action: Action) -> Result<Vec<FileReport>, Error> {
-    let mut out = Vec::new();
-    for (rel, content) in mwf_assets::SKILL_FILES {
-        let file_rel = layout.skill_rel.join(rel);
-        let snap = fsx::read(&layout.skill_base, &file_rel)?;
-        let same = snap.bytes.as_deref() == Some(content.as_bytes());
-        let (status, new, backup) = match (action, &snap.bytes) {
-            (Action::Install, None) => ("created", Some(content.as_bytes().to_vec()), false),
-            (Action::Install, Some(_)) if same => ("unchanged", None, false),
-            (Action::Install, Some(_)) => ("updated", Some(content.as_bytes().to_vec()), true),
-            (Action::Uninstall, None) => ("absent", None, false),
-            // An edited or older file is backed up before it goes.
-            (Action::Uninstall, Some(_)) => ("removed", None, !same),
-        };
-        let change = (status != "unchanged" && status != "absent").then(|| Change {
-            base: layout.skill_base.clone(),
-            rel: file_rel,
-            old: snap.clone(),
-            new,
-            backup,
-        });
-        out.push(FileReport {
-            name: (*rel).to_owned(),
+/// The hooks document of mwf's Antigravity plugin: a file mwf owns, written whole (ADR 0055).
+/// The events compare the old and new documents; a file that is not JSON is replaced, after a
+/// backup.
+fn plan_plugin_hooks(
+    layout: &Layout,
+    action: Action,
+    program: &str,
+) -> Result<(FileReport, Events), Error> {
+    let (base, rel) = (&layout.hooks_base, &layout.hooks_rel);
+    let snap = fsx::read(base, rel)?;
+    let old_doc = snap.bytes.as_ref().map(|b| {
+        std::str::from_utf8(b)
+            .ok()
+            .and_then(|t| json::parse(t).ok())
+    });
+    let new_doc = (action == Action::Install).then(|| hooks::plugin_hooks(program));
+    let (status, new, backup) = match (&new_doc, &snap.bytes) {
+        (Some(doc), old) => {
+            let bytes = doc.pretty(&Style::default()).into_bytes();
+            match old {
+                None => ("created", Some(bytes), false),
+                Some(o) if *o == bytes => ("unchanged", None, false),
+                Some(_) => ("updated", Some(bytes), true),
+            }
+        }
+        (None, None) => ("absent", None, false),
+        (None, Some(_)) => (
+            "removed",
+            None,
+            !matches!(&old_doc, Some(Some(d)) if hooks::is_plugin_hooks(d)),
+        ),
+    };
+    let events = hooks::plugin_events(old_doc.as_ref().map(Option::as_ref), new_doc.as_ref());
+    let change = (status != "unchanged" && status != "absent").then(|| Change {
+        base: base.clone(),
+        rel: rel.clone(),
+        old: snap.clone(),
+        new,
+        backup,
+    });
+    Ok((
+        FileReport {
+            name: base.join(rel).display().to_string(),
             status,
             backup: None,
             change,
-        });
-    }
-    Ok(out)
+        },
+        events,
+    ))
+}
+
+/// One file mwf owns whole (ADR 0052): written when missing or different, backed up first
+/// when it differs; on uninstall removed, backed up when it is not this version's.
+fn plan_file(
+    base: &Path,
+    rel: PathBuf,
+    name: String,
+    content: &[u8],
+    action: Action,
+) -> Result<FileReport, Error> {
+    let snap = fsx::read(base, &rel)?;
+    let same = snap.bytes.as_deref() == Some(content);
+    let (status, new, backup) = match (action, &snap.bytes) {
+        (Action::Install, None) => ("created", Some(content.to_vec()), false),
+        (Action::Install, Some(_)) if same => ("unchanged", None, false),
+        (Action::Install, Some(_)) => ("updated", Some(content.to_vec()), true),
+        (Action::Uninstall, None) => ("absent", None, false),
+        // An edited or older file is backed up before it goes.
+        (Action::Uninstall, Some(_)) => ("removed", None, !same),
+    };
+    let change = (status != "unchanged" && status != "absent").then(|| Change {
+        base: base.to_path_buf(),
+        rel,
+        old: snap.clone(),
+        new,
+        backup,
+    });
+    Ok(FileReport {
+        name,
+        status,
+        backup: None,
+        change,
+    })
+}
+
+/// The skill files' changes (ADR 0052: the `mwf` skill directory is mwf's).
+fn plan_skill(layout: &Layout, action: Action) -> Result<Vec<FileReport>, Error> {
+    mwf_assets::SKILL_FILES
+        .iter()
+        .map(|(rel, content)| {
+            plan_file(
+                &layout.skill_base,
+                layout.skill_rel.join(rel),
+                (*rel).to_owned(),
+                content.as_bytes(),
+                action,
+            )
+        })
+        .collect()
 }
 
 fn apply(file: &mut FileReport) -> Result<(), Error> {
@@ -558,15 +718,56 @@ fn execute(cmd: &Command, env: &Env) -> Result<Report, Error> {
         Action::Uninstall => None,
     };
     let (mut hooks, events) = plan_hooks(&layout, cmd, command.as_deref().unwrap_or("mwf"))?;
+    let mut plugin = match &layout.plugin_rel {
+        Some(rel) => Some((
+            layout.hooks_base.join(rel),
+            plan_file(
+                &layout.hooks_base,
+                rel.clone(),
+                layout.hooks_base.join(rel).display().to_string(),
+                plugin_manifest().as_bytes(),
+                cmd.action,
+            )?,
+        )),
+        None => None,
+    };
     let mut skill = plan_skill(&layout, cmd.action)?;
+    // The skill in ~/.agents/skills/ is shared: it stays while another host uses it (ADR 0055).
+    let keepers = match cmd.action {
+        Action::Uninstall => skill_keepers(cmd.host, env),
+        Action::Install => Vec::new(),
+    };
+    if !keepers.is_empty() {
+        for f in &mut skill {
+            if f.change.take().is_some() {
+                f.status = "unchanged";
+            }
+        }
+        notes.extend(keepers.iter().cloned());
+    }
     if !cmd.dry_run {
         match cmd.action {
             Action::Install => {
                 skill.iter_mut().try_for_each(apply)?;
+                if let Some((_, p)) = &mut plugin {
+                    apply(p)?;
+                }
                 apply(&mut hooks)?;
             }
             Action::Uninstall => {
                 apply(&mut hooks)?;
+                if let Some((_, p)) = &mut plugin {
+                    apply(p)?;
+                }
+                if layout.plugin_rel.is_some() {
+                    let dir = Path::new(PLUGIN_DIR);
+                    if !fsx::remove_empty_dir(&layout.hooks_base, dir) {
+                        notes.push(format!(
+                            "kept {}: it holds files mwf did not write",
+                            layout.hooks_base.join(dir).display()
+                        ));
+                    }
+                }
                 skill.iter_mut().try_for_each(apply)?;
                 for (rel, _) in mwf_assets::SKILL_FILES.iter().rev() {
                     let mut dir = layout.skill_rel.join(rel);
@@ -575,7 +776,7 @@ fn execute(cmd: &Command, env: &Env) -> Result<Report, Error> {
                     }
                 }
                 let dir = layout.skill_base.join(&layout.skill_rel);
-                if fs::symlink_metadata(&dir).is_ok() {
+                if keepers.is_empty() && fs::symlink_metadata(&dir).is_ok() {
                     notes.push(format!(
                         "kept {}: it holds files mwf did not write",
                         dir.display()
@@ -597,6 +798,9 @@ fn execute(cmd: &Command, env: &Env) -> Result<Report, Error> {
             }
             .to_owned(),
         ),
+        (Action::Install, Host::Antigravity) => notes.push(
+            "Antigravity blocks file edits and shell commands when a PreToolUse hook fails: run `mwf uninstall --host antigravity` before you remove or move mwf".to_owned(),
+        ),
         (Action::Install, _) => {}
         (Action::Uninstall, _) => {
             notes.push("project wikis (.mwf/) were not touched".to_owned());
@@ -615,6 +819,7 @@ fn execute(cmd: &Command, env: &Env) -> Result<Report, Error> {
         hooks_path: layout.hooks_base.join(&layout.hooks_rel),
         hooks,
         events,
+        plugin,
         skill_dir: layout.skill_base.join(&layout.skill_rel),
         skill,
         notes,
@@ -663,8 +868,18 @@ impl Report {
         if let Some(c) = &self.command {
             entries.push(("command", Json::str(c)));
         }
+        entries.push(("hooks", hooks));
+        if let Some((path, f)) = &self.plugin {
+            entries.push((
+                "plugin",
+                Json::object(vec![
+                    ("path", path_json(path)),
+                    ("status", Json::str(f.status)),
+                    ("backup", backup(&f.backup)),
+                ]),
+            ));
+        }
         entries.extend([
-            ("hooks", hooks),
             ("skill", skill),
             (
                 "notes",
@@ -703,6 +918,14 @@ impl Report {
         );
         for (event, status) in &self.events {
             out += &format!("  {event}: {}\n", status.as_str());
+        }
+        if let Some((path, f)) = &self.plugin {
+            out += &format!(
+                "plugin: {}: {}{}\n",
+                path.display(),
+                f.status,
+                backup(&f.backup)
+            );
         }
         out += &format!("skill: {}\n", self.skill_dir.display());
         for f in &self.skill {

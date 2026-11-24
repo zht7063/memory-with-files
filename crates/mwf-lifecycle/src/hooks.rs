@@ -26,6 +26,104 @@ fn matcher(host: Host, event: &str) -> Option<&'static str> {
     (event == "PreToolUse").then_some(match host {
         Host::Claude => "Edit|Write|MultiEdit|NotebookEdit|Bash",
         Host::Codex => "apply_patch|Bash",
+        // Antigravity blocks a tool when the hook fails, so only the tools the guard reads
+        // (ADR 0055).
+        Host::Antigravity => "write_file|edit_file|run_command",
+    })
+}
+
+/// Antigravity's event names and the `mwf hook` event each runs (ADR 0055).
+pub(crate) const PLUGIN_EVENTS: [(&str, &str); 4] = [
+    ("SessionStart", "session-start"),
+    ("PreInvocation", "prompt"),
+    ("Stop", "stop"),
+    ("PreToolUse", "pre-tool"),
+];
+
+/// The name of the hook group in Antigravity's plugin `hooks.json`.
+const PLUGIN_GROUP: &str = "mwf";
+
+/// The `hooks.json` of mwf's Antigravity plugin: one group, flat handler lists except
+/// PreToolUse's matcher group (ADR 0055).
+pub(crate) fn plugin_hooks(program: &str) -> Json {
+    let events = PLUGIN_EVENTS
+        .iter()
+        .map(|(event, hook_event)| {
+            let handler = Json::object(vec![
+                ("type", Json::str("command")),
+                (
+                    "command",
+                    Json::str(&command(program, hook_event, Host::Antigravity)),
+                ),
+                ("timeout", Json::Number(TIMEOUT_SECS.to_owned())),
+            ]);
+            let item = match matcher(Host::Antigravity, event) {
+                Some(m) => Json::object(vec![
+                    ("matcher", Json::str(m)),
+                    ("hooks", Json::Array(vec![handler], Span::default())),
+                ]),
+                None => handler,
+            };
+            (*event, Json::Array(vec![item], Span::default()))
+        })
+        .collect();
+    Json::object(vec![(PLUGIN_GROUP, Json::object(events))])
+}
+
+/// The status of each Antigravity event between the plugin's `hooks.json` as it was (`None`:
+/// no file; a file that is not JSON counts as holding other entries) and as it will be.
+pub(crate) fn plugin_events(
+    old: Option<Option<&Json>>,
+    new: Option<&Json>,
+) -> Vec<(&'static str, Status)> {
+    let entry = |doc: Option<&Json>, event: &str| {
+        doc.and_then(|d| d.get(PLUGIN_GROUP))
+            .and_then(|g| g.get(event))
+            .cloned()
+    };
+    PLUGIN_EVENTS
+        .iter()
+        .map(|(event, _)| {
+            let had = match old {
+                None => None,
+                Some(None) => Some(None),
+                Some(Some(doc)) => entry(Some(doc), event).map(Some),
+            };
+            let status = match (had, entry(new, event)) {
+                (None, None) => Status::Absent,
+                (Some(_), None) => Status::Removed,
+                (None, Some(_)) => Status::Added,
+                (Some(Some(a)), Some(b)) if a.same(&b) => Status::Unchanged,
+                (Some(_), Some(_)) => Status::Updated,
+            };
+            (*event, status)
+        })
+        .collect()
+}
+
+/// Whether `doc` is exactly the plugin `hooks.json` some mwf install wrote: removing it then
+/// loses nothing the user wrote, so it needs no backup.
+pub(crate) fn is_plugin_hooks(doc: &Json) -> bool {
+    let Some(Json::Array(items, _)) = doc.get(PLUGIN_GROUP).and_then(|g| g.get("Stop")) else {
+        return false;
+    };
+    let Some(first) = items.first().filter(|h| is_ours(h, Host::Antigravity)) else {
+        return false;
+    };
+    let Some(words) = first.get("command").and_then(Json::as_str).and_then(split) else {
+        return false;
+    };
+    plugin_hooks(&words[0]).same(doc)
+}
+
+/// Whether `doc` holds any of mwf's handlers for `host`, in any event.
+pub(crate) fn has_ours(doc: &Json, host: Host) -> bool {
+    let Some(Json::Object(events, _)) = doc.get("hooks") else {
+        return false;
+    };
+    events.iter().any(|(_, groups)| match groups {
+        Json::Array(groups, _) => groups.iter().any(|g| ours_in(g, host) > 0),
+        _ => false,
     })
 }
 
@@ -138,7 +236,7 @@ fn is_ours(handler: &Json, host: Host) -> bool {
         && words[1] == "hook"
         && EVENTS.iter().any(|(_, e)| *e == words[2])
         && words[3] == "--host"
-        && words[4] == host.name()
+        && (words[4] == host.name() || (host == Host::Antigravity && words[4] == "agy"))
 }
 
 /// mwf's matcher group for `event`: what `install` writes.

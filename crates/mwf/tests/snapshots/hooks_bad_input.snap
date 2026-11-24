@@ -10,7 +10,7 @@ $ mwf hook finish --host claude
 $ mwf hook stop --host pi
 < {"cwd":"[ROOT]","session_id":"s"}
 {}
-[stderr] mwf hook: unknown host "pi"; use claude or codex
+[stderr] mwf hook: unknown host "pi"; use claude, codex or antigravity
 
 $ mwf hook stop --host codex
 < not json

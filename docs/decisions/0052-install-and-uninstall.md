@@ -1,7 +1,7 @@
 # 0052 install / uninstall 的文件、条目、安全边界与输出
 
 - 状态：已接受（2026-11-22）；细化 [0024](0024-bypass-guard.md)、[0031](0031-install-scope.md)、[0036](0036-skill-organization.md)、[0037](0037-lifecycle-safety.md)、[0042](0042-dependency-policy.md)、[0050](0050-cli-output-and-usage-errors.md)、[0051](0051-hook-apis-and-session-state.md)
-- 注：pi 的扩展目录与 Antigravity 的插件目录归 mwf，按本文对 skill 文件的规则管理；`~/.agents/skills/mwf/` 由 Codex、pi、Antigravity 共用，`uninstall` 在另一个共享宿主仍安装着时保留它；`--host agy` 是 `antigravity` 的别名，认出条目时两种写法都算。见 [0055](0055-hosts-pi-and-antigravity.md)。
+- 注：pi 的扩展目录与 Antigravity 的插件目录归 mwf，按本文对 skill 文件的规则管理；`~/.agents/skills/mwf/` 由 Codex、pi、Antigravity 共用，`uninstall` 在另一个共享宿主仍安装着时保留它；`--host agy` 是 `antigravity` 的别名；Antigravity 的 hooks 在 mwf 独占的插件文件中，整个文件由 mwf 写出（总是写 `--host antigravity`），所以不按本文的条目规则合并或认出条目。见 [0055](0055-hosts-pi-and-antigravity.md)。
 
 ## 背景
 
