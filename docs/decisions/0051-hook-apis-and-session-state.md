@@ -1,6 +1,7 @@
 # 0051 hooks 的事件、注入内容、预算与会话状态
 
 - 状态：已接受（2026-11-22）；细化 [0024](0024-bypass-guard.md)、[0030](0030-hooks-behavior.md)、[0034](0034-session-state.md)、[0039](0039-bm25-scoring-and-relevance.md)、[0040](0040-llm-wiki-workflow.md)、[0049](0049-app-defaults.md)
+- 注：pi 与 Antigravity 的事件映射、输入与输出形式见 [0055](0055-hosts-pi-and-antigravity.md)。Antigravity 没有 UserPromptSubmit（prompt 用 PreInvocation 且只在 `invocationNum == 0` 时），Stop 防循环用 `executionNum`，pre-tool 的“空”输出是 `{"decision":"allow"}` 而不是 `{}`。
 
 ## 背景
 

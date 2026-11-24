@@ -45,8 +45,8 @@ EOF
 | Command | Does |
 | --- | --- |
 | `mwf init [--local]` | Creates `.mwf/` at the root of the git repository; `--local` keeps it out of git. Run it only when the user asks. |
-| `mwf install --host claude\|codex [--dry-run]` / `mwf uninstall --host claude\|codex [--dry-run]` | Adds or removes the hooks and this skill for a host, in the user's home directory; `--dry-run` only prints what would change. The user runs these. |
-| `mwf hook <event> --host claude\|codex` | Called by the host's hooks, not by you. Reads the host's hook JSON on stdin, prints one line of the host's hook JSON (not the `{"ok":…}` envelope) and always exits 0. |
+| `mwf install --host <host> [--dry-run]` / `mwf uninstall --host <host> [--dry-run]` | Adds or removes the hooks and this skill for a host, in the user's home directory; `--dry-run` only prints what would change. `<host>` is `claude`, `codex`, `pi` or `antigravity` (also `agy`). The user runs these. |
+| `mwf hook <event> --host <host>` | Called by the host's hooks, not by you. Reads the host's hook JSON on stdin, prints one line of the host's hook JSON (not the `{"ok":…}` envelope) and always exits 0. |
 
 ## Errors to handle
 
