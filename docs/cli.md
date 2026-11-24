@@ -57,7 +57,7 @@ mwf install --host <host> [--dry-run]
 mwf uninstall --host <host> [--dry-run]
 ```
 
-`<host>`：`claude`、`codex`、`pi`、`antigravity`（别名 `agy`，[0055](decisions/0055-hosts-pi-and-antigravity.md)）。最低版本：pi 1.6.0、agy 1.5.16。
+`<host>`：`claude`、`codex`、`pi`、`antigravity`（别名 `agy`，[0055](decisions/0055-hosts-pi-and-antigravity.md)）。最低版本：pi 1.6.0；Antigravity CLI（`agy` 命令）1.5.16。`pi` 尚未实现。
 
 这三条命令由 bin 在 clap 之前分发，不在 `mwf --help` 的 `Commands:` 中，帮助末尾的 `Host integration` 一段列出它们（0052、0053）。`uninstall` 不删除上一级的 `skills/`、`.agents/`、`extensions/`、`plugins/` 目录，也保留 `.mwf-bak-*` 备份（0052）。
 

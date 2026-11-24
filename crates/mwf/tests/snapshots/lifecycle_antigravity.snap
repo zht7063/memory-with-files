@@ -1,0 +1,118 @@
+---
+source: crates/mwf/tests/lifecycle.rs
+expression: self.transcript
+---
+$ mwf install --host agy --dry-run
+would install mwf for Antigravity (dry run: nothing was written)
+hooks: [HOME]/.gemini/config/plugins/mwf/hooks.json: created
+  SessionStart: added
+  PreInvocation: added
+  Stop: added
+  PreToolUse: added
+plugin: [HOME]/.gemini/config/plugins/mwf/plugin.json: created
+skill: [HOME]/.agents/skills/mwf
+  SKILL.md: created
+  references/commands.md: created
+hook command: mwf
+note: Antigravity blocks file edits and shell commands when a PreToolUse hook fails: run `mwf uninstall --host antigravity` before you remove or move mwf
+note: the hooks do nothing in a project until `mwf init` creates its .mwf/
+[exit 0]
+
+$ mwf install --host antigravity --json
+{"ok":true,"data":{"action":"install","host":"antigravity","dry_run":false,"command":"mwf","hooks":{"path":"[HOME]/.gemini/config/plugins/mwf/hooks.json","status":"created","backup":null,"events":{"SessionStart":"added","PreInvocation":"added","Stop":"added","PreToolUse":"added"}},"plugin":{"path":"[HOME]/.gemini/config/plugins/mwf/plugin.json","status":"created","backup":null},"skill":{"dir":"[HOME]/.agents/skills/mwf","files":[{"path":"SKILL.md","status":"created","backup":null},{"path":"references/commands.md","status":"created","backup":null}]},"notes":["Antigravity blocks file edits and shell commands when a PreToolUse hook fails: run `mwf uninstall --host antigravity` before you remove or move mwf","the hooks do nothing in a project until `mwf init` creates its .mwf/"]}}
+[exit 0]
+
+--- ~/.gemini/config/plugins/mwf/plugin.json
+{
+  "name": "mwf",
+  "displayName": "mwf",
+  "version": "2.0.0",
+  "description": "Project wiki memory: brings relevant .mwf/ pages into the session and keeps agents from editing .mwf/ directly."
+}
+
+--- ~/.gemini/config/plugins/mwf/hooks.json
+{
+  "mwf": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "mwf hook session-start --host antigravity",
+        "timeout": 10
+      }
+    ],
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "mwf hook prompt --host antigravity",
+        "timeout": 10
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "mwf hook stop --host antigravity",
+        "timeout": 10
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "write_file|edit_file|run_command",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "mwf hook pre-tool --host antigravity",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
+
+$ mwf install --host antigravity
+installed mwf for Antigravity
+hooks: [HOME]/.gemini/config/plugins/mwf/hooks.json: unchanged
+  SessionStart: unchanged
+  PreInvocation: unchanged
+  Stop: unchanged
+  PreToolUse: unchanged
+plugin: [HOME]/.gemini/config/plugins/mwf/plugin.json: unchanged
+skill: [HOME]/.agents/skills/mwf
+  SKILL.md: unchanged
+  references/commands.md: unchanged
+hook command: mwf
+note: Antigravity blocks file edits and shell commands when a PreToolUse hook fails: run `mwf uninstall --host antigravity` before you remove or move mwf
+note: the hooks do nothing in a project until `mwf init` creates its .mwf/
+[exit 0]
+
+$ mwf install --host codex
+installed mwf for Codex
+hooks: [HOME]/.codex/hooks.json: created
+  SessionStart: added
+  UserPromptSubmit: added
+  Stop: added
+  PreToolUse: added
+skill: [HOME]/.agents/skills/mwf
+  SKILL.md: unchanged
+  references/commands.md: unchanged
+hook command: mwf
+note: Codex runs new or changed hooks only after you trust them: run /hooks in Codex and trust the mwf hooks
+note: the hooks do nothing in a project until `mwf init` creates its .mwf/
+[exit 0]
+
+$ mwf uninstall --host antigravity --json
+{"ok":true,"data":{"action":"uninstall","host":"antigravity","dry_run":false,"hooks":{"path":"[HOME]/.gemini/config/plugins/mwf/hooks.json","status":"removed","backup":null,"events":{"SessionStart":"removed","PreInvocation":"removed","Stop":"removed","PreToolUse":"removed"}},"plugin":{"path":"[HOME]/.gemini/config/plugins/mwf/plugin.json","status":"removed","backup":null},"skill":{"dir":"[HOME]/.agents/skills/mwf","files":[{"path":"SKILL.md","status":"unchanged","backup":null},{"path":"references/commands.md","status":"unchanged","backup":null}]},"notes":["kept the shared skill: mwf is still installed for Codex","project wikis (.mwf/) were not touched"]}}
+[exit 0]
+
+$ mwf uninstall --host codex
+uninstalled mwf from Codex
+hooks: [HOME]/.codex/hooks.json: removed
+  SessionStart: removed
+  UserPromptSubmit: removed
+  Stop: removed
+  PreToolUse: removed
+skill: [HOME]/.agents/skills/mwf
+  SKILL.md: removed
+  references/commands.md: removed
+note: project wikis (.mwf/) were not touched
+[exit 0]

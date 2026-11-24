@@ -271,3 +271,48 @@ fn errors() {
     );
     assert!(!h.root.join(".claude/skills").exists());
 }
+
+/// Antigravity (ADR 0055): a plugin directory mwf owns, its two files in the output, the
+/// shared skill kept while Codex still uses it, and hooks that run as the plugin says.
+#[test]
+fn antigravity_session() {
+    let mut h = Home::new();
+    h.run(&["install", "--host", "agy", "--dry-run"]);
+    h.run(&["install", "--host", "antigravity", "--json"]);
+    h.show(".gemini/config/plugins/mwf/plugin.json");
+    h.show(".gemini/config/plugins/mwf/hooks.json");
+    h.run(&["install", "--host", "antigravity"]);
+    h.run(&["install", "--host", "codex"]);
+    h.run(&["uninstall", "--host", "antigravity", "--json"]);
+    h.run(&["uninstall", "--host", "codex"]);
+    h.snapshot("lifecycle_antigravity");
+    let left: Vec<_> = h.tree().into_iter().filter(|p| !p.ends_with('/')).collect();
+    assert!(left.is_empty(), "{left:?}");
+}
+
+#[test]
+fn installed_antigravity_hooks_run() {
+    let h = Home::new();
+    assert!(
+        h.output(&["install", "--host", "antigravity"])
+            .status
+            .success()
+    );
+    let doc = fs::read_to_string(h.root.join(".gemini/config/plugins/mwf/hooks.json")).unwrap();
+    for (event, out) in [
+        ("session-start", "{}\n"),
+        ("prompt", "{}\n"),
+        ("stop", "{}\n"),
+        ("pre-tool", "{\"decision\":\"allow\"}\n"),
+    ] {
+        let line = format!("\"command\": \"mwf hook {event} --host antigravity\"");
+        assert!(doc.contains(&line), "{doc}");
+        let run = h.output(&["hook", event, "--host", "antigravity"]);
+        assert!(run.status.success());
+        assert_eq!(
+            String::from_utf8(run.stdout).unwrap(),
+            out,
+            "{event}: no input, no .mwf/"
+        );
+    }
+}

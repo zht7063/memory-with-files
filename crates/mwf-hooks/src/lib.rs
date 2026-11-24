@@ -1,7 +1,7 @@
-//! Hook adapter: `mwf hook session-start|prompt|stop|pre-tool --host claude|codex`.
+//! Hook adapter: `mwf hook session-start|prompt|stop|pre-tool --host claude|codex|antigravity`.
 //!
 //! See [docs/crates/adapters.md](https://github.com/zht7063/memory-with-files/blob/v2/docs/crates/adapters.md)
-//! and ADR 0051. Every run exits 0 and prints exactly one line of JSON: whatever goes wrong,
+//! and ADRs 0051 and 0055. Every run exits 0 and prints exactly one line of JSON: whatever goes wrong,
 //! the host's session carries on (ADR 0030).
 
 mod fence;
@@ -36,6 +36,19 @@ pub struct Io<'a> {
 enum Host {
     Claude,
     Codex,
+    /// Google Antigravity (`agy`), whose hooks differ in names and shapes (ADR 0055).
+    Antigravity,
+}
+
+impl Host {
+    fn parse(value: &str) -> Option<Host> {
+        match value {
+            "claude" => Some(Host::Claude),
+            "codex" => Some(Host::Codex),
+            "antigravity" | "agy" => Some(Host::Antigravity),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -59,7 +72,7 @@ impl Event {
 
 /// Runs one hook. `args` are the arguments after `hook` (`["session-start", "--host",
 /// "claude"]`); the host's JSON comes on stdin. Always [`ExitCode::SUCCESS`]: bad arguments or
-/// input print `{}` and one `mwf hook: …` line on stderr (ADR 0051).
+/// input print the "nothing to do" output and one `mwf hook: …` line on stderr (ADR 0051).
 pub fn run(args: Vec<OsString>, io: &mut Io) -> ExitCode {
     let deadline = Instant::now() + DEADLINE;
     run_with(args, io, &|| Instant::now() >= deadline)
@@ -79,6 +92,14 @@ fn run_with(args: Vec<OsString>, io: &mut Io, late: &dyn Fn() -> bool) -> ExitCo
             empty()
         }
     };
+    // Antigravity blocks the tool when a PreToolUse hook prints `{}` or fails, so every way of
+    // doing nothing there allows it explicitly (ADR 0055). The host and event are looked for
+    // in the raw arguments, so bad arguments or input still allow.
+    let out = if out == empty() && allows_explicitly(&args) {
+        json!({ "decision": "allow" })
+    } else {
+        out
+    };
     let _ = writeln!(io.stdout, "{out}");
     let _ = io.stdout.flush();
     ExitCode::SUCCESS
@@ -86,6 +107,40 @@ fn run_with(args: Vec<OsString>, io: &mut Io, late: &dyn Fn() -> bool) -> ExitCo
 
 fn empty() -> Value {
     Value::Object(Map::new())
+}
+
+/// Whether the arguments name Antigravity's pre-tool hook, even when they are otherwise bad.
+fn allows_explicitly(args: &[OsString]) -> bool {
+    let mut it = args.iter().map(|a| a.to_string_lossy());
+    let (mut agy, mut pre_tool) = (false, false);
+    while let Some(arg) = it.next() {
+        let value = if arg == "--host" {
+            it.next().map(|v| v.into_owned())
+        } else {
+            arg.strip_prefix("--host=").map(str::to_owned)
+        };
+        match value {
+            Some(v) => agy |= Host::parse(&v) == Some(Host::Antigravity),
+            None => pre_tool |= arg == "pre-tool",
+        }
+    }
+    agy && pre_tool
+}
+
+/// The project directory a hook works in: the host's `cwd` when it is absolute. Antigravity
+/// also gives `workspacePaths`; its hooks run in the plugin's directory, so there is no
+/// fallback to the process directory for it (ADR 0055).
+fn working_dir(host: Host, input: &Value) -> Option<PathBuf> {
+    let absolute = |v: Option<&Value>| {
+        v.and_then(Value::as_str)
+            .map(PathBuf::from)
+            .filter(|p| p.is_absolute())
+    };
+    let cwd = absolute(input.get("cwd"));
+    match host {
+        Host::Antigravity => cwd.or_else(|| absolute(input.pointer("/workspacePaths/0"))),
+        Host::Claude | Host::Codex => cwd.or_else(|| std::env::current_dir().ok()),
+    }
 }
 
 /// The output of one run; `Err` is bad arguments or input, for stderr.
@@ -96,13 +151,7 @@ fn handle(
 ) -> Result<Value, String> {
     let (event, host) = parse_args(args)?;
     let input = read_input(stdin)?;
-    let cwd = input
-        .get("cwd")
-        .and_then(Value::as_str)
-        .map(PathBuf::from)
-        .filter(|p| p.is_absolute())
-        .or_else(|| std::env::current_dir().ok())
-        .ok_or("no working directory")?;
+    let cwd = working_dir(host, &input).ok_or("no absolute working directory")?;
     let hook = Hook {
         host,
         input: &input,
@@ -115,7 +164,7 @@ fn handle(
     let app = match App::open(&cwd) {
         Ok(app) => app,
         Err(e) if e.code == ErrorCode::NotInitialized => return Ok(empty()),
-        Err(e) => return Ok(failed(event, &e)),
+        Err(e) => return Ok(hook.failed(event, &e)),
     };
     let out = match event {
         Event::SessionStart => hook.session_start(&app),
@@ -123,23 +172,7 @@ fn handle(
         Event::Stop => hook.stop(&app),
         Event::PreTool => Ok(hook.pre_tool(&app)),
     };
-    Ok(out.unwrap_or_else(|e| failed(event, &e)))
-}
-
-/// What an app error shows (ADR 0051): a `systemMessage` with the code only (a path could hold
-/// a secret-looking slug) where memory was not injected, nothing for Stop and PreToolUse (the
-/// guard lets the tool run).
-fn failed(event: Event, e: &AppError) -> Value {
-    match event {
-        Event::SessionStart | Event::Prompt => json!({
-            "systemMessage": format!(
-                "mwf: {} hook skipped ({}); run `mwf lint`",
-                event.name(),
-                e.code.as_str()
-            )
-        }),
-        Event::Stop | Event::PreTool => empty(),
-    }
+    Ok(out.unwrap_or_else(|e| hook.failed(event, &e)))
 }
 
 fn parse_args(args: &[OsString]) -> Result<(Event, Host), String> {
@@ -153,11 +186,9 @@ fn parse_args(args: &[OsString]) -> Result<(Event, Host), String> {
             arg.strip_prefix("--host=").map(str::to_owned)
         };
         if let Some(value) = value {
-            let h = match value.as_str() {
-                "claude" => Host::Claude,
-                "codex" => Host::Codex,
-                other => return Err(format!("unknown host {other:?}; use claude or codex")),
-            };
+            let h = Host::parse(&value).ok_or_else(|| {
+                format!("unknown host {value:?}; use claude, codex or antigravity")
+            })?;
             if host.replace(h).is_some() {
                 return Err("--host given twice".to_owned());
             }
@@ -182,7 +213,7 @@ fn parse_args(args: &[OsString]) -> Result<(Event, Host), String> {
     match (event, host) {
         (Some(e), Some(h)) => Ok((e, h)),
         (None, _) => Err("missing event: session-start, prompt, stop or pre-tool".to_owned()),
-        (_, None) => Err("missing --host claude|codex".to_owned()),
+        (_, None) => Err("missing --host claude|codex|antigravity".to_owned()),
     }
 }
 
@@ -234,21 +265,54 @@ impl Hook<'_> {
         (self.late)()
     }
 
-    /// `{"hookSpecificOutput":{"hookEventName":…,"additionalContext":…}}`, the form both hosts
-    /// accept for SessionStart and UserPromptSubmit (and Claude for Stop).
-    fn context(event_name: &str, text: String) -> Value {
-        json!({
-            "hookSpecificOutput": {
-                "hookEventName": event_name,
-                "additionalContext": text,
-            }
-        })
+    /// The host's session id.
+    fn session(&self) -> &str {
+        match self.host {
+            Host::Antigravity => self.str("conversationId"),
+            Host::Claude | Host::Codex => self.str("session_id"),
+        }
+    }
+
+    /// Text for the agent's context: `{"hookSpecificOutput":{"hookEventName":…,
+    /// "additionalContext":…}}`, the form Claude Code and Codex accept for SessionStart and
+    /// UserPromptSubmit (and Claude for Stop); for Antigravity, one injected system message.
+    fn context(&self, event_name: &str, text: String) -> Value {
+        match self.host {
+            Host::Antigravity => json!({
+                "injectSteps": [{ "systemMessage": { "systemMessage": text } }]
+            }),
+            Host::Claude | Host::Codex => json!({
+                "hookSpecificOutput": {
+                    "hookEventName": event_name,
+                    "additionalContext": text,
+                }
+            }),
+        }
+    }
+
+    /// What an app error shows (ADR 0051): the code only (a path could hold a secret-looking
+    /// slug) where memory was not injected, as a `systemMessage` for the user; Antigravity has
+    /// no such field, so the agent gets it to relay (ADR 0055). Nothing for Stop and
+    /// PreToolUse: the guard lets the tool run.
+    fn failed(&self, event: Event, e: &AppError) -> Value {
+        let text = format!(
+            "mwf: {} hook skipped ({}); run `mwf lint`",
+            event.name(),
+            e.code.as_str()
+        );
+        match (event, self.host) {
+            (Event::SessionStart | Event::Prompt, Host::Antigravity) => self.context("", text),
+            (Event::SessionStart | Event::Prompt, _) => json!({ "systemMessage": text }),
+            (Event::Stop | Event::PreTool, _) => empty(),
+        }
     }
 
     /// SessionStart (ADR 0051): forget the session's recalls after `clear` / `compact`, then
     /// inject the project context, fitted inside the fence's budget.
     fn session_start(&self, app: &App) -> Result<Value, AppError> {
-        let session = self.str("session_id");
+        let session = self.session();
+        // Antigravity has no `source`: `/clear` starts a new conversation, and it has no
+        // compaction event (ADR 0055).
         if matches!(self.str("source"), "clear" | "compact") {
             if self.late() {
                 return Ok(empty());
@@ -276,20 +340,28 @@ impl Hook<'_> {
         if data.is_empty() {
             return Ok(empty());
         }
-        Ok(Self::context("SessionStart", fence.wrap(&data)))
+        Ok(self.context("SessionStart", fence.wrap(&data)))
     }
 
     /// UserPromptSubmit (ADR 0051): the slug, title and summary of the recalled pages, whole
     /// lines within the budget; only the pages emitted are recorded for the session.
     fn prompt(&self, app: &App) -> Result<Value, AppError> {
-        let prompt = self.str("prompt");
+        let prompt = match self.host {
+            // PreInvocation runs before every model call and its injections pile up; the
+            // count starts at 0 with each user prompt, so recall runs then only (ADR 0055).
+            Host::Antigravity if self.input.get("invocationNum") != Some(&json!(0)) => {
+                return Ok(empty());
+            }
+            Host::Antigravity => self.str("lastUserInput"),
+            Host::Claude | Host::Codex => self.str("prompt"),
+        };
         if is_mwf_command(prompt) {
             return Ok(empty());
         }
         if self.late() {
             return Ok(empty());
         }
-        let session = self.str("session_id");
+        let session = self.session();
         let pages = app.recall(session, prompt)?;
         if pages.is_empty() || self.late() {
             return Ok(empty());
@@ -324,32 +396,46 @@ impl Hook<'_> {
         }
         // A failed save is reported like any app error (ADR 0051), not hidden.
         app.mark_recalled(session, &emitted)?;
-        Ok(Self::context(
-            "UserPromptSubmit",
-            fence.wrap(&lines.join("\n")),
-        ))
+        Ok(self.context("UserPromptSubmit", fence.wrap(&lines.join("\n"))))
     }
 
     /// Stop (ADR 0051): remind once per turn; never while the host is already continuing
     /// because of a Stop hook. Errors stay silent.
     fn stop(&self, app: &App) -> Result<Value, AppError> {
-        if self.input.get("stop_hook_active") == Some(&Value::Bool(true)) {
-            return Ok(empty());
-        }
-        if self.late() {
+        let continuing = match self.host {
+            Host::Claude | Host::Codex => {
+                self.input.get("stop_hook_active") == Some(&Value::Bool(true))
+            }
+            // `executionNum` counts the continuations of this prompt. A model error also
+            // reaches Stop, and continuing would retry the failed turn; a user's Esc fires no
+            // Stop at all. So only a clean finish of the prompt's first run is reminded
+            // (ADR 0055).
+            Host::Antigravity => {
+                self.input.get("executionNum") != Some(&json!(0))
+                    || !self.str("error").is_empty()
+                    || !matches!(
+                        self.str("terminationReason").to_ascii_lowercase().as_str(),
+                        "no_tool_call" | "model_stop"
+                    )
+            }
+        };
+        if continuing || self.late() {
             return Ok(empty());
         }
         let turn = match self.host {
             Host::Claude => self.str("prompt_id"),
             Host::Codex => self.str("turn_id"),
+            // No turn id: `executionNum` already limits the reminder to one per prompt.
+            Host::Antigravity => "",
         };
-        if !app.stop_reminder(self.str("session_id"), turn)? {
+        if !app.stop_reminder(self.session(), turn)? {
             return Ok(empty());
         }
         let reminder = mwf_assets::HOOK_STOP_REMINDER.trim_end();
         Ok(match self.host {
-            Host::Claude => Self::context("Stop", reminder.to_owned()),
+            Host::Claude => self.context("Stop", reminder.to_owned()),
             Host::Codex => json!({ "decision": "block", "reason": reminder }),
+            Host::Antigravity => json!({ "decision": "continue", "reason": reminder }),
         })
     }
 
@@ -360,8 +446,19 @@ impl Hook<'_> {
         if self.late() {
             return empty();
         }
-        let tool = self.str("tool_name");
-        let input = self.input.get("tool_input").unwrap_or(&Value::Null);
+        let (tool, input) = match self.host {
+            Host::Antigravity => (
+                self.input
+                    .pointer("/toolCall/name")
+                    .and_then(Value::as_str)
+                    .unwrap_or(""),
+                self.input.pointer("/toolCall/args").unwrap_or(&Value::Null),
+            ),
+            Host::Claude | Host::Codex => (
+                self.str("tool_name"),
+                self.input.get("tool_input").unwrap_or(&Value::Null),
+            ),
+        };
         let field = |k: &str| input.get(k).and_then(Value::as_str).unwrap_or("");
         // `None` once past the deadline.
         let inside = |paths: &[&str]| -> Option<bool> {
@@ -397,7 +494,14 @@ impl Hook<'_> {
                     Some(i) => i.then_some(mwf_assets::HOOK_DENY_EDIT),
                 }
             }
-            (_, "Bash" | "shell" | "exec_command" | "local_shell") => {
+            (Host::Antigravity, "write_file" | "edit_file") => match inside(&[field("Path")]) {
+                None => return empty(),
+                Some(i) => i.then_some(mwf_assets::HOOK_DENY_EDIT),
+            },
+            (Host::Antigravity, "run_command") => {
+                guard::shell_writes_mwf(field("CommandLine")).then_some(mwf_assets::HOOK_DENY_SHELL)
+            }
+            (Host::Claude | Host::Codex, "Bash" | "shell" | "exec_command" | "local_shell") => {
                 let command = match input.get("command").or_else(|| input.get("cmd")) {
                     Some(Value::String(s)) => s.clone(),
                     // Codex may pass argv, as `["bash", "-lc", "…"]`.
@@ -410,15 +514,18 @@ impl Hook<'_> {
             }
             _ => None,
         };
-        match reason {
-            Some(reason) => json!({
+        match (reason, self.host) {
+            (Some(reason), Host::Antigravity) => {
+                json!({ "decision": "deny", "reason": reason.trim_end() })
+            }
+            (Some(reason), _) => json!({
                 "hookSpecificOutput": {
                     "hookEventName": "PreToolUse",
                     "permissionDecision": "deny",
                     "permissionDecisionReason": reason.trim_end(),
                 }
             }),
-            None => empty(),
+            (None, _) => empty(),
         }
     }
 }
@@ -441,6 +548,12 @@ mod tests {
             parse_args(&os(&["--host=claude", "pre-tool"])),
             Ok((Event::PreTool, Host::Claude))
         );
+        for agy in ["antigravity", "agy"] {
+            assert_eq!(
+                parse_args(&os(&["prompt", "--host", agy])),
+                Ok((Event::Prompt, Host::Antigravity))
+            );
+        }
         for bad in [
             &["stop"][..],
             &["--host", "claude"],
@@ -629,6 +742,168 @@ mod tests {
         let input = json!({"tool_name": "Bash", "tool_input": {"command": ["bash", "-lc", "cat .mwf/log.md"]}});
         let (out, _) = hook_late_at(&root, &["pre-tool", "--host", "codex"], input, usize::MAX);
         assert_eq!(out, "{}\n");
+    }
+
+    /// stdout and stderr of one run with `stdin` as is.
+    fn raw(args: &[&str], stdin: &str) -> (String, String) {
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        let code = run(
+            os(args),
+            &mut Io {
+                stdin: &mut stdin.as_bytes(),
+                stdout: &mut out,
+                stderr: &mut err,
+            },
+        );
+        assert_eq!(code, ExitCode::SUCCESS);
+        (
+            String::from_utf8(out).unwrap(),
+            String::from_utf8(err).unwrap(),
+        )
+    }
+
+    const ALLOW: &str = "{\"decision\":\"allow\"}\n";
+
+    #[test]
+    fn antigravity_pre_tool_denies_mwf_writes_and_allows_the_rest_explicitly() {
+        let (_dir, root) = project();
+        let args = ["pre-tool", "--host", "agy"];
+        let call =
+            |name: &str, tool_args: Value| json!({"toolCall": {"name": name, "args": tool_args}});
+        for input in [
+            call(
+                "write_file",
+                json!({"Path": ".mwf/pages/x.md", "Content": "x"}),
+            ),
+            call(
+                "edit_file",
+                json!({"Path": root.join(".mwf/log.md").display().to_string(), "Target": "a", "Replacement": "b"}),
+            ),
+            call(
+                "run_command",
+                json!({"CommandLine": "bash -lc 'rm .mwf/log.md'", "toolSummary": "rm"}),
+            ),
+        ] {
+            let (out, _) = hook_late_at(&root, &args, input.clone(), usize::MAX);
+            assert!(
+                out.starts_with("{\"decision\":\"deny\",\"reason\":\""),
+                "{input}: {out}"
+            );
+        }
+        // Allowed: other paths, other tools, Claude's tool names, and past the deadline.
+        for input in [
+            call("write_file", json!({"Path": "notes.md", "Content": "x"})),
+            call("run_command", json!({"CommandLine": "cat .mwf/log.md"})),
+            call("read_file", json!({"Path": ".mwf/log.md"})),
+            json!({"tool_name": "Bash", "tool_input": {"command": "rm .mwf/log.md"}}),
+        ] {
+            let (out, _) = hook_late_at(&root, &args, input.clone(), usize::MAX);
+            assert_eq!(out, ALLOW, "{input}");
+        }
+        let input = call("write_file", json!({"Path": ".mwf/pages/x.md"}));
+        assert_eq!(hook_at(&root, &args, input, &|| true), ALLOW);
+    }
+
+    #[test]
+    fn antigravity_pre_tool_allows_on_every_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let elsewhere = dir.path().display().to_string();
+        let write = |cwd: Value| {
+            json!({"cwd": cwd, "toolCall": {"name": "write_file", "args": {"Path": ".mwf/x.md"}}})
+                .to_string()
+        };
+        for (args, stdin, stderr) in [
+            // No `.mwf/`; no usable working directory; bad input; bad arguments.
+            (
+                &["pre-tool", "--host", "antigravity"][..],
+                write(json!(elsewhere)),
+                false,
+            ),
+            (
+                &["pre-tool", "--host", "antigravity"],
+                write(json!("relative")),
+                true,
+            ),
+            (
+                &["pre-tool", "--host", "antigravity"],
+                write(Value::Null),
+                true,
+            ),
+            (
+                &["pre-tool", "--host", "antigravity"],
+                "not json".to_owned(),
+                true,
+            ),
+            (
+                &["pre-tool", "--host=agy", "--verbose"],
+                write(json!(elsewhere)),
+                true,
+            ),
+            (
+                &["pre-tool", "--host", "agy", "--host", "agy"],
+                "{}".to_owned(),
+                true,
+            ),
+        ] {
+            let (out, err) = raw(args, &stdin);
+            assert_eq!(out, ALLOW, "{args:?} {stdin}");
+            assert_eq!(err.lines().count(), usize::from(stderr), "{args:?}: {err}");
+        }
+        // The other events, and other hosts, keep `{}`.
+        assert_eq!(raw(&["stop", "--host", "agy"], "not json").0, "{}\n");
+        assert_eq!(raw(&["pre-tool", "--host", "claude"], "not json").0, "{}\n");
+    }
+
+    #[test]
+    fn antigravity_without_an_absolute_cwd_uses_the_workspace_or_does_nothing() {
+        let (_dir, root) = project();
+        let input = |cwd: Value, ws: Value| {
+            json!({"cwd": cwd, "workspacePaths": ws, "conversationId": "c", "hookEventName": "SessionStart"})
+                .to_string()
+        };
+        let args = ["session-start", "--host", "antigravity"];
+        let root_s = root.display().to_string();
+        let (out, _) = raw(&args, &input(json!("rel"), json!([root_s])));
+        assert!(
+            out.contains("injectSteps") && out.contains("cargo-deny"),
+            "{out}"
+        );
+        // Not the process directory: with neither, nothing is injected.
+        let (out, err) = raw(&args, &input(json!("rel"), json!(["also/rel"])));
+        assert_eq!(out, "{}\n");
+        assert!(err.contains("working directory"), "{err}");
+    }
+
+    #[test]
+    fn antigravity_recalls_once_per_prompt_and_reminds_only_after_a_clean_first_run() {
+        let (_dir, root) = project();
+        let prompt = |n: u64, id: &str| json!({"conversationId": id, "invocationNum": n, "lastUserInput": "why do duplicate crate versions fail"});
+        let args = ["prompt", "--host", "antigravity"];
+        let (later, _) = hook_late_at(&root, &args, prompt(1, "a"), usize::MAX);
+        assert_eq!(later, "{}\n", "not before later model calls");
+        let (first, _) = hook_late_at(&root, &args, prompt(0, "a"), usize::MAX);
+        assert!(
+            first.starts_with("{\"injectSteps\":[{\"systemMessage\":{\"systemMessage\":")
+                && first.contains("cargo-deny"),
+            "{first}"
+        );
+
+        let stop = |n: u64, reason: &str, error: &str| json!({"conversationId": "s", "executionNum": n, "terminationReason": reason, "error": error, "fullyIdle": true});
+        let args = ["stop", "--host", "antigravity"];
+        let (out, _) = hook_late_at(&root, &args, stop(0, "NO_TOOL_CALL", ""), usize::MAX);
+        assert!(
+            out.starts_with("{\"decision\":\"continue\",\"reason\":\""),
+            "{out}"
+        );
+        for input in [
+            stop(1, "NO_TOOL_CALL", ""),
+            stop(0, "ERROR", "Error 400"),
+            stop(0, "max_steps_exceeded", ""),
+            json!({"conversationId": "s", "terminationReason": "NO_TOOL_CALL"}),
+        ] {
+            let (out, _) = hook_late_at(&root, &args, input.clone(), usize::MAX);
+            assert_eq!(out, "{}\n", "{input}");
+        }
     }
 
     #[test]

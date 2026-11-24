@@ -61,9 +61,10 @@ $ mwf
 [stderr]   -V, --version  Print version
 [stderr] 
 [stderr] Host integration (dispatched before the commands above):
-[stderr]   install    Add mwf's hooks and skill to a host: mwf install --host claude|codex [--dry-run]
-[stderr]   uninstall  Remove them: mwf uninstall --host claude|codex [--dry-run]
-[stderr]   hook       Run by the host's hooks, not by hand: mwf hook <event> --host claude|codex
+[stderr]   install    Add mwf's hooks and skill to a host: mwf install --host <HOST> [--dry-run]
+[stderr]   uninstall  Remove them: mwf uninstall --host <HOST> [--dry-run]
+[stderr]   hook       Run by the host's hooks, not by hand: mwf hook <event> --host <HOST>
+[stderr] <HOST> is claude, codex or antigravity (also agy).
 [stderr] `mwf install --help` and `mwf uninstall --help` describe both.
 [exit 2]
 

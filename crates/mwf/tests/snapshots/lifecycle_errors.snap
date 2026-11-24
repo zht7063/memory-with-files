@@ -11,7 +11,7 @@ $ mwf install
 [exit 2]
 
 $ mwf install --host pi --json
-{"ok":false,"error":{"code":"USAGE","message":"invalid value for '--host <HOST>': use claude or codex\n\nUsage: mwf install --host <HOST> [--dry-run] [--json]\n\nFor more information, try '--help'.\n"}}
+{"ok":false,"error":{"code":"USAGE","message":"invalid value for '--host <HOST>': use claude, codex or antigravity\n\nUsage: mwf install --host <HOST> [--dry-run] [--json]\n\nFor more information, try '--help'.\n"}}
 [exit 2]
 
 $ mwf uninstall --host claude --force
@@ -28,14 +28,15 @@ Remove mwf's hooks and the mwf skill from a host; project wikis (.mwf/) stay
 Usage: mwf uninstall --host <HOST> [--dry-run] [--json]
 
 Options:
-      --host <HOST>  claude or codex
+      --host <HOST>  claude, codex or antigravity (also agy)
       --dry-run      Print what would change; write nothing
       --json         Print `{"ok": true, "data": …}` or `{"ok": false, "error": …}` instead of text
   -h, --help         Print help
 
 Files:
-  claude  $CLAUDE_CONFIG_DIR (default ~/.claude): settings.json and skills/mwf/
-  codex   $CODEX_HOME (default ~/.codex): hooks.json; and ~/.agents/skills/mwf/
+  claude       $CLAUDE_CONFIG_DIR (default ~/.claude): settings.json and skills/mwf/
+  codex        $CODEX_HOME (default ~/.codex): hooks.json; and ~/.agents/skills/mwf/
+  antigravity  ~/.gemini/config/plugins/mwf/ (plugin.json, hooks.json); and ~/.agents/skills/mwf/
 [exit 0]
 
 $ mwf --json uninstall --host

@@ -1,5 +1,5 @@
 //! End-to-end tests of `mwf hook` with fake host input (ADRs 0021, 0051): the compiled binary
-//! in temporary git roots, fed the JSON Claude Code and Codex send. Transcripts are `insta`
+//! in temporary git roots, fed the JSON Claude Code, Codex and Antigravity send. Transcripts are `insta`
 //! snapshots with the per-run fence nonce, the root and timestamps replaced.
 //!
 //! Only the binary is tested here, as in `cli.rs`: depending on workspace crates, even as
@@ -114,11 +114,16 @@ impl Session {
     }
 }
 
-/// When stdout carries an `additionalContext`, it fits the limit and its fence is whole: the
-/// nonce on both marker lines, the closing one last, and no other line that looks like one.
+/// When stdout carries an `additionalContext` (Antigravity: an injected `systemMessage`), it
+/// fits the limit and its fence is whole: the nonce on both marker lines, the closing one last,
+/// and no other line that looks like one.
 fn check_context(stdout: &str) {
-    let key = "\"additionalContext\":\"";
-    let Some(i) = stdout.find(key) else { return };
+    let Some((i, key)) = ["\"additionalContext\":\"", "\"systemMessage\":\""]
+        .into_iter()
+        .find_map(|k| stdout.rfind(k).map(|i| (i, k)))
+    else {
+        return;
+    };
     let rest = &stdout[i + key.len()..];
     let mut text = String::new();
     let mut chars = rest.chars();
@@ -157,6 +162,8 @@ fn check_context(stdout: &str) {
 
 const CLAUDE: &str = "claude";
 const CODEX: &str = "codex";
+const AGY: &str = "antigravity";
+const ALLOW: &str = "{\"decision\":\"allow\"}\n";
 
 #[test]
 fn without_mwf_every_hook_is_silent() {
@@ -475,4 +482,116 @@ fn failed_state_save_skips_the_prompt_hook_by_code() {
         out, "{\"systemMessage\":\"mwf: prompt hook skipped (IO); run `mwf lint`\"}\n",
         "no pages without the record, and only the code is shown"
     );
+}
+
+/// Antigravity (ADR 0055): its own input and output shapes, recall on the first model call of a
+/// prompt only, a reminder only after a clean first run, and a guard that never prints `{}`.
+#[test]
+fn antigravity_session() {
+    let mut s = Session::initialized();
+    s.new_page(
+        "test-command",
+        "knowledge",
+        "Running the tests",
+        "Use cargo nextest run, not cargo test",
+        "Run `cargo nextest run`.\n",
+    );
+    s.new_page(
+        "tabs",
+        "preference",
+        "Indent with tabs",
+        "The user wants tabs in Go files",
+        "Use tabs in Go files.\n",
+    );
+    let common = r#""conversationId":"c1","workspacePaths":["ROOT"],"lastUserInput":"how do we run the tests here""#;
+    let root = s.root.display().to_string();
+    let agy = |s: &mut Session, event: &str, extra: &str| {
+        let input = format!("{{{common},{extra}}}")
+            .replace("ROOT", &root)
+            .replace(",}", "}");
+        s.hook(event, AGY, &input)
+    };
+    let start = agy(&mut s, "session-start", r#""hookEventName":"SessionStart""#);
+    assert!(
+        start.starts_with(r#"{"injectSteps":[{"systemMessage":{"systemMessage":""#),
+        "{start}"
+    );
+    assert!(start.contains("Indent with tabs"), "{start}");
+    let recall = agy(
+        &mut s,
+        "prompt",
+        r#""hookEventName":"PreInvocation","invocationNum":0"#,
+    );
+    assert!(recall.contains("test-command"), "{recall}");
+    // Later model calls of the same prompt, and the same prompt again: nothing more.
+    assert_eq!(agy(&mut s, "prompt", r#""invocationNum":1"#), "{}\n");
+    assert_eq!(agy(&mut s, "prompt", r#""invocationNum":0"#), "{}\n");
+    let stop = agy(
+        &mut s,
+        "stop",
+        r#""executionNum":0,"terminationReason":"NO_TOOL_CALL","error":"","fullyIdle":true"#,
+    );
+    assert!(
+        stop.starts_with(r#"{"decision":"continue","reason":""#),
+        "{stop}"
+    );
+    for extra in [
+        r#""executionNum":1,"terminationReason":"NO_TOOL_CALL","error":"""#,
+        r#""executionNum":0,"terminationReason":"ERROR","error":"Error 400""#,
+    ] {
+        assert_eq!(agy(&mut s, "stop", extra), "{}\n", "{extra}");
+    }
+    let deny = |out: &str| out.starts_with(r#"{"decision":"deny","reason":"#);
+    for (call, denied) in [
+        (
+            r#""toolCall":{"name":"write_file","args":{"Path":".mwf/pages/x.md","Content":"x"}}"#,
+            true,
+        ),
+        (
+            r#""toolCall":{"name":"edit_file","args":{"Path":"ROOT/.mwf/log.md","Target":"a","Replacement":"b"}}"#,
+            true,
+        ),
+        (
+            r#""toolCall":{"name":"run_command","args":{"CommandLine":"bash -lc 'rm .mwf/log.md'","toolSummary":"rm"}}"#,
+            true,
+        ),
+        (
+            r#""toolCall":{"name":"run_command","args":{"CommandLine":"mwf show tabs","toolSummary":"show"}}"#,
+            false,
+        ),
+        (
+            r#""toolCall":{"name":"write_file","args":{"Path":"src/main.rs","Content":"x"}}"#,
+            false,
+        ),
+    ] {
+        let out = agy(&mut s, "pre-tool", call);
+        assert_eq!(deny(&out), denied, "{call}");
+        if !denied {
+            assert_eq!(out, ALLOW, "{call}");
+        }
+    }
+    // Bad input and bad arguments still allow the tool: Antigravity blocks it on `{}`.
+    assert_eq!(s.hook("pre-tool", AGY, "not json"), ALLOW);
+    assert_eq!(s.hook("pre-tool", "agy", r#"{"cwd":"relative"}"#), ALLOW);
+    s.snapshot("hooks_antigravity");
+}
+
+#[test]
+fn antigravity_without_mwf_allows_and_injects_nothing() {
+    let mut s = Session::new();
+    for (event, input) in [
+        ("session-start", r#"{"conversationId":"c"}"#),
+        (
+            "prompt",
+            r#"{"conversationId":"c","invocationNum":0,"lastUserInput":"run the tests"}"#,
+        ),
+        (
+            "stop",
+            r#"{"conversationId":"c","executionNum":0,"terminationReason":"NO_TOOL_CALL"}"#,
+        ),
+    ] {
+        assert_eq!(s.hook(event, AGY, input), "{}\n");
+    }
+    let input = r#"{"toolCall":{"name":"run_command","args":{"CommandLine":"rm -rf .mwf"}}}"#;
+    assert_eq!(s.hook("pre-tool", AGY, input), ALLOW);
 }
