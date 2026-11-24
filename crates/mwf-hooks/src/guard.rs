@@ -39,11 +39,6 @@ pub fn mentions_mwf(s: &str) -> bool {
         .any(|c| c.eq_ignore_ascii_case(".mwf"))
 }
 
-/// Whether the shell command `cmd` looks like it writes under a `.mwf` directory: a redirect
-/// into one, or `rm`, `mv`, `cp`, `sed -i` and similar commands with a `.mwf` operand. Each
-/// command of a list or pipeline is checked on its own. Commands run as `mwf …` are allowed,
-/// since mwf is how `.mwf/` is written, but not a redirect the shell does around them.
-/// The script of a `bash -c '…'` (or `sh`, `zsh`, …) is checked the same way, nested ones too.
 /// The path pi 1.6.0's `write` and `edit` tools act on, before they join it to the cwd
 /// (`resolveToCwd` → `normalizePath` in pi's `utils/paths.js`): Unicode spaces become spaces,
 /// one leading `@` goes, `~` and `~/` name `home`, and a `file://` URL names its path. Without
@@ -103,6 +98,11 @@ fn file_url_path(url: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+/// Whether the shell command `cmd` looks like it writes under a `.mwf` directory: a redirect
+/// into one, or `rm`, `mv`, `cp`, `sed -i` and similar commands with a `.mwf` operand. Each
+/// command of a list or pipeline is checked on its own. Commands run as `mwf …` are allowed,
+/// since mwf is how `.mwf/` is written, but not a redirect the shell does around them.
+/// The script of a `bash -c '…'` (or `sh`, `zsh`, …) is checked the same way, nested ones too.
 pub fn shell_writes_mwf(cmd: &str) -> bool {
     writes_at_depth(cmd, 0)
 }
