@@ -1,6 +1,7 @@
 # 0020 首版支持的宿主：Claude Code 与 Codex
 
 - 状态：已接受（2026-11-20）
+- 注：“Pi 延后”已被 [0055](0055-hosts-pi-and-antigravity.md) 取代：新增宿主 `pi` 与 `antigravity`（别名 `agy`）。
 
 ## 决定
 

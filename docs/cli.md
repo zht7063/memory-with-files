@@ -51,22 +51,28 @@ mwf delete <slug> [--unlink]                                       移入 .mwf/t
 先安装 `mwf`：`brew install zht7063/tap/mwf`（仅正式版），或从 GitHub Release 下载 `mwf-<target>.tar.xz`（macOS / Linux musl 的 arm64 与 x86_64），见根目录 [README](../README.md#install) 与 [0054](decisions/0054-release-config.md)。
 
 ```
-mwf hook <event> --host claude|codex     由宿主调用；读 stdin JSON，输出一行 JSON，总是退出 0
-                                         event：session-start | prompt | stop | pre-tool（0051）
-mwf install --host claude|codex [--dry-run]
-mwf uninstall --host claude|codex [--dry-run]
+mwf hook <event> --host <host>     由宿主调用；读 stdin JSON，输出一行 JSON，总是退出 0
+                                   event：session-start | prompt | stop | pre-tool（0051）
+mwf install --host <host> [--dry-run]
+mwf uninstall --host <host> [--dry-run]
 ```
 
-这三条命令由 bin 在 clap 之前分发，不在 `mwf --help` 的 `Commands:` 中，帮助末尾的 `Host integration` 一段列出它们（0052、0053）。`uninstall` 不删除上一级的 `skills/`、`.agents/` 目录，也保留 `.mwf-bak-*` 备份（0052）。
+`<host>`：`claude`、`codex`、`pi`、`antigravity`（别名 `agy`，[0055](decisions/0055-hosts-pi-and-antigravity.md)）。最低版本：pi 1.6.0、agy 1.5.16。
 
-`install` 把四个 hook（每个事件一条 `mwf hook <event> --host <host>`，超时 10 s）加入宿主的用户级 hooks 文件，并写入 `mwf` skill；`uninstall` 只删除这些。`--dry-run` 只打印将要做的改动。文件位置（0031、0052）：
+这三条命令由 bin 在 clap 之前分发，不在 `mwf --help` 的 `Commands:` 中，帮助末尾的 `Host integration` 一段列出它们（0052、0053）。`uninstall` 不删除上一级的 `skills/`、`.agents/`、`extensions/`、`plugins/` 目录，也保留 `.mwf-bak-*` 备份（0052）。
+
+`install` 把四个 hook（每个事件一条 `mwf hook <event> --host <host>`，超时 10 s）加入宿主的用户级配置，并写入 `mwf` skill；`uninstall` 只删除这些。`--dry-run` 只打印将要做的改动。文件位置（0031、0052、0055）：
 
 - `claude`：`$CLAUDE_CONFIG_DIR`（默认 `~/.claude`）下的 `settings.json` 与 `skills/mwf/`。
 - `codex`：`$CODEX_HOME`（默认 `~/.codex`）下的 `hooks.json`；skill 在 `~/.agents/skills/mwf/`。安装（或更新了 hook）后在 Codex 的 `/hooks` 中信任 mwf 的 hooks。
+- `pi`：`$PI_CODING_AGENT_DIR`（默认 `~/.pi/agent`）下的 `extensions/mwf/index.ts`，是把 pi 的事件转给 `mwf hook … --host pi` 的扩展；skill 在 `~/.agents/skills/mwf/`。
+- `antigravity`：插件目录 `~/.gemini/config/plugins/mwf/`（`plugin.json`、`hooks.json`），对 Antigravity 的 CLI、App 与 IDE 都生效；skill 在 `~/.agents/skills/mwf/`。agy 在 PreToolUse hook 出错时会拦下工具调用：删除或移动 mwf 之前先运行 `mwf uninstall --host antigravity`。
+
+`~/.agents/skills/mwf/` 由 `codex`、`pi`、`antigravity` 共用：`uninstall` 其中一个时，只要另一个还装着就保留 skill（0055）。
 
 `install` 只能从名为 `mwf` 的二进制运行（`INVALID_EXECUTABLE`）。hook 命令写 `mwf`，除非 `PATH` 上第一个 `mwf` 不是本二进制、`PATH` 上没有，或其前面有相对目录，这时写本二进制的路径。
 
-修改或删除已有文件前备份为同目录的 `<文件名>.mwf-bak-<时间>`（0600）；写入是原子的，途经的目录在写入前重新核对身份；基准目录（`HOME`、`CLAUDE_CONFIG_DIR`、`CODEX_HOME`）之下的符号链接一律拒绝；不读写任何项目的 `.mwf/`。退出码与 `--json` 同上；输出格式见 0052。
+修改或删除已有文件前备份为同目录的 `<文件名>.mwf-bak-<时间>`（0600）；写入是原子的，途经的目录在写入前重新核对身份；基准目录（`HOME`、`CLAUDE_CONFIG_DIR`、`CODEX_HOME`、`PI_CODING_AGENT_DIR`）之下的符号链接一律拒绝；不读写任何项目的 `.mwf/`。退出码与 `--json` 同上；输出格式见 0052。
 
 ## 错误码
 
@@ -91,6 +97,6 @@ mwf uninstall --host claude|codex [--dry-run]
 | `WRONG_FILE_TYPE` | `.mwf/` 下的路径是符号链接或类型不对（0048）；宿主的文件或目录是符号链接或类型不对（0052） |
 | `HOST_CONFIG_INVALID` | 宿主的 `settings.json` / `hooks.json` 不是严格 JSON（含只有空白的文件）或形状不对；不改动任何文件（0052） |
 | `INVALID_EXECUTABLE` | `install` 的二进制不叫 `mwf`：hooks 按这个名字认出（0052） |
-| `INVALID_ENV` | `HOME`、`CLAUDE_CONFIG_DIR`、`CODEX_HOME` 未设置、不是绝对路径或不是目录（0052） |
+| `INVALID_ENV` | `HOME`、`CLAUDE_CONFIG_DIR`、`CODEX_HOME`、`PI_CODING_AGENT_DIR` 未设置、不是绝对路径或不是目录（0052） |
 | `IO` | 其他文件系统错误 |
 | `USAGE` | 参数错误（退出码 2） |

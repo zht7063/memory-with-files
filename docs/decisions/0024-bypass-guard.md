@@ -2,6 +2,7 @@
 
 - 状态：已接受（2026-11-20）；配合 [0016](0016-all-writes-through-mwf.md)
 - 注：shell 检测也解包 `bash -c` / `sh -lc` 等的脚本与 Codex 的 argv，见 [0053](0053-smoke-test-follow-ups.md)。
+- 注：pi 与 Antigravity 的工具名与路径字段，以及 Antigravity 的 PreToolUse 失败时拦截（放行须输出 `{"decision":"allow"}`），见 [0055](0055-hosts-pi-and-antigravity.md)。
 
 ## 已查证的事实（2026-11-20）
 
