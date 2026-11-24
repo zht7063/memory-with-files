@@ -355,7 +355,7 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
 name = "mwf"
-version = "2.0.0-alpha.0"
+version = "2.0.0"
 dependencies = [
  "assert_cmd",
  "insta",
@@ -367,7 +367,7 @@ dependencies = [
 
 [[package]]
 name = "mwf-app"
-version = "2.0.0-alpha.0"
+version = "2.0.0"
 dependencies = [
  "mwf-assets",
  "mwf-domain",
@@ -381,11 +381,11 @@ dependencies = [
 
 [[package]]
 name = "mwf-assets"
-version = "2.0.0-alpha.0"
+version = "2.0.0"
 
 [[package]]
 name = "mwf-cli"
-version = "2.0.0-alpha.0"
+version = "2.0.0"
 dependencies = [
  "clap",
  "mwf-app",
@@ -394,7 +394,7 @@ dependencies = [
 
 [[package]]
 name = "mwf-domain"
-version = "2.0.0-alpha.0"
+version = "2.0.0"
 dependencies = [
  "regex",
  "sha2",
@@ -403,7 +403,7 @@ dependencies = [
 
 [[package]]
 name = "mwf-hooks"
-version = "2.0.0-alpha.0"
+version = "2.0.0"
 dependencies = [
  "mwf-app",
  "mwf-assets",
@@ -415,7 +415,7 @@ dependencies = [
 
 [[package]]
 name = "mwf-lifecycle"
-version = "2.0.0-alpha.0"
+version = "2.0.0"
 dependencies = [
  "mwf-assets",
  "serde_json",
@@ -424,7 +424,7 @@ dependencies = [
 
 [[package]]
 name = "mwf-search"
-version = "2.0.0-alpha.0"
+version = "2.0.0"
 dependencies = [
  "divan",
  "unicode-segmentation",
@@ -432,7 +432,7 @@ dependencies = [
 
 [[package]]
 name = "mwf-store"
-version = "2.0.0-alpha.0"
+version = "2.0.0"
 dependencies = [
  "mwf-domain",
  "serde",
