@@ -20,6 +20,7 @@ impl Home {
             home: Some(root.clone().into()),
             claude_config_dir: None,
             codex_home: None,
+            pi_dir: None,
             path: Some(root.join("bin").into()),
             exe: Ok(root.join("bin/mwf")),
         };
@@ -646,4 +647,83 @@ fn the_shared_skill_stays_while_another_host_uses_it() {
     // Claude's skill is its own: its uninstall never looks at the others.
     let out = h.ok(&["install", "--host", "claude"]);
     assert!(!out.contains("kept the shared skill"), "{out}");
+}
+
+#[test]
+fn pi_installs_its_extension_and_shares_the_skill() {
+    let mut h = Home::new();
+    let out = h.ok(&["install", "--host", "pi"]);
+    assert!(out.starts_with("installed mwf for pi\n"), "{out}");
+    assert!(out.contains("before_agent_start: added"), "{out}");
+    assert!(out.contains("run /reload"), "{out}");
+    let ext = h.root.join(".pi/agent/extensions/mwf/index.ts");
+    let text = fs::read_to_string(&ext).unwrap();
+    assert!(
+        text.contains("const MWF: string = \"mwf\";"),
+        "the program as a JSON string"
+    );
+    assert!(!text.contains(mwf_assets::PI_EXTENSION_PROGRAM));
+    let before = h.tree();
+    let again = h.ok(&["install", "--host", "pi"]);
+    assert!(
+        !again.contains("added") && !again.contains("reload"),
+        "{again}"
+    );
+    assert_eq!(h.tree(), before);
+
+    // Shared with Codex and Antigravity: kept while one of them is installed.
+    h.ok(&["install", "--host", "antigravity"]);
+    let out = h.ok(&["uninstall", "--host", "antigravity"]);
+    assert!(out.contains("still installed for pi"), "{out}");
+    let out = h.ok(&["uninstall", "--host", "pi"]);
+    assert!(out.contains("SKILL.md: removed"), "{out}");
+    assert!(!ext.exists() && !h.root.join(".pi/agent/extensions/mwf").exists());
+    assert!(
+        h.root.join(".pi/agent/extensions").is_dir(),
+        "the parent is not mwf's"
+    );
+
+    // PI_CODING_AGENT_DIR moves the extension, not the skill; a path is quoted as JSON.
+    let agent = h.root.join("pi-agent");
+    fs::create_dir(&agent).unwrap();
+    h.env.pi_dir = Some(agent.clone().into());
+    h.env.path = None;
+    h.ok(&["install", "--host", "pi"]);
+    let text = fs::read_to_string(agent.join("extensions/mwf/index.ts")).unwrap();
+    let exe = h.root.join("bin/mwf").display().to_string();
+    assert!(
+        text.contains(&format!(
+            "const MWF: string = {};",
+            serde_json::to_string(&exe).unwrap()
+        )),
+        "{exe}"
+    );
+    assert!(h.root.join(".agents/skills/mwf/SKILL.md").exists());
+    h.env.pi_dir = Some("relative".into());
+    let (code, _, err) = h.run(&["install", "--host", "pi"]);
+    assert_eq!(code, 1);
+    assert!(
+        err.contains("INVALID_ENV") && err.contains("PI_CODING_AGENT_DIR"),
+        "{err}"
+    );
+}
+
+#[test]
+fn an_edited_pi_extension_is_backed_up() {
+    let h = Home::new();
+    h.ok(&["install", "--host", "pi"]);
+    let ext = h.root.join(".pi/agent/extensions/mwf/index.ts");
+    fs::write(&ext, "// mine\n").unwrap();
+    let out = h.ok(&["install", "--host", "pi"]);
+    assert!(out.contains("index.ts: updated (backup: "), "{out}");
+    assert!(out.contains("tool_call: updated"), "{out}");
+    let out = h.ok(&["uninstall", "--host", "pi"]);
+    assert!(
+        out.contains("index.ts: removed\n"),
+        "this version's file needs no backup: {out}"
+    );
+    assert!(
+        out.contains("kept "),
+        "the backup keeps the directory: {out}"
+    );
 }

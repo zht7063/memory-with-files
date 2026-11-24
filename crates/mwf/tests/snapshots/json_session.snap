@@ -3,7 +3,7 @@ source: crates/mwf/tests/cli.rs
 expression: self.transcript
 ---
 $ mwf --json init --local
-{"ok":true,"data":{"root":"[ROOT]","mode":"local","next_steps":"mwf created .mwf/ and added /.mwf/ to .gitignore; the wiki stays on this machine.\n\nNext:\n  mwf install --host claude   (or --host codex) so sessions load and save memories\n  mwf new <slug> --type <type> --title \"...\" --summary \"...\" < body.md\n  mwf lint\n"}}
+{"ok":true,"data":{"root":"[ROOT]","mode":"local","next_steps":"mwf created .mwf/ and added /.mwf/ to .gitignore; the wiki stays on this machine.\n\nNext:\n  mwf install --host claude   (or codex, pi, antigravity) so sessions load and save memories\n  mwf new <slug> --type <type> --title \"...\" --summary \"...\" < body.md\n  mwf lint\n"}}
 [exit 0]
 
 $ mwf new deploy --type task --title Deploy --summary 'Ship it' --tag ops --json

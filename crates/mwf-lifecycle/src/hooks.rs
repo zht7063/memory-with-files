@@ -29,6 +29,8 @@ fn matcher(host: Host, event: &str) -> Option<&'static str> {
         // Antigravity blocks a tool when the hook fails, so only the tools the guard reads
         // (ADR 0055).
         Host::Antigravity => "write_file|edit_file|run_command",
+        // pi has no matchers; its extension picks the tools itself.
+        Host::Pi => "write|edit|bash",
     })
 }
 

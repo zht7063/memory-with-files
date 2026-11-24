@@ -7,10 +7,10 @@ $ mwf hook finish --host claude
 {}
 [stderr] mwf hook: unknown event "finish"; use session-start, prompt, stop or pre-tool
 
-$ mwf hook stop --host pi
+$ mwf hook stop --host pie
 < {"cwd":"[ROOT]","session_id":"s"}
 {}
-[stderr] mwf hook: unknown host "pi"; use claude, codex or antigravity
+[stderr] mwf hook: unknown host "pie"; use claude, codex, pi or antigravity
 
 $ mwf hook stop --host codex
 < not json

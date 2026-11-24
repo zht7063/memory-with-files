@@ -14,7 +14,7 @@ use mwf_app::StatusFilter;
     version,
     color = ColorChoice::Never,
     term_width = 100,
-    after_help = "Host integration (dispatched before the commands above):\n  install    Add mwf's hooks and skill to a host: mwf install --host <HOST> [--dry-run]\n  uninstall  Remove them: mwf uninstall --host <HOST> [--dry-run]\n  hook       Run by the host's hooks, not by hand: mwf hook <event> --host <HOST>\n<HOST> is claude, codex or antigravity (also agy).\n`mwf install --help` and `mwf uninstall --help` describe both."
+    after_help = "Host integration (dispatched before the commands above):\n  install    Add mwf's hooks and skill to a host: mwf install --host <HOST> [--dry-run]\n  uninstall  Remove them: mwf uninstall --host <HOST> [--dry-run]\n  hook       Run by the host's hooks, not by hand: mwf hook <event> --host <HOST>\n<HOST> is claude, codex, pi or antigravity (also agy).\n`mwf install --help` and `mwf uninstall --help` describe both."
 )]
 pub(crate) struct Cli {
     /// Print `{"ok": true, "data": …}` or `{"ok": false, "error": …}` instead of text.

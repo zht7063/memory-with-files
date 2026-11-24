@@ -50,7 +50,8 @@ impl Home {
             .env("HOME", &self.root)
             .env("PATH", &self.path)
             .env_remove("CLAUDE_CONFIG_DIR")
-            .env_remove("CODEX_HOME");
+            .env_remove("CODEX_HOME")
+            .env_remove("PI_CODING_AGENT_DIR");
         for (k, v) in &self.vars {
             cmd.env(k, v);
         }
@@ -234,7 +235,7 @@ fn installed_hooks_run() {
 fn errors() {
     let mut h = Home::new();
     h.run(&["install"]);
-    h.run(&["install", "--host", "pi", "--json"]);
+    h.run(&["install", "--host", "pie", "--json"]);
     h.run(&["uninstall", "--host", "claude", "--force"]);
     h.run(&["uninstall", "--help"]);
     // `--json` is global: before the command too (ADR 0050).
@@ -314,5 +315,36 @@ fn installed_antigravity_hooks_run() {
             out,
             "{event}: no input, no .mwf/"
         );
+    }
+}
+
+/// pi (ADR 0055): the bridge extension as `hooks`, its four events, the shared skill.
+#[test]
+fn pi_session() {
+    let mut h = Home::new();
+    h.run(&["install", "--host", "pi", "--dry-run"]);
+    h.run(&["install", "--host", "pi", "--json"]);
+    h.run(&["install", "--host", "pi"]);
+    h.run(&["install", "--host", "codex"]);
+    h.run(&["uninstall", "--host", "pi", "--json"]);
+    h.run(&["uninstall", "--host", "codex"]);
+    h.snapshot("lifecycle_pi");
+    let left: Vec<_> = h.tree().into_iter().filter(|p| !p.ends_with('/')).collect();
+    assert!(left.is_empty(), "{left:?}");
+}
+
+#[test]
+fn installed_pi_extension_runs_mwf() {
+    let h = Home::new();
+    assert!(h.output(&["install", "--host", "pi"]).status.success());
+    let ext = fs::read_to_string(h.root.join(".pi/agent/extensions/mwf/index.ts")).unwrap();
+    assert!(
+        ext.contains("const MWF: string = \"mwf\";"),
+        "the program, as JSON"
+    );
+    for event in ["session-start", "prompt", "stop", "pre-tool"] {
+        let run = h.output(&["hook", event, "--host", "pi"]);
+        assert!(run.status.success());
+        assert_eq!(run.stdout, b"{}\n", "{event}: no input, no .mwf/");
     }
 }

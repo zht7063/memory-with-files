@@ -29,6 +29,14 @@ pub const HOOK_DENY_EDIT: &str = include_str!("../templates/hook-deny-edit.txt")
 /// Why PreToolUse refuses a shell command that looks like it writes under `.mwf/` (ADR 0024).
 pub const HOOK_DENY_SHELL: &str = include_str!("../templates/hook-deny-shell.txt");
 
+/// pi's bridge extension (ADR 0055): `mwf install --host pi` writes it as
+/// `extensions/mwf/index.ts`, replacing [`PI_EXTENSION_PROGRAM`] with the program to run as a
+/// JSON string literal.
+pub const PI_EXTENSION_TS: &str = include_str!("../templates/pi-extension.ts");
+
+/// The placeholder for the program in [`PI_EXTENSION_TS`].
+pub const PI_EXTENSION_PROGRAM: &str = "__MWF_PROGRAM__";
+
 /// The one skill (ADR 0036): its directory name and the `name:` in its frontmatter.
 pub const SKILL_NAME: &str = "mwf";
 
@@ -304,6 +312,20 @@ mod tests {
         ("hook-deny-edit", HOOK_DENY_EDIT),
         ("hook-deny-shell", HOOK_DENY_SHELL),
     ];
+
+    #[test]
+    fn pi_extension_has_one_program_placeholder_and_runs_the_four_events() {
+        assert_eq!(PI_EXTENSION_TS.matches(PI_EXTENSION_PROGRAM).count(), 1);
+        for event in [
+            "\"session-start\"",
+            "\"prompt\"",
+            "\"stop\"",
+            "\"pre-tool\"",
+        ] {
+            assert!(PI_EXTENSION_TS.contains(event), "{event}");
+        }
+        assert!(PI_EXTENSION_TS.contains("\"--host\", \"pi\""));
+    }
 
     #[test]
     fn hook_texts_are_single_lines_naming_real_commands() {
