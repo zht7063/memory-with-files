@@ -1,4 +1,4 @@
-//! Hook adapter: `mwf hook session-start|prompt|stop|pre-tool --host claude|codex|antigravity`.
+//! Hook adapter: `mwf hook session-start|prompt|stop|pre-tool --host claude|codex|pi|antigravity`.
 //!
 //! See [docs/crates/adapters.md](https://github.com/zht7063/memory-with-files/blob/v2/docs/crates/adapters.md)
 //! and ADRs 0051 and 0055. Every run exits 0 and prints exactly one line of JSON: whatever goes wrong,
@@ -36,6 +36,8 @@ pub struct Io<'a> {
 enum Host {
     Claude,
     Codex,
+    /// pi, through mwf's bridge extension, which sends and reads Claude's shapes (ADR 0055).
+    Pi,
     /// Google Antigravity (`agy`), whose hooks differ in names and shapes (ADR 0055).
     Antigravity,
 }
@@ -45,6 +47,7 @@ impl Host {
         match value {
             "claude" => Some(Host::Claude),
             "codex" => Some(Host::Codex),
+            "pi" => Some(Host::Pi),
             "antigravity" | "agy" => Some(Host::Antigravity),
             _ => None,
         }
@@ -139,7 +142,7 @@ fn working_dir(host: Host, input: &Value) -> Option<PathBuf> {
     let cwd = absolute(input.get("cwd"));
     match host {
         Host::Antigravity => cwd.or_else(|| absolute(input.pointer("/workspacePaths/0"))),
-        Host::Claude | Host::Codex => cwd.or_else(|| std::env::current_dir().ok()),
+        Host::Claude | Host::Codex | Host::Pi => cwd.or_else(|| std::env::current_dir().ok()),
     }
 }
 
@@ -187,7 +190,7 @@ fn parse_args(args: &[OsString]) -> Result<(Event, Host), String> {
         };
         if let Some(value) = value {
             let h = Host::parse(&value).ok_or_else(|| {
-                format!("unknown host {value:?}; use claude, codex or antigravity")
+                format!("unknown host {value:?}; use claude, codex, pi or antigravity")
             })?;
             if host.replace(h).is_some() {
                 return Err("--host given twice".to_owned());
@@ -213,7 +216,7 @@ fn parse_args(args: &[OsString]) -> Result<(Event, Host), String> {
     match (event, host) {
         (Some(e), Some(h)) => Ok((e, h)),
         (None, _) => Err("missing event: session-start, prompt, stop or pre-tool".to_owned()),
-        (_, None) => Err("missing --host claude|codex|antigravity".to_owned()),
+        (_, None) => Err("missing --host claude|codex|pi|antigravity".to_owned()),
     }
 }
 
@@ -269,7 +272,7 @@ impl Hook<'_> {
     fn session(&self) -> &str {
         match self.host {
             Host::Antigravity => self.str("conversationId"),
-            Host::Claude | Host::Codex => self.str("session_id"),
+            Host::Claude | Host::Codex | Host::Pi => self.str("session_id"),
         }
     }
 
@@ -281,7 +284,7 @@ impl Hook<'_> {
             Host::Antigravity => json!({
                 "injectSteps": [{ "systemMessage": { "systemMessage": text } }]
             }),
-            Host::Claude | Host::Codex => json!({
+            Host::Claude | Host::Codex | Host::Pi => json!({
                 "hookSpecificOutput": {
                     "hookEventName": event_name,
                     "additionalContext": text,
@@ -353,7 +356,7 @@ impl Hook<'_> {
                 return Ok(empty());
             }
             Host::Antigravity => self.str("lastUserInput"),
-            Host::Claude | Host::Codex => self.str("prompt"),
+            Host::Claude | Host::Codex | Host::Pi => self.str("prompt"),
         };
         if is_mwf_command(prompt) {
             return Ok(empty());
@@ -403,7 +406,7 @@ impl Hook<'_> {
     /// because of a Stop hook. Errors stay silent.
     fn stop(&self, app: &App) -> Result<Value, AppError> {
         let continuing = match self.host {
-            Host::Claude | Host::Codex => {
+            Host::Claude | Host::Codex | Host::Pi => {
                 self.input.get("stop_hook_active") == Some(&Value::Bool(true))
             }
             // `executionNum` counts the continuations of this prompt. A model error also
@@ -423,7 +426,7 @@ impl Hook<'_> {
             return Ok(empty());
         }
         let turn = match self.host {
-            Host::Claude => self.str("prompt_id"),
+            Host::Claude | Host::Pi => self.str("prompt_id"),
             Host::Codex => self.str("turn_id"),
             // No turn id: `executionNum` already limits the reminder to one per prompt.
             Host::Antigravity => "",
@@ -433,7 +436,7 @@ impl Hook<'_> {
         }
         let reminder = mwf_assets::HOOK_STOP_REMINDER.trim_end();
         Ok(match self.host {
-            Host::Claude => self.context("Stop", reminder.to_owned()),
+            Host::Claude | Host::Pi => self.context("Stop", reminder.to_owned()),
             Host::Codex => json!({ "decision": "block", "reason": reminder }),
             Host::Antigravity => json!({ "decision": "continue", "reason": reminder }),
         })
@@ -454,7 +457,7 @@ impl Hook<'_> {
                     .unwrap_or(""),
                 self.input.pointer("/toolCall/args").unwrap_or(&Value::Null),
             ),
-            Host::Claude | Host::Codex => (
+            Host::Claude | Host::Codex | Host::Pi => (
                 self.str("tool_name"),
                 self.input.get("tool_input").unwrap_or(&Value::Null),
             ),
@@ -500,6 +503,18 @@ impl Hook<'_> {
             },
             (Host::Antigravity, "run_command") => {
                 guard::shell_writes_mwf(field("CommandLine")).then_some(mwf_assets::HOOK_DENY_SHELL)
+            }
+            // pi rewrites the path before it writes (`@`, `~`, `file://`): check what it means.
+            (Host::Pi, "write" | "edit") => {
+                let raw = field("path");
+                let meant = guard::pi_path(raw, std::env::home_dir().as_deref());
+                match inside(&[raw, &meant.to_string_lossy()]) {
+                    None => return empty(),
+                    Some(i) => i.then_some(mwf_assets::HOOK_DENY_EDIT),
+                }
+            }
+            (Host::Pi, "bash") => {
+                guard::shell_writes_mwf(field("command")).then_some(mwf_assets::HOOK_DENY_SHELL)
             }
             (Host::Claude | Host::Codex, "Bash" | "shell" | "exec_command" | "local_shell") => {
                 let command = match input.get("command").or_else(|| input.get("cmd")) {
@@ -557,7 +572,7 @@ mod tests {
         for bad in [
             &["stop"][..],
             &["--host", "claude"],
-            &["stop", "--host", "pi"],
+            &["stop", "--host", "pie"],
             &["stop", "prompt", "--host", "claude"],
             &["stop", "--host"],
             &["stop", "--host", "claude", "--json"],
@@ -904,6 +919,83 @@ mod tests {
             let (out, _) = hook_late_at(&root, &args, input.clone(), usize::MAX);
             assert_eq!(out, "{}\n", "{input}");
         }
+    }
+
+    #[test]
+    fn pi_uses_claude_shapes_with_pi_tool_names() {
+        let (_dir, root) = project();
+        let deny = |out: &str| out.contains("\"permissionDecision\":\"deny\"");
+        let args = ["pre-tool", "--host", "pi"];
+        for (input, denied) in [
+            (
+                json!({"tool_name": "write", "tool_input": {"path": ".mwf/pages/x.md", "content": "x"}}),
+                true,
+            ),
+            (
+                json!({"tool_name": "edit", "tool_input": {"path": root.join(".mwf/log.md").display().to_string(), "edits": []}}),
+                true,
+            ),
+            (
+                json!({"tool_name": "bash", "tool_input": {"command": "bash -lc 'rm .mwf/log.md'"}}),
+                true,
+            ),
+            (
+                json!({"tool_name": "write", "tool_input": {"path": "notes.md"}}),
+                false,
+            ),
+            (
+                json!({"tool_name": "bash", "tool_input": {"command": "mwf list"}}),
+                false,
+            ),
+            // Claude's names are not pi's tools.
+            (
+                json!({"tool_name": "Write", "tool_input": {"file_path": ".mwf/x.md"}}),
+                false,
+            ),
+            // pi drops a leading `@` and reads `file://` URLs before it writes.
+            (
+                json!({"tool_name": "write", "tool_input": {"path": "@.mwf/log.md"}}),
+                true,
+            ),
+            (
+                json!({"tool_name": "edit", "tool_input": {"path": format!("@{}", root.join(".mwf/x.md").display())}}),
+                true,
+            ),
+            (
+                json!({"tool_name": "write", "tool_input": {"path": format!("file://{}/%2Emwf/x.md?v=1", root.display())}}),
+                true,
+            ),
+            (
+                json!({"tool_name": "write", "tool_input": {"path": "@@.mwf/log.md"}}),
+                false,
+            ),
+            (
+                json!({"tool_name": "write", "tool_input": {"path": "@notes.md"}}),
+                false,
+            ),
+        ] {
+            let (out, _) = hook_late_at(&root, &args, input.clone(), usize::MAX);
+            assert_eq!(deny(&out), denied, "{input}: {out}");
+            if !denied {
+                assert_eq!(out, "{}\n", "pi allows with nothing");
+            }
+        }
+        let prompt = json!({"session_id": "p", "prompt": "why do duplicate crate versions fail"});
+        let (out, _) = hook_late_at(&root, &["prompt", "--host", "pi"], prompt, usize::MAX);
+        assert!(
+            out.contains("\"additionalContext\"") && out.contains("cargo-deny"),
+            "{out}"
+        );
+        let stop = |id: &str, active: bool| json!({"session_id": "p", "prompt_id": id, "stop_hook_active": active});
+        let args = ["stop", "--host", "pi"];
+        let (out, _) = hook_late_at(&root, &args, stop("load1-1", false), usize::MAX);
+        assert!(out.contains("\"hookEventName\":\"Stop\""), "{out}");
+        for (id, active) in [("load1-1", false), ("load1-2", true)] {
+            let (out, _) = hook_late_at(&root, &args, stop(id, active), usize::MAX);
+            assert_eq!(out, "{}\n", "{id} {active}");
+        }
+        let (out, _) = hook_late_at(&root, &args, stop("load2-1", false), usize::MAX);
+        assert_ne!(out, "{}\n", "a new load's prompt id is a new turn");
     }
 
     #[test]

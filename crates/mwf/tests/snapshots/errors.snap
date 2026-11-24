@@ -15,7 +15,7 @@ mwf created .mwf/ and added `.mwf/log.md merge=union` to .gitattributes.
 Commit .mwf/ and .gitattributes so the team shares the wiki.
 
 Next:
-  mwf install --host claude   (or --host codex) so sessions load and save memories
+  mwf install --host claude   (or codex, pi, antigravity) so sessions load and save memories
   mwf new <slug> --type <type> --title "..." --summary "..." < body.md
   mwf lint
 [exit 0]
@@ -64,7 +64,7 @@ $ mwf
 [stderr]   install    Add mwf's hooks and skill to a host: mwf install --host <HOST> [--dry-run]
 [stderr]   uninstall  Remove them: mwf uninstall --host <HOST> [--dry-run]
 [stderr]   hook       Run by the host's hooks, not by hand: mwf hook <event> --host <HOST>
-[stderr] <HOST> is claude, codex or antigravity (also agy).
+[stderr] <HOST> is claude, codex, pi or antigravity (also agy).
 [stderr] `mwf install --help` and `mwf uninstall --help` describe both.
 [exit 2]
 

@@ -18,7 +18,7 @@ mod render;  // 纯文本
 
 ## mwf-hooks
 
-**职责**：`mwf hook session-start|prompt|stop|pre-tool --host claude|codex|antigravity`（`agy` 是 `antigravity` 的别名；`pi` 按 0055 计划中；Claude / Codex 的 SessionStart、UserPromptSubmit、Stop、PreToolUse，其他宿主的对应事件见 [0055](../decisions/0055-hosts-pi-and-antigravity.md)）。解析宿主 JSON、调用 `mwf-app`、输出宿主格式的一行 JSON；随机 fence、清理、截断；内部计时预算；**任何错误都退出 0**（0030）。PreToolUse 守卫：Claude 读 `tool_input.file_path`，Codex 解析 `apply_patch` 文本中的 `*** Add/Update/Delete File:` 行，pi 读 `write` / `edit` 的 `tool_input.path`，Antigravity 读 `write_file` / `edit_file` 的 `toolCall.args.Path`；shell 命令（Antigravity 为 `run_command` 的 `CommandLine`）尽力检测，并解包 `bash -c` 等的脚本（0024、0053、0055）。细节见 [0051](../decisions/0051-hook-apis-and-session-state.md)。
+**职责**：`mwf hook session-start|prompt|stop|pre-tool --host claude|codex|pi|antigravity`（`agy` 是 `antigravity` 的别名；Claude / Codex 的 SessionStart、UserPromptSubmit、Stop、PreToolUse，其他宿主的对应事件见 [0055](../decisions/0055-hosts-pi-and-antigravity.md)）。解析宿主 JSON、调用 `mwf-app`、输出宿主格式的一行 JSON；随机 fence、清理、截断；内部计时预算；**任何错误都退出 0**（0030）。PreToolUse 守卫：Claude 读 `tool_input.file_path`，Codex 解析 `apply_patch` 文本中的 `*** Add/Update/Delete File:` 行，pi 读 `write` / `edit` 的 `tool_input.path`，并像 pi 一样先去掉一个前导 `@`、展开 `~/`、把 `file://` URL 换成路径，Antigravity 读 `write_file` / `edit_file` 的 `toolCall.args.Path`；shell 命令（Antigravity 为 `run_command` 的 `CommandLine`）尽力检测，并解包 `bash -c` 等的脚本（0024、0053、0055）。细节见 [0051](../decisions/0051-hook-apis-and-session-state.md)。
 
 ```rust
 pub struct Io<'a> { pub stdin: &'a mut dyn Read, pub stdout: &'a mut dyn Write, pub stderr: &'a mut dyn Write }
@@ -27,11 +27,11 @@ mod fence;  // 随机 nonce、清理控制与 bidi 字符、外壳先行的预�
 mod guard;  // apply_patch 路径解析、shell 命令尽力检测
 ```
 
-- 项目根：宿主 JSON 的 `cwd` 向上查找；`cwd` 缺失或不是绝对路径时，Claude / Codex 用进程目录，Antigravity 用 `workspacePaths[0]`（也须是绝对路径），再不行就输出“空”、stderr 一行（hook 进程的目录是插件目录，不是项目）。没有 `.mwf/` 时输出“空”。
+- 项目根：宿主 JSON 的 `cwd` 向上查找；`cwd` 缺失或不是绝对路径时，Claude / Codex / pi 用进程目录，Antigravity 用 `workspacePaths[0]`（也须是绝对路径），再不行就输出“空”、stderr 一行（hook 进程的目录是插件目录，不是项目）。没有 `.mwf/` 时输出“空”。
 - “空”输出：一般是 `{}`；Antigravity 的 pre-tool 是 `{"decision":"allow"}`，因为 agy 把 `{}` 与任何 hook 失败都当作拒绝（0055）。
 - 预算：内部截止 3 s；stdin 上限 1 MiB；每次 `additionalContext` 最多 9800 字符，fence 与说明行的长度先从预算中扣除，数据按剩余预算截断后再包裹，包好后不再截断（闭 fence 不会被切掉）；P4 安装时写入宿主超时 10 s。hook 不取写锁。
-- Stop：`stop_hook_active` 为 true（Antigravity：`executionNum > 0`）时 `{}`；否则 `App::stop_reminder(session_id, turn)`（Claude 与 pi `prompt_id`、Codex `turn_id`、Antigravity 无）。Claude 与 pi 输出 `hookSpecificOutput.additionalContext`，Codex 输出 `decision: "block"` + `reason`，Antigravity 输出 `decision: "continue"` + `reason`。
-- pi 的输入与输出沿用 Claude 的 JSON 形状，由 pi 扩展（`mwf-assets` 的 `PI_EXTENSION_TS`）翻译；Antigravity 的注入用 `injectSteps[].systemMessage`，prompt 走 PreInvocation 且只在 `invocationNum == 0` 时 recall（0055）。
+- Stop：`stop_hook_active` 为 true 时 `{}`；Antigravity 只在 `executionNum == 0`、`error` 为空且 `terminationReason` 为 `NO_TOOL_CALL` / `model_stop`（不分大小写）时提醒，其他情况 `{}`；pi 的扩展只在 `agent_before_settle` 的 `outcome` 为 `completed` 时调用 stop，中断或出错的 turn 不继续（0055）。其余情况调用 `App::stop_reminder(session_id, turn)`（Claude 与 pi `prompt_id`、Codex `turn_id`、Antigravity 无）。Claude 与 pi 输出 `hookSpecificOutput.additionalContext`，Codex 输出 `decision: "block"` + `reason`，Antigravity 输出 `decision: "continue"` + `reason`。
+- pi 的输入与输出沿用 Claude 的 JSON 形状，由 pi 扩展（`mwf-assets` 的 `PI_EXTENSION_TS`）翻译：context 与 recall 合成 `before_agent_start` 的一条 `message`，Stop 的提醒成为 `agent_before_settle` 的 `custom_message` 并 `continue`，deny 成为 `tool_call` 的 `{block, reason}`；Antigravity 的注入用 `injectSteps[].systemMessage`，prompt 走 PreInvocation 且只在 `invocationNum == 0` 时 recall（0055）。
 - SessionStart：`source` 为 `clear` / `compact` 时先 `reset_session`。UserPromptSubmit：跳过 `/mwf…` 命令行；注入 slug、标题、summary，不带 rev；按预算放入整页后只对放入的页调用 `App::mark_recalled`。
 - 失败：未知事件 / 宿主、坏 JSON、超限：`{}`，stderr 一行；SessionStart / prompt 的 app 错误（含 `INVALID_CONFIG`）：一行 `systemMessage`，只含错误码；Stop / PreToolUse 出错：`{}`（守卫放行）。
 
@@ -39,7 +39,7 @@ mod guard;  // apply_patch 路径解析、shell 命令尽力检测
 
 ## mwf-lifecycle
 
-**职责**：`mwf install|uninstall --host claude|codex|antigravity [--dry-run] [--json]`（`agy` 为别名；`pi` 按 0055 计划中）。编辑 Claude / Codex 的 `settings.json` / `hooks.json`（四个事件：SessionStart、UserPromptSubmit、Stop、PreToolUse），写入 pi 的扩展文件与 Antigravity 的插件目录（0055），写入 `SKILL_FILES`；备份、原子写、幂等、只删 `mwf hook … --host <本宿主>` 条目、拒绝基准目录之下的符号链接（0031、0037）。Claude 与 Codex 在 P4 实现，细节见 [0052](../decisions/0052-install-and-uninstall.md)；Antigravity 已实现，pi 尚未实现，见 [0055](../decisions/0055-hosts-pi-and-antigravity.md)。
+**职责**：`mwf install|uninstall --host claude|codex|pi|antigravity [--dry-run] [--json]`（`agy` 为别名）。编辑 Claude / Codex 的 `settings.json` / `hooks.json`（四个事件：SessionStart、UserPromptSubmit、Stop、PreToolUse），写入 pi 的扩展文件与 Antigravity 的插件目录（0055），写入 `SKILL_FILES`；备份、原子写、幂等、只删 `mwf hook … --host <本宿主>` 条目、拒绝基准目录之下的符号链接（0031、0037）。Claude 与 Codex 在 P4 实现，细节见 [0052](../decisions/0052-install-and-uninstall.md)；pi 与 Antigravity 见 [0055](../decisions/0055-hosts-pi-and-antigravity.md)。
 
 ```rust
 pub struct Io<'a> { pub stdin: &'a mut dyn Read, pub stdout: &'a mut dyn Write, pub stderr: &'a mut dyn Write }

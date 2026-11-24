@@ -2,6 +2,6 @@ mwf created .mwf/ and added `.mwf/log.md merge=union` to .gitattributes.
 Commit .mwf/ and .gitattributes so the team shares the wiki.
 
 Next:
-  mwf install --host claude   (or --host codex) so sessions load and save memories
+  mwf install --host claude   (or codex, pi, antigravity) so sessions load and save memories
   mwf new <slug> --type <type> --title "..." --summary "..." < body.md
   mwf lint

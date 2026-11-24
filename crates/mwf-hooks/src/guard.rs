@@ -5,6 +5,8 @@
 //! `cd .mwf && …` or `eval`; the script of `bash -c` / `sh -lc` is unwrapped and scanned
 //! too. The guard is a guardrail, not a security boundary.
 
+use std::path::{Path, PathBuf};
+
 /// The paths of the `*** Add File:`, `*** Update File:`, `*** Delete File:` and `*** Move to:`
 /// lines of an `apply_patch` patch. Headers start at column zero; an indented line is hunk
 /// context, even when its text looks like a header.
@@ -42,6 +44,65 @@ pub fn mentions_mwf(s: &str) -> bool {
 /// command of a list or pipeline is checked on its own. Commands run as `mwf …` are allowed,
 /// since mwf is how `.mwf/` is written, but not a redirect the shell does around them.
 /// The script of a `bash -c '…'` (or `sh`, `zsh`, …) is checked the same way, nested ones too.
+/// The path pi 1.6.0's `write` and `edit` tools act on, before they join it to the cwd
+/// (`resolveToCwd` → `normalizePath` in pi's `utils/paths.js`): Unicode spaces become spaces,
+/// one leading `@` goes, `~` and `~/` name `home`, and a `file://` URL names its path. Without
+/// this, `@.mwf/log.md` would pass the guard and pi would write `.mwf/log.md` (ADR 0055).
+pub fn pi_path(path: &str, home: Option<&Path>) -> PathBuf {
+    let spaced: String = path
+        .chars()
+        .map(|c| match c {
+            '\u{00A0}' | '\u{2000}'..='\u{200A}' | '\u{202F}' | '\u{205F}' | '\u{3000}' => ' ',
+            c => c,
+        })
+        .collect();
+    let p = spaced.strip_prefix('@').unwrap_or(&spaced);
+    if let Some(home) = home {
+        if p == "~" {
+            return home.to_path_buf();
+        }
+        if let Some(rest) = p.strip_prefix("~/") {
+            return home.join(rest);
+        }
+    }
+    match p.strip_prefix("file://") {
+        Some(url) => PathBuf::from(file_url_path(url)),
+        None => PathBuf::from(p),
+    }
+}
+
+/// The path of a `file://` URL after the scheme: no `localhost` host, no query or fragment,
+/// `\` as `/` and percent escapes decoded. Other hosts make pi fail; the path still counts.
+fn file_url_path(url: &str) -> String {
+    let url = url.strip_prefix("localhost").unwrap_or(url);
+    let path = url
+        .split(['?', '#'])
+        .next()
+        .unwrap_or("")
+        .replace('\\', "/");
+    let bytes = path.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let hex = |b: u8| (b as char).to_digit(16);
+        match (
+            bytes[i],
+            bytes.get(i + 1).copied().and_then(hex),
+            bytes.get(i + 2).copied().and_then(hex),
+        ) {
+            (b'%', Some(h), Some(l)) => {
+                out.push((h * 16 + l) as u8);
+                i += 3;
+            }
+            (b, _, _) => {
+                out.push(b);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 pub fn shell_writes_mwf(cmd: &str) -> bool {
     writes_at_depth(cmd, 0)
 }
@@ -387,6 +448,30 @@ mod tests {
             "-lc",
             "cat .mwf/log.md"
         ])));
+    }
+
+    #[test]
+    fn pi_paths_are_read_as_pi_reads_them() {
+        let home = Path::new("/home/u");
+        for (raw, meant) in [
+            ("@.mwf/log.md", ".mwf/log.md"),
+            ("@@.mwf/log.md", "@.mwf/log.md"),
+            ("@/p/.mwf/x.md", "/p/.mwf/x.md"),
+            ("~", "/home/u"),
+            ("~/p/.mwf/x.md", "/home/u/p/.mwf/x.md"),
+            ("@~/p/.mwf/x.md", "/home/u/p/.mwf/x.md"),
+            ("~p/.mwf", "~p/.mwf"),
+            ("file:///p/.mwf/x.md", "/p/.mwf/x.md"),
+            ("@file:///p/%2Emwf/x%20y.md?v=1#top", "/p/.mwf/x y.md"),
+            ("file://localhost/p/.mwf/x.md", "/p/.mwf/x.md"),
+            ("FILE:///p/.mwf/x.md", "FILE:///p/.mwf/x.md"),
+            ("a\u{00A0}b\u{3000}c", "a b c"),
+            ("\u{2007}@.mwf", " @.mwf"),
+            ("notes.md", "notes.md"),
+        ] {
+            assert_eq!(pi_path(raw, Some(home)), PathBuf::from(meant), "{raw}");
+        }
+        assert_eq!(pi_path("~/x", None), PathBuf::from("~/x"));
     }
 
     #[test]

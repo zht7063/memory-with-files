@@ -48,6 +48,7 @@ mwf --version
 ```sh
 mwf install --host claude   # Claude Code
 mwf install --host codex    # Codex
+mwf install --host pi       # pi
 mwf install --host antigravity   # Google Antigravity (agy CLI, App and IDE)
 ```
 
@@ -57,9 +58,10 @@ mwf install --host antigravity   # Google Antigravity (agy CLI, App and IDE)
 | --- | --- | --- |
 | `claude` | `$CLAUDE_CONFIG_DIR/settings.json` (default `~/.claude`) | `$CLAUDE_CONFIG_DIR/skills/mwf/` |
 | `codex` | `$CODEX_HOME/hooks.json` (default `~/.codex`) | `~/.agents/skills/mwf/` |
+| `pi` | the extension `$PI_CODING_AGENT_DIR/extensions/mwf/index.ts` (default `~/.pi/agent`) | `~/.agents/skills/mwf/` |
 | `antigravity` | the plugin directory `~/.gemini/config/plugins/mwf/` | `~/.agents/skills/mwf/` |
 
-Antigravity needs no trust step, but it blocks file edits and shell commands when a PreToolUse hook fails, so run `mwf uninstall --host antigravity` before you remove or move mwf. Codex and Antigravity share the skill; uninstalling one keeps it while the other is installed.
+pi loads the extension when it starts, so run `/reload` in a pi session that is already open. Antigravity needs no trust step, but it blocks file edits and shell commands when a PreToolUse hook fails, so run `mwf uninstall --host antigravity` before you remove or move mwf. Codex, pi and Antigravity share the skill; uninstalling one keeps it while another is installed.
 
 `mwf uninstall --host <host>` removes only what `install` added. Both commands keep a `<file>.mwf-bak-<time>` backup of any file whose content they change or remove, and never touch a project's `.mwf/`. Running `install` again is safe: it changes nothing when the hooks and skill are already current. Details are in [ADR 0052](docs/decisions/0052-install-and-uninstall.md).
 

@@ -1,4 +1,4 @@
-//! Lifecycle adapter: `mwf install|uninstall --host claude|codex|antigravity [--dry-run] [--json]`.
+//! Lifecycle adapter: `mwf install|uninstall --host claude|codex|pi|antigravity [--dry-run] [--json]`.
 //!
 //! See [docs/crates/adapters.md](https://github.com/zht7063/memory-with-files/blob/v2/docs/crates/adapters.md)
 //! and ADRs 0031, 0037, 0052 and 0055. `install` adds mwf's four hooks to the host's hooks document and
@@ -29,6 +29,7 @@ pub struct Io<'a> {
 pub(crate) enum Host {
     Claude,
     Codex,
+    Pi,
     Antigravity,
 }
 
@@ -37,6 +38,7 @@ impl Host {
         match self {
             Host::Claude => "claude",
             Host::Codex => "codex",
+            Host::Pi => "pi",
             Host::Antigravity => "antigravity",
         }
     }
@@ -45,6 +47,7 @@ impl Host {
         match self {
             Host::Claude => "Claude Code",
             Host::Codex => "Codex",
+            Host::Pi => "pi",
             Host::Antigravity => "Antigravity",
         }
     }
@@ -52,6 +55,25 @@ impl Host {
 
 /// mwf's Antigravity plugin directory, below `HOME` (ADR 0055).
 const PLUGIN_DIR: &str = ".gemini/config/plugins/mwf";
+
+/// The pi events the bridge extension handles, as the lifecycle output's `events` keys
+/// (ADR 0055).
+const PI_EVENTS: [&str; 4] = [
+    "session_start",
+    "before_agent_start",
+    "agent_before_settle",
+    "tool_call",
+];
+
+/// The bridge extension for pi with `program` in it, as a JSON string literal (not a shell word:
+/// the extension runs it with `execFile`).
+fn pi_extension(program: &str) -> String {
+    let literal = serde_json::Value::from(program).to_string();
+    mwf_assets::PI_EXTENSION_TS.replacen(mwf_assets::PI_EXTENSION_PROGRAM, &literal, 1)
+}
+
+/// mwf's pi extension, below pi's agent directory (ADR 0055).
+const PI_EXTENSION: &str = "extensions/mwf/index.ts";
 
 /// The plugin's `plugin.json`.
 fn plugin_manifest() -> String {
@@ -98,6 +120,7 @@ struct Env {
     home: Option<OsString>,
     claude_config_dir: Option<OsString>,
     codex_home: Option<OsString>,
+    pi_dir: Option<OsString>,
     path: Option<OsString>,
     exe: io::Result<PathBuf>,
 }
@@ -108,6 +131,7 @@ impl Env {
             home: std::env::var_os("HOME"),
             claude_config_dir: std::env::var_os("CLAUDE_CONFIG_DIR"),
             codex_home: std::env::var_os("CODEX_HOME"),
+            pi_dir: std::env::var_os("PI_CODING_AGENT_DIR"),
             path: std::env::var_os("PATH"),
             exe: std::env::current_exe(),
         }
@@ -179,7 +203,7 @@ fn error_json(e: &Error) -> String {
 fn usage(action: Action) -> String {
     let what = match action {
         Action::Install => {
-            "Add mwf's hooks and the mwf skill to a host (Claude Code, Codex or Antigravity)"
+            "Add mwf's hooks and the mwf skill to a host (Claude Code, Codex, pi or Antigravity)"
         }
         Action::Uninstall => {
             "Remove mwf's hooks and the mwf skill from a host; project wikis (.mwf/) stay"
@@ -191,7 +215,7 @@ fn usage(action: Action) -> String {
 Usage: mwf {} --host <HOST> [--dry-run] [--json]
 
 Options:
-      --host <HOST>  claude, codex or antigravity (also agy)
+      --host <HOST>  claude, codex, pi or antigravity (also agy)
       --dry-run      Print what would change; write nothing
       --json         Print `{{\"ok\": true, \"data\": …}}` or `{{\"ok\": false, \"error\": …}}` instead of text
   -h, --help         Print help
@@ -199,6 +223,7 @@ Options:
 Files:
   claude       $CLAUDE_CONFIG_DIR (default ~/.claude): settings.json and skills/mwf/
   codex        $CODEX_HOME (default ~/.codex): hooks.json; and ~/.agents/skills/mwf/
+  pi           $PI_CODING_AGENT_DIR (default ~/.pi/agent): extensions/mwf/index.ts; and ~/.agents/skills/mwf/
   antigravity  ~/.gemini/config/plugins/mwf/ (plugin.json, hooks.json); and ~/.agents/skills/mwf/
 ",
         action.name()
@@ -246,10 +271,11 @@ fn parse(args: &[OsString]) -> Result<Parsed, String> {
             let h = match value {
                 "claude" => Host::Claude,
                 "codex" => Host::Codex,
+                "pi" => Host::Pi,
                 "antigravity" | "agy" => Host::Antigravity,
                 _ => {
                     return Err(
-                        "invalid value for '--host <HOST>': use claude, codex or antigravity"
+                        "invalid value for '--host <HOST>': use claude, codex, pi or antigravity"
                             .to_owned(),
                     );
                 }
@@ -332,6 +358,14 @@ fn layout(host: Host, env: &Env) -> Result<Layout, Error> {
             };
             (hooks, (h, name, ".agents/skills/mwf"))
         }
+        Host::Pi => {
+            let (h, name) = home(env)?;
+            let hooks = match dir_var(env.pi_dir.as_ref(), "PI_CODING_AGENT_DIR")? {
+                Some(dir) => (dir, "PI_CODING_AGENT_DIR", PI_EXTENSION),
+                None => (h.clone(), name, ".pi/agent/extensions/mwf/index.ts"),
+            };
+            (hooks, (h, name, ".agents/skills/mwf"))
+        }
         Host::Antigravity => {
             let (h, name) = home(env)?;
             (
@@ -362,7 +396,7 @@ fn layout(host: Host, env: &Env) -> Result<Layout, Error> {
 /// (ADR 0055). Empty: the skill goes.
 fn skill_keepers(host: Host, env: &Env) -> Vec<String> {
     let mut out = Vec::new();
-    for other in [Host::Codex, Host::Antigravity] {
+    for other in [Host::Codex, Host::Pi, Host::Antigravity] {
         if other == host || host == Host::Claude {
             continue;
         }
@@ -403,6 +437,17 @@ fn installed(host: Host, env: &Env) -> Result<bool, ()> {
                 return Ok(false);
             }
             Ok(hooks::has_ours(&json::parse(&text).map_err(|_| ())?, host))
+        }
+        Host::Pi => {
+            let file = match dir_var(env.pi_dir.as_ref(), "PI_CODING_AGENT_DIR").map_err(|_| ())? {
+                Some(dir) => dir.join(PI_EXTENSION),
+                None => home(env)
+                    .map_err(|_| ())?
+                    .0
+                    .join(".pi/agent")
+                    .join(PI_EXTENSION),
+            };
+            exists(&file)
         }
         Host::Antigravity => {
             let dir = home(env).map_err(|_| ())?.0.join(PLUGIN_DIR);
@@ -535,8 +580,10 @@ fn plan_hooks(
     cmd: &Command,
     program: &str,
 ) -> Result<(FileReport, Events), Error> {
-    if cmd.host == Host::Antigravity {
-        return plan_plugin_hooks(layout, cmd.action, program);
+    match cmd.host {
+        Host::Antigravity => return plan_plugin_hooks(layout, cmd.action, program),
+        Host::Pi => return plan_pi_extension(layout, cmd.action, program),
+        Host::Claude | Host::Codex => {}
     }
     let (base, rel) = (&layout.hooks_base, &layout.hooks_rel);
     let path = base.join(rel);
@@ -641,6 +688,34 @@ fn plan_plugin_hooks(
         },
         events,
     ))
+}
+
+/// pi's bridge extension: one file mwf owns whole, holding all four hooks, so each event has
+/// the file's status (ADR 0055).
+fn plan_pi_extension(
+    layout: &Layout,
+    action: Action,
+    program: &str,
+) -> Result<(FileReport, Events), Error> {
+    let file = plan_file(
+        &layout.hooks_base,
+        layout.hooks_rel.clone(),
+        layout
+            .hooks_base
+            .join(&layout.hooks_rel)
+            .display()
+            .to_string(),
+        pi_extension(program).as_bytes(),
+        action,
+    )?;
+    let status = match file.status {
+        "created" => Status::Added,
+        "updated" => Status::Updated,
+        "unchanged" => Status::Unchanged,
+        "removed" => Status::Removed,
+        _ => Status::Absent,
+    };
+    Ok((file, PI_EVENTS.iter().map(|e| (*e, status)).collect()))
 }
 
 /// One file mwf owns whole (ADR 0052): written when missing or different, backed up first
@@ -759,14 +834,18 @@ fn execute(cmd: &Command, env: &Env) -> Result<Report, Error> {
                 if let Some((_, p)) = &mut plugin {
                     apply(p)?;
                 }
-                if layout.plugin_rel.is_some() {
-                    let dir = Path::new(PLUGIN_DIR);
-                    if !fsx::remove_empty_dir(&layout.hooks_base, dir) {
-                        notes.push(format!(
-                            "kept {}: it holds files mwf did not write",
-                            layout.hooks_base.join(dir).display()
-                        ));
-                    }
+                let owned_dir = match cmd.host {
+                    Host::Antigravity => Some(PathBuf::from(PLUGIN_DIR)),
+                    Host::Pi => layout.hooks_rel.parent().map(Path::to_path_buf),
+                    Host::Claude | Host::Codex => None,
+                };
+                if let Some(dir) = owned_dir.as_deref()
+                    && !fsx::remove_empty_dir(&layout.hooks_base, dir)
+                {
+                    notes.push(format!(
+                        "kept {}: it holds files mwf did not write",
+                        layout.hooks_base.join(dir).display()
+                    ));
                 }
                 skill.iter_mut().try_for_each(apply)?;
                 for (rel, _) in mwf_assets::SKILL_FILES.iter().rev() {
@@ -797,6 +876,10 @@ fn execute(cmd: &Command, env: &Env) -> Result<Report, Error> {
                 "Codex runs new or changed hooks only after you trust them: run /hooks in Codex and trust the mwf hooks"
             }
             .to_owned(),
+        ),
+        (Action::Install, Host::Pi) if hooks_change => notes.push(
+            "pi loads extensions when it starts: run /reload in a pi session that is already open"
+                .to_owned(),
         ),
         (Action::Install, Host::Antigravity) => notes.push(
             "Antigravity blocks file edits and shell commands when a PreToolUse hook fails: run `mwf uninstall --host antigravity` before you remove or move mwf".to_owned(),

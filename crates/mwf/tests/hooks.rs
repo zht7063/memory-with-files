@@ -193,7 +193,7 @@ fn bad_arguments_and_input() {
     let stop = r#"{"session_id":"s"}"#;
     for (event, host, input) in [
         ("finish", CLAUDE, stop),
-        ("stop", "pi", stop),
+        ("stop", "pie", stop),
         ("stop", CODEX, "not json"),
         ("stop", CODEX, "[1, 2]"),
     ] {
@@ -594,4 +594,89 @@ fn antigravity_without_mwf_allows_and_injects_nothing() {
     }
     let input = r#"{"toolCall":{"name":"run_command","args":{"CommandLine":"rm -rf .mwf"}}}"#;
     assert_eq!(s.hook("pre-tool", AGY, input), ALLOW);
+}
+
+/// pi (ADR 0055): what the bridge extension sends, in Claude's shapes with pi's tool names.
+#[test]
+fn pi_session() {
+    let mut s = Session::initialized();
+    s.new_page(
+        "test-command",
+        "knowledge",
+        "Running the tests",
+        "Use cargo nextest run, not cargo test",
+        "Run `cargo nextest run`.\n",
+    );
+    let start = s.hook(
+        "session-start",
+        "pi",
+        r#"{"session_id":"p1","source":"startup"}"#,
+    );
+    assert!(start.contains("\"additionalContext\""), "{start}");
+    let recall = s.hook(
+        "prompt",
+        "pi",
+        r#"{"session_id":"p1","prompt":"how do we run the tests here"}"#,
+    );
+    assert!(recall.contains("test-command"), "{recall}");
+    let stop = s.hook(
+        "stop",
+        "pi",
+        r#"{"session_id":"p1","prompt_id":"a.b-1","stop_hook_active":false}"#,
+    );
+    assert!(stop.contains("\"hookEventName\":\"Stop\""), "{stop}");
+    assert_eq!(
+        s.hook(
+            "stop",
+            "pi",
+            r#"{"session_id":"p1","prompt_id":"a.b-1","stop_hook_active":false}"#
+        ),
+        "{}\n"
+    );
+    let deny = |out: &str| out.contains("\"permissionDecision\":\"deny\"");
+    for (input, denied) in [
+        (
+            r#"{"tool_name":"write","tool_input":{"path":".mwf/pages/x.md","content":"x"}}"#,
+            true,
+        ),
+        (
+            r#"{"tool_name":"edit","tool_input":{"path":".mwf/log.md","edits":[{"oldText":"a","newText":"b"}]}}"#,
+            true,
+        ),
+        (
+            r#"{"tool_name":"bash","tool_input":{"command":"sh -c 'echo x > .mwf/log.md'"}}"#,
+            true,
+        ),
+        (
+            r#"{"tool_name":"bash","tool_input":{"command":"mwf show test-command"}}"#,
+            false,
+        ),
+        (
+            r#"{"tool_name":"write","tool_input":{"path":"src/main.rs","content":"x"}}"#,
+            false,
+        ),
+    ] {
+        assert_eq!(deny(&s.hook("pre-tool", "pi", input)), denied, "{input}");
+    }
+    // pi drops a leading `@`, expands `~/` and reads `file://` URLs before it writes.
+    let url = format!("file://{}/.mwf/x.md", s.root.display());
+    for path in ["@.mwf/log.md", url.as_str()] {
+        let input = format!(r#"{{"tool_name":"write","tool_input":{{"path":{path:?}}}}}"#);
+        assert!(deny(&s.hook("pre-tool", "pi", &input)), "{path}");
+    }
+    s.snapshot("hooks_pi");
+    let home = s.root.parent().unwrap();
+    let name = s.root.file_name().unwrap().to_str().unwrap();
+    let input = format!(
+        r#"{{"cwd":{:?},"tool_name":"write","tool_input":{{"path":"~/{name}/.mwf/log.md"}}}}"#,
+        s.root.display().to_string()
+    );
+    let out = cargo_bin_cmd!("mwf")
+        .args(["hook", "pre-tool", "--host", "pi"])
+        .current_dir(&s.root)
+        .env("HOME", home)
+        .write_stdin(input)
+        .output()
+        .unwrap();
+    assert!(deny(&String::from_utf8(out.stdout).unwrap()), "~/ is HOME");
 }
