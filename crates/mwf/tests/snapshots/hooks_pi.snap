@@ -52,3 +52,11 @@ $ mwf hook pre-tool --host pi
 $ mwf hook pre-tool --host pi
 < {"cwd":"[ROOT]","tool_name":"write","tool_input":{"path":"src/main.rs","content":"x"}}
 {}
+
+$ mwf hook pre-tool --host pi
+< {"cwd":"[ROOT]","tool_name":"write","tool_input":{"path":"@.mwf/log.md"}}
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"mwf: files under .mwf/ are written only through mwf commands, which validate pages, scan for secrets and keep index.md and log.md up to date. Use `mwf new`, `mwf write`, `mwf patch`, `mwf set`, `mwf rename`, `mwf archive` or `mwf delete` instead."}}
+
+$ mwf hook pre-tool --host pi
+< {"cwd":"[ROOT]","tool_name":"write","tool_input":{"path":"file://[ROOT]/.mwf/x.md"}}
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"mwf: files under .mwf/ are written only through mwf commands, which validate pages, scan for secrets and keep index.md and log.md up to date. Use `mwf new`, `mwf write`, `mwf patch`, `mwf set`, `mwf rename`, `mwf archive` or `mwf delete` instead."}}

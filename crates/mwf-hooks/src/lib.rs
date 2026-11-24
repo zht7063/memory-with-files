@@ -504,10 +504,15 @@ impl Hook<'_> {
             (Host::Antigravity, "run_command") => {
                 guard::shell_writes_mwf(field("CommandLine")).then_some(mwf_assets::HOOK_DENY_SHELL)
             }
-            (Host::Pi, "write" | "edit") => match inside(&[field("path")]) {
-                None => return empty(),
-                Some(i) => i.then_some(mwf_assets::HOOK_DENY_EDIT),
-            },
+            // pi rewrites the path before it writes (`@`, `~`, `file://`): check what it means.
+            (Host::Pi, "write" | "edit") => {
+                let raw = field("path");
+                let meant = guard::pi_path(raw, std::env::home_dir().as_deref());
+                match inside(&[raw, &meant.to_string_lossy()]) {
+                    None => return empty(),
+                    Some(i) => i.then_some(mwf_assets::HOOK_DENY_EDIT),
+                }
+            }
             (Host::Pi, "bash") => {
                 guard::shell_writes_mwf(field("command")).then_some(mwf_assets::HOOK_DENY_SHELL)
             }
@@ -945,6 +950,27 @@ mod tests {
             // Claude's names are not pi's tools.
             (
                 json!({"tool_name": "Write", "tool_input": {"file_path": ".mwf/x.md"}}),
+                false,
+            ),
+            // pi drops a leading `@` and reads `file://` URLs before it writes.
+            (
+                json!({"tool_name": "write", "tool_input": {"path": "@.mwf/log.md"}}),
+                true,
+            ),
+            (
+                json!({"tool_name": "edit", "tool_input": {"path": format!("@{}", root.join(".mwf/x.md").display())}}),
+                true,
+            ),
+            (
+                json!({"tool_name": "write", "tool_input": {"path": format!("file://{}/%2Emwf/x.md?v=1", root.display())}}),
+                true,
+            ),
+            (
+                json!({"tool_name": "write", "tool_input": {"path": "@@.mwf/log.md"}}),
+                false,
+            ),
+            (
+                json!({"tool_name": "write", "tool_input": {"path": "@notes.md"}}),
                 false,
             ),
         ] {

@@ -658,5 +658,25 @@ fn pi_session() {
     ] {
         assert_eq!(deny(&s.hook("pre-tool", "pi", input)), denied, "{input}");
     }
+    // pi drops a leading `@`, expands `~/` and reads `file://` URLs before it writes.
+    let url = format!("file://{}/.mwf/x.md", s.root.display());
+    for path in ["@.mwf/log.md", url.as_str()] {
+        let input = format!(r#"{{"tool_name":"write","tool_input":{{"path":{path:?}}}}}"#);
+        assert!(deny(&s.hook("pre-tool", "pi", &input)), "{path}");
+    }
     s.snapshot("hooks_pi");
+    let home = s.root.parent().unwrap();
+    let name = s.root.file_name().unwrap().to_str().unwrap();
+    let input = format!(
+        r#"{{"cwd":{:?},"tool_name":"write","tool_input":{{"path":"~/{name}/.mwf/log.md"}}}}"#,
+        s.root.display().to_string()
+    );
+    let out = cargo_bin_cmd!("mwf")
+        .args(["hook", "pre-tool", "--host", "pi"])
+        .current_dir(&s.root)
+        .env("HOME", home)
+        .write_stdin(input)
+        .output()
+        .unwrap();
+    assert!(deny(&String::from_utf8(out.stdout).unwrap()), "~/ is HOME");
 }

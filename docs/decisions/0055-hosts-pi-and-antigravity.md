@@ -3,7 +3,7 @@
 - 状态：已接受（2026-11-24）；取代 [0020](0020-hosts.md) 中的“Pi 延后”；细化 [0024](0024-bypass-guard.md)、[0031](0031-install-scope.md)、[0051](0051-hook-apis-and-session-state.md)、[0052](0052-install-and-uninstall.md)
 - 实现：两个宿主各分两步落地，先 Antigravity，后 pi（hooks、lifecycle 与 pi 的扩展资产）。在它们合并之前，不要从 `v2` 发布正式版：本文档与 skill 的命令速查已经列出两个新宿主。
 - 修订（2026-11-24，Antigravity 实现）：补充 Stop 在模型出错与用户中断时的实测结果、没有可用 `cwd` 时不退回进程目录、pre-tool 在参数错误时也放行，以及 lifecycle 输出中插件文件的形式。
-- 修订（2026-11-24，pi 实现）：补充 pi 的 Stop 在中断与出错时的实测结果、`session_compact` 的实测、prompt id 的前缀，以及 lifecycle 输出中扩展文件的形式。
+- 修订（2026-11-24，pi 实现）：补充 pi 的 Stop 在中断与出错时的实测结果、`session_compact` 的实测、prompt id 的前缀，lifecycle 输出中扩展文件的形式，以及守卫按 pi 的规则改写 `write` / `edit` 的路径。
 
 ## 背景
 
@@ -99,11 +99,11 @@ agy 在 PreToolUse 出错时拦截。mwf 二进制被删除或改名、`PATH` �
 | --- | --- | --- | --- |
 | session-start | `session_start` 与 `session_compact` 之后的第一次 `before_agent_start` | `{session_id, cwd, source}`，`source` 为 `session_start` 的 `reason`（`reload` 记作 `startup`），`session_compact` 之后为 `compact`（mwf 先 reset，0051） | `hookSpecificOutput.additionalContext` 与 recall 合成一条 `message`（`customType: "mwf"`，`display: false`） |
 | prompt | `before_agent_start`，只在 `messageType == "user"` 时 | `{session_id, cwd, prompt}` | 同上 |
-| stop | `agent_before_settle`，只在 `outcome == "completed"` 时 | `{session_id, cwd, prompt_id, stop_hook_active: false}`；`prompt_id` 是本次加载的前缀（进程号、加载时间、随机串）加用户 prompt 的计数，`/reload` 后计数重来也不会撞上已提醒过的 turn；刚由提醒续出的那一轮不调用 mwf | `hookSpecificOutput.additionalContext` → `{entries: [{type: "custom_message", customType: "mwf", content, display: false}], continue: true}` |
+| stop | `agent_before_settle`，只在 `outcome == "completed"` 时 | `{session_id, cwd, prompt_id, stop_hook_active: false}`；`prompt_id` 是本次加载的前缀（进程号、加载时间、随机串）加用户 prompt 的计数，`/reload` 后计数重来也不会撞上已提醒过的 turn；刚由提醒续出的那一轮不调用 mwf：扩展用 `reminded` 标记认出它，`stop_hook_active` 因此恒为 false；即使漏判，同一个 `prompt_id` 也只提醒一次（0051 的去重） | `hookSpecificOutput.additionalContext` → `{entries: [{type: "custom_message", customType: "mwf", content, display: false}], continue: true}` |
 | pre-tool | `tool_call`，只在 `toolName` 为 `write` / `edit` / `bash` 时 | `{session_id, cwd, tool_name, tool_input}` | `permissionDecision: "deny"` → `{block: true, reason}` |
 
 - `systemMessage`（app 错误）由扩展在有 UI 时用 `ctx.ui.notify` 显示，否则忽略。
-- 守卫：`write` / `edit` 读 `tool_input.path`（相对路径以 `cwd` 为基准），`bash` 读 `tool_input.command`。用户自己用 `!` 运行的命令（`user_bash`）不拦。第三方扩展注册的写工具不覆盖。
+- 守卫：`write` / `edit` 读 `tool_input.path`（相对路径以 `cwd` 为基准）。pi 1.6.0 写文件前会改写路径（`utils/paths.js` 的 `normalizePath`）：Unicode 空格换成空格、去掉一个前导 `@`、`~` 与 `~/` 展开为 HOME、`file://` URL 换成路径。守卫按同样的规则得到 pi 实际写的路径，并与原样的路径一起检查，否则 `@.mwf/log.md` 会绕过守卫（review 发现）。`bash` 读 `tool_input.command`。用户自己用 `!` 运行的命令（`user_bash`）不拦。第三方扩展注册的写工具不覆盖。
 - Stop 不让被中断或出错的 turn 继续：`outcome` 不是 `completed` 时扩展直接返回。
 - pi 实现时在真实的 pi 1.6.0 上用构建出的 `mwf` 实测（mock 模型，`-p` 与 tmux 中的交互模式）：
   - session-start 的上下文与 recall 合成一条消息进入第一次模型请求。

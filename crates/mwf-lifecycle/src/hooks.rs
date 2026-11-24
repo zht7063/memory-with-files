@@ -23,15 +23,19 @@ pub(crate) const TIMEOUT_SECS: &str = "10";
 
 /// The tools the PreToolUse guard looks at (ADR 0024); the other events take no matcher.
 fn matcher(host: Host, event: &str) -> Option<&'static str> {
-    (event == "PreToolUse").then_some(match host {
-        Host::Claude => "Edit|Write|MultiEdit|NotebookEdit|Bash",
-        Host::Codex => "apply_patch|Bash",
+    if event != "PreToolUse" {
+        return None;
+    }
+    match host {
+        Host::Claude => Some("Edit|Write|MultiEdit|NotebookEdit|Bash"),
+        Host::Codex => Some("apply_patch|Bash"),
         // Antigravity blocks a tool when the hook fails, so only the tools the guard reads
         // (ADR 0055).
-        Host::Antigravity => "write_file|edit_file|run_command",
-        // pi has no matchers; its extension picks the tools itself.
-        Host::Pi => "write|edit|bash",
-    })
+        Host::Antigravity => Some("write_file|edit_file|run_command"),
+        // Never asked: pi has no hooks file and no matchers. `plan_hooks` writes its extension
+        // instead, which picks `write`, `edit` and `bash` itself (ADR 0055).
+        Host::Pi => None,
+    }
 }
 
 /// Antigravity's event names and the `mwf hook` event each runs (ADR 0055).

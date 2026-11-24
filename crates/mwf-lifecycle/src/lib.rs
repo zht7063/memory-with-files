@@ -56,7 +56,8 @@ impl Host {
 /// mwf's Antigravity plugin directory, below `HOME` (ADR 0055).
 const PLUGIN_DIR: &str = ".gemini/config/plugins/mwf";
 
-/// pi's events the bridge extension handles, and the `mwf hook` event each runs (ADR 0055).
+/// The pi events the bridge extension handles, as the lifecycle output's `events` keys
+/// (ADR 0055).
 const PI_EVENTS: [&str; 4] = [
     "session_start",
     "before_agent_start",
@@ -67,7 +68,7 @@ const PI_EVENTS: [&str; 4] = [
 /// The bridge extension for pi with `program` in it, as a JSON string literal (not a shell word:
 /// the extension runs it with `execFile`).
 fn pi_extension(program: &str) -> String {
-    let literal = serde_json::to_string(program).unwrap_or_else(|_| "\"mwf\"".to_owned());
+    let literal = serde_json::Value::from(program).to_string();
     mwf_assets::PI_EXTENSION_TS.replacen(mwf_assets::PI_EXTENSION_PROGRAM, &literal, 1)
 }
 
